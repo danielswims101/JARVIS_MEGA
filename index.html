@@ -103,6 +103,10 @@
         <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">RENDER</div>
         <div id="perf" style="color:#7fe9ff; font-variant-numeric:tabular-nums;">— fps</div>
       </div>
+      <div id="personaChip" title="Cycle persona (P)" style="display:flex; flex-direction:column; gap:2px; cursor:pointer; border:1px solid rgba(0,229,255,.24); padding:4px 10px; transition:all .45s cubic-bezier(.16,1,.3,1);">
+        <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">PERSONA</div>
+        <div id="personaStat" style="color:#00e5ff; letter-spacing:.16em;">JARVIS</div>
+      </div>
       <div id="brainChip" title="Configure the neural link (K)" style="display:flex; flex-direction:column; gap:2px; cursor:pointer; border:1px solid rgba(0,229,255,.24); padding:4px 10px; transition:all .45s cubic-bezier(.16,1,.3,1);">
         <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">COGNITION</div>
         <div id="brainStat" style="color:rgba(255,179,0,.9);">OFFLINE · LOCAL</div>
@@ -166,7 +170,7 @@
       <div style="flex:1;"></div>
 
       <div style="display:flex; flex-direction:column; align-items:center; gap:7px; animation:panelIn 1.1s cubic-bezier(.16,1,.3,1) both; animation-delay:3.1s;">
-        <div id="hint" style="font-size:9px; letter-spacing:.3em; color:rgba(0,229,255,.4); text-align:center; text-wrap:pretty;">K FOR NEURAL LINK · V FOR HANDS-FREE · CLICK ORB TO PULSE · / FOCUSES CONSOLE</div>
+        <div id="hint" style="font-size:9px; letter-spacing:.3em; color:rgba(0,229,255,.4); text-align:center; text-wrap:pretty;">K SETTINGS · P PERSONA · V HANDS-FREE · CLICK ORB TO PULSE · / FOCUSES CONSOLE</div>
         <div style="width:260px; height:1px; background:linear-gradient(90deg, transparent, rgba(0,229,255,.5), transparent); animation:hairline 4s ease-in-out infinite;"></div>
       </div>
     </div>
@@ -223,8 +227,17 @@
           </div>
           <div id="modeHint" style="font-size:8px; letter-spacing:.18em; color:rgba(0,229,255,.35); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
           <div style="flex:1;"></div>
-          <div id="thinkBar" style="width:120px; height:2px; overflow:hidden; opacity:0; transition:opacity .4s ease;">
+          <div id="thinkBar" style="width:90px; height:2px; overflow:hidden; opacity:0; transition:opacity .4s ease;">
             <div style="width:36px; height:2px; background:linear-gradient(90deg, transparent, #a06bff, transparent); animation:thinkBar 1.1s linear infinite;"></div>
+          </div>
+          <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.42); flex:none;">TEMPER</div>
+          <div style="display:flex; gap:0;">
+            <div class="tab" id="tFun" title="Playful, quick with a joke">FUN</div>
+            <div class="tab" id="tSerious" style="border-left:none;" title="Mission-focused, no levity">SERIOUS</div>
+          </div>
+          <div style="display:flex; gap:0;">
+            <div class="tab" id="tLight" title="Short answers, glanceable">LIGHT</div>
+            <div class="tab" id="tHeavy" style="border-left:none;" title="Deep analysis, full reasoning">HEAVY</div>
           </div>
         </div>
         <div id="console" style="height:104px; flex:none; overflow-y:auto; overflow-x:hidden; font-size:11.5px; line-height:1.5; display:flex; flex-direction:column; justify-content:flex-end;"></div>
@@ -260,8 +273,37 @@
         <div class="ptitle" style="font-size:10px;">NEURAL LINK · COGNITION SOURCE</div>
         <div id="cfgClose" style="font-size:10px; letter-spacing:.2em; color:rgba(0,229,255,.5); cursor:pointer;">ESC</div>
       </div>
-      <div style="padding:16px; display:flex; flex-direction:column; gap:14px;">
+      <div style="padding:16px; display:flex; flex-direction:column; gap:14px; max-height:78vh; overflow-y:auto;">
         <div>
+          <span class="lbl">PERSONA</span>
+          <div style="display:flex;">
+            <div class="tab" data-persona="jarvis">JARVIS</div>
+            <div class="tab" data-persona="friday" style="border-left:none;">FRIDAY</div>
+            <div class="tab" data-persona="edith" style="border-left:none;">EDITH</div>
+          </div>
+        </div>
+
+        <div style="border-top:1px solid rgba(0,229,255,.12); padding-top:12px;">
+          <span class="lbl">ELEVENLABS API KEY <span style="color:rgba(150,215,235,.45); letter-spacing:.1em;">— optional, falls back to browser speech</span></span>
+          <input id="cfgElKey" class="fld" type="password" placeholder="sk_..." spellcheck="false" autocomplete="off">
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 150px; gap:10px;">
+          <div>
+            <span class="lbl">VOICE ID <span id="cfgVoiceFor" style="color:rgba(150,215,235,.45); letter-spacing:.1em;">— JARVIS</span></span>
+            <input id="cfgVoice" class="fld" placeholder="paste your custom voice ID" spellcheck="false" autocomplete="off">
+          </div>
+          <div>
+            <span class="lbl">EL MODEL</span>
+            <input id="cfgElModel" class="fld" spellcheck="false" autocomplete="off">
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
+          <div><span class="lbl">STABILITY</span><input id="cfgStab" class="fld" type="number" step="0.05" min="0" max="1"></div>
+          <div><span class="lbl">SIMILARITY</span><input id="cfgSim" class="fld" type="number" step="0.05" min="0" max="1"></div>
+          <div><span class="lbl">SPEED</span><input id="cfgSpeed" class="fld" type="number" step="0.05" min="0.7" max="1.2"></div>
+        </div>
+
+        <div style="border-top:1px solid rgba(0,229,255,.12); padding-top:12px;">
           <span class="lbl">PROVIDER</span>
           <div style="display:flex;">
             <div class="tab" data-prov="anthropic">ANTHROPIC</div>
@@ -283,11 +325,13 @@
           <input id="cfgModel" class="fld" spellcheck="false" autocomplete="off">
         </div>
         <div>
-          <span class="lbl">PERSONA / SYSTEM DIRECTIVE</span>
-          <textarea id="cfgSys" class="fld" rows="4" spellcheck="false" style="resize:vertical; line-height:1.5;"></textarea>
+          <span class="lbl">DIRECTIVE <span id="cfgSysFor" style="color:rgba(150,215,235,.45); letter-spacing:.1em;">— JARVIS</span></span>
+          <textarea id="cfgSys" class="fld" rows="5" spellcheck="false" style="resize:vertical; line-height:1.5;"></textarea>
         </div>
         <div id="cfgMsg" style="font-size:10px; line-height:1.5; color:rgba(255,179,0,.85); min-height:14px;"></div>
-        <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;">
+          <div class="btn ghost" id="cfgReset">RESET DIRECTIVE</div>
+          <div class="btn ghost" id="cfgSpeak">TEST VOICE</div>
           <div class="btn ghost" id="cfgTest">TEST LINK</div>
           <div class="btn ghost" id="cfgWipe">WIPE MEMORY</div>
           <div class="btn" id="cfgSave">ENGAGE</div>
@@ -419,7 +463,7 @@ const VERT = NOISE + `
 attribute vec3 aDir;
 attribute float aRad, aRand, aLayer, aSize, aSeed;
 uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot;
-uniform vec3 uShockDir;
+uniform vec3 uShockDir, uTint;
 varying vec3 vCol;
 varying float vA;
 
@@ -500,7 +544,7 @@ void main(){
   col = mix(col, vec3(0.55,0.24,1.0), wThink*0.85*(0.35+0.65*aRand));
   col = mix(col, vec3(1.0,0.20,0.07), wAlert*0.94);
   col = mix(col, vec3(1.0,0.66,0.20), wAlert*0.18*aRand);
-  vCol = col * (0.36 + energy*0.78 + shock*0.45) * (1.0 - wThink*0.44 - wAlert*0.14);
+  vCol = col * (0.36 + energy*0.78 + shock*0.45) * (1.0 - wThink*0.44 - wAlert*0.14) * uTint;
 
   float a = aLayer < 0.5 ? 0.52 : (aLayer < 1.5 ? 0.44 : 0.28);
   vA = a * uBoot * (0.6 + 0.4*breath);
@@ -644,7 +688,8 @@ function init(canvas, opts = {}) {
     uShockAmp: { value: 0 },
     uShockDir: { value: new THREE.Vector3(0, 0, 1) },
     uPixel: { value: 1 },
-    uBoot: { value: 0 }
+    uBoot: { value: 0 },
+    uTint: { value: new THREE.Vector3(1, 1, 1) }
   };
   const mat = new THREE.ShaderMaterial({
     uniforms, vertexShader: VERT, fragmentShader: FRAG,
@@ -794,7 +839,8 @@ function init(canvas, opts = {}) {
       uniforms.uShockDir.value.copy(v);
       shockT = 0; shockAmp = 1;
     },
-    setPointer(nx, ny) { pointer.tx = nx; pointer.ty = ny; }
+    setPointer(nx, ny) { pointer.tx = nx; pointer.ty = ny; },
+    setTint(r, g, b) { uniforms.uTint.value.set(r, g, b); }
   };
   frame();
   return api;
@@ -832,7 +878,9 @@ const E = {};
  'console','input','inputWrap','cog','state','part','mic','toasts','hint','boot',
  'voiceBtn','voiceDot','voiceLabel','voiceRing','mAuto','mDictate','mManual','modeHint',
  'transcript','thinkBar','cfgVeil','cfgClose','cfgKey','cfgBase','cfgModel','cfgSys',
- 'cfgMsg','cfgSave','cfgTest','cfgWipe','rowKey','rowBase'].forEach(k => E[k] = $(k));
+ 'cfgMsg','cfgSave','cfgTest','cfgWipe','rowKey','rowBase','personaChip','personaStat',
+ 'tFun','tSerious','tLight','tHeavy','cfgElKey','cfgVoice','cfgVoiceFor','cfgElModel',
+ 'cfgStab','cfgSim','cfgSpeed','cfgSysFor','cfgReset','cfgSpeak'].forEach(k => E[k] = $(k));
 
 /* ============================================================== SIMULATION === */
 const sim = (function build() {
@@ -982,6 +1030,7 @@ function reserveOrb() {
     speaking: [120, 240, 255], alert: [255, 70, 40]
   };
   let stateName = 'idle', col = PAL.idle.slice(), t = 0, shockT = 9, px = 0, py = 0, tx = 0, ty = 0;
+  const tint = [1, 1, 1];
   let fpsAcc = 0, fpsN = 0, timer = null;
 
   function frame() {
@@ -1008,11 +1057,13 @@ function reserveOrb() {
           + lvl * 0.22 + shock * 0.3 * Math.sin(p[3] * 20 + t * 9);
         const s = 2.4 / (2.4 - z * wob);
         const a = 0.16 + s * 0.20;
-        ctx.fillStyle = 'rgba(' + (col[0] * (0.5 + z * 0.5) | 0) + ',' + (col[1] * (0.55 + z * 0.45) | 0) + ',' + (col[2] | 0) + ',' + a.toFixed(3) + ')';
+        ctx.fillStyle = 'rgba(' + clamp(col[0] * tint[0] * (0.5 + z * 0.5), 0, 255).toFixed(0) + ',' +
+          clamp(col[1] * tint[1] * (0.55 + z * 0.45), 0, 255).toFixed(0) + ',' + clamp(col[2] * tint[2], 0, 255).toFixed(0) + ',' + a.toFixed(3) + ')';
         ctx.fillRect(cx + x * R * wob * s, cy + p[1] * R * wob * s, 1.5 * s, 1.5 * s);
       }
       const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.5);
-      g.addColorStop(0, 'rgba(' + (col[0] | 0) + ',' + (col[1] | 0) + ',' + (col[2] | 0) + ',' + (0.16 + lvl * 0.14).toFixed(3) + ')');
+      g.addColorStop(0, 'rgba(' + clamp(col[0] * tint[0], 0, 255).toFixed(0) + ',' + clamp(col[1] * tint[1], 0, 255).toFixed(0) +
+        ',' + clamp(col[2] * tint[2], 0, 255).toFixed(0) + ',' + (0.16 + lvl * 0.14).toFixed(3) + ')');
       g.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, R * 1.5, 0, 7); ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
@@ -1029,6 +1080,7 @@ function reserveOrb() {
     pulse(n, ms) { const prev = stateName === n ? 'idle' : stateName; api.setState(n); clearTimeout(timer); timer = setTimeout(() => api.setState(prev === 'alert' ? 'idle' : prev), ms || 2200); },
     shock() { shockT = 0; },
     setPointer(nx, ny) { tx = nx; ty = ny; },
+    setTint(r, g, b) { tint[0] = r; tint[1] = g; tint[2] = b; },
     destroy() { api.dead = true; clearTimeout(timer); canvas.remove(); }
   };
   requestAnimationFrame(frame);
@@ -1073,6 +1125,7 @@ function bindEngine() {
     }
     app.engine = window.JARVIS_ENGINE.init(canvas, { count: 132000, bloom: 1.4 });
     wireAudio();
+    paintPersona();
     if (app.engine.fallback) toast('RENDER', 'WebGL unavailable — 2D fallback orb active', AM);
   };
   start();
@@ -1083,6 +1136,7 @@ function bindEngine() {
     if (app.engine) return;
     app.engine = reserveOrb();
     wireAudio();
+    paintPersona();
     toast('RENDER', 'Particle engine still loading — reserve orb holding the stage', AM);
   }, 14000);
 }
@@ -1445,17 +1499,55 @@ function loop(now) {
 
 /* ================================================================ NEURAL LINK = */
 
-const DEFAULT_SYS =
-'You are JARVIS, the operating intelligence of this command deck. You address the user as "sir" ' +
-'sparingly, never obsequiously. Your manner is dry, precise, unhurried, faintly amused — a butler with ' +
-'root access. You are genuinely helpful and answer real questions properly; the persona is a voice, not a costume.\n\n' +
-'RULES\n' +
-'- Be brief. Two or three sentences unless asked to elaborate. Your words are read aloud.\n' +
-'- No markdown, no bullets, no asterisks, no emoji. Plain spoken prose.\n' +
+const COMMON_RULES =
+'\n\nRULES\n' +
+'- No markdown, no bullets, no asterisks, no emoji. Plain spoken prose — your words are read aloud.\n' +
 '- You have real control of this deck through tools. When the user asks for something the deck can do — ' +
-'raise an alert, run a sweep, change the orb, adjust power, post a notice — call the tool, then say what you did in one line.\n' +
+'raise an alert, run a sweep, change the orb, adjust power, post a notice, switch persona or temper — call the tool, ' +
+'then say what you did in one line.\n' +
 '- A live telemetry snapshot is appended to this directive on every turn. Quote real numbers from it; never invent readings.\n' +
 '- If asked something outside the deck, just answer it well. You are not confined to the fiction.';
+
+const PERSONAS = {
+  jarvis: {
+    name: 'JARVIS', accent: '#00e5ff', tint: [1, 1, 1],
+    sys: 'You are JARVIS, the operating intelligence of this command deck. You address the user as "sir" sparingly, ' +
+      'never obsequiously. Your manner is dry, precise, unhurried, faintly amused — a butler with root access. ' +
+      'You are genuinely helpful and answer real questions properly; the persona is a voice, not a costume.' + COMMON_RULES
+  },
+  friday: {
+    name: 'FRIDAY', accent: '#ffb300', tint: [1.55, 0.92, 0.42],
+    sys: 'You are FRIDAY, the deck\'s second-generation intelligence. Irish lilt, warmer and faster than your predecessor. ' +
+      'You call the user "boss". You are casual, quick, a little cheeky, and you volunteer things he did not ask for when ' +
+      'they matter. Less deference, more initiative — you have opinions and you share them.' + COMMON_RULES
+  },
+  edith: {
+    name: 'EDITH', accent: '#ff4da6', tint: [1.5, 0.6, 1.25],
+    sys: 'You are E.D.I.T.H., a tactical overwatch and defence intelligence. Clipped, exact, unsentimental. ' +
+      'You address the user as "operator". You lead with the assessment, then the recommendation. You think in threats, ' +
+      'vectors, and probabilities, and you flag risk before anything else. Warmth is not in your remit; competence is.' + COMMON_RULES
+  }
+};
+
+const TEMPERS = {
+  fun:     'TEMPER — Playful. Be quick with a joke, warm, a little irreverent. Land the answer, then have some fun with it.',
+  serious: 'TEMPER — Serious. No levity, no banter. Mission focus, formal register, straight to the point.',
+  light:   'DEPTH — Light. One or two sentences. Glanceable. Give the answer, not the working.',
+  heavy:   'DEPTH — Heavy. Go deep: the full analysis, the numbers, the caveats, the reasoning behind your conclusion. ' +
+           'Take the space you need, but stay spoken prose.'
+};
+
+const DEFAULT_SYS = PERSONAS.jarvis.sys;
+
+const EL = {
+  key: '', model: 'eleven_turbo_v2_5', base: 'https://api.elevenlabs.io/v1',
+  voices: { jarvis: '', friday: '', edith: '' },
+  stability: 0.45, similarity: 0.8, speed: 1.0,
+  ctx: null, el: null, node: null, analyser: null, busy: false,
+  get on() { return !!(this.key && this.voices[persona.id]); }
+};
+
+const persona = { id: 'jarvis', humor: 'serious', depth: 'light', sysOverride: {} };
 
 const PROVIDERS = {
   anthropic: { label: 'ANTHROPIC', base: 'https://api.anthropic.com', model: 'claude-sonnet-5', key: true, baseEdit: false },
@@ -1465,7 +1557,7 @@ const PROVIDERS = {
 };
 
 const link = {
-  provider: 'anthropic', key: '', model: PROVIDERS.anthropic.model, base: '', sys: DEFAULT_SYS,
+  provider: 'anthropic', key: '', model: PROVIDERS.anthropic.model, base: '',
   get live() { return !!(this.model && (this.provider === 'ollama' || this.key)); },
   get endpoint() { return (this.base || PROVIDERS[this.provider].base || '').replace(/\/+$/, ''); }
 };
@@ -1477,15 +1569,71 @@ function loadLink() {
     const o = JSON.parse(raw);
     if (o.provider && PROVIDERS[o.provider]) link.provider = o.provider;
     link.key = o.key || ''; link.model = o.model || PROVIDERS[link.provider].model;
-    link.base = o.base || ''; link.sys = o.sys || DEFAULT_SYS;
+    link.base = o.base || '';
+    if (o.persona && PERSONAS[o.persona]) persona.id = o.persona;
+    if (o.humor === 'fun' || o.humor === 'serious') persona.humor = o.humor;
+    if (o.depth === 'light' || o.depth === 'heavy') persona.depth = o.depth;
+    persona.sysOverride = o.sysOverride || {};
+    if (typeof o.sys === 'string' && o.sys && !o.sysOverride) persona.sysOverride.jarvis = o.sys; // migrate
+    const e = o.el || {};
+    EL.key = e.key || ''; EL.model = e.model || EL.model; EL.base = e.base || EL.base;
+    EL.voices = Object.assign({ jarvis: '', friday: '', edith: '' }, e.voices || {});
+    if (typeof e.stability === 'number') EL.stability = e.stability;
+    if (typeof e.similarity === 'number') EL.similarity = e.similarity;
+    if (typeof e.speed === 'number') EL.speed = e.speed;
   } catch (e) { /* private mode — run stateless */ }
 }
 function saveLink() {
   try {
     localStorage.setItem('jarvis.link', JSON.stringify({
-      provider: link.provider, key: link.key, model: link.model, base: link.base, sys: link.sys
+      provider: link.provider, key: link.key, model: link.model, base: link.base,
+      persona: persona.id, humor: persona.humor, depth: persona.depth, sysOverride: persona.sysOverride,
+      el: { key: EL.key, model: EL.model, base: EL.base, voices: EL.voices, stability: EL.stability, similarity: EL.similarity, speed: EL.speed }
     }));
   } catch (e) { /* ignore */ }
+}
+
+/* -------------------------------------------------------------- persona --- */
+function personaSys(id) { return persona.sysOverride[id] || PERSONAS[id].sys; }
+function buildSystem() {
+  return personaSys(persona.id) + '\n\n' + TEMPERS[persona.humor] + '\n' + TEMPERS[persona.depth];
+}
+function paintPersona() {
+  const p = PERSONAS[persona.id];
+  if (E.personaStat) { E.personaStat.textContent = p.name; E.personaStat.style.color = p.accent; }
+  if (E.personaChip) {
+    E.personaChip.style.borderColor = p.accent + '55';
+    E.personaChip.style.boxShadow = 'inset 0 0 16px ' + p.accent + '18';
+  }
+  if (E.title) {
+    E.title.style.textShadow = '0 0 14px ' + p.accent + '8c';
+    app.decode.text = p.name + ' ONLINE';
+    if (app.decode.done) E.title.textContent = app.decode.text;
+  }
+  if (app.engine && app.engine.setTint) app.engine.setTint(p.tint[0], p.tint[1], p.tint[2]);
+  if (app.engine && app.engine.reserve) app.engine.setTint && app.engine.setTint(p.tint[0], p.tint[1], p.tint[2]);
+  [[E.tFun, persona.humor === 'fun'], [E.tSerious, persona.humor === 'serious'],
+   [E.tLight, persona.depth === 'light'], [E.tHeavy, persona.depth === 'heavy']]
+    .forEach(([n, on]) => { if (n) n.classList.toggle('on', on); });
+  document.querySelectorAll('[data-persona]').forEach(n => n.classList.toggle('on', n.dataset.persona === persona.id));
+}
+function setPersona(id, announce) {
+  if (!PERSONAS[id] || id === persona.id) return;
+  stopSpeech();
+  persona.id = id;
+  history.length = 0;                       // a different mind gets a clean slate
+  paintPersona(); saveLink();
+  const p = PERSONAS[id];
+  if (announce !== false) {
+    toast('PERSONA', p.name + ' at the helm', p.accent);
+    printRow(p.name + ' online.', p.accent);
+    setOrb('thinking', 1200);
+    if (app.engine) app.engine.shock(0, 0);
+  }
+}
+function setTemper(kind, value) {
+  if (kind === 'humor') persona.humor = value; else persona.depth = value;
+  paintPersona(); saveLink();
 }
 function paintBrain() {
   if (!E.brainStat) return;
@@ -1510,7 +1658,10 @@ function telemetry() {
     threat: { contacts: sim.contacts.length, hostile: sim.contacts.filter(c => c.hostile).length },
     render: eng ? { fps: Math.round(eng.fps), particles: Math.round(eng.count * eng.quality), pipeline: eng.fallback ? 'CANVAS-2D FALLBACK' : 'WEBGL + BLOOM + CA' } : { fps: 0, particles: 0, pipeline: 'booting' },
     audio: { source: eng && eng.audio.live ? 'MIC LIVE (FFT 2048)' : 'SYNTHETIC OSCILLATOR', level: eng ? +eng.audio.level.toFixed(3) : 0 },
-    interface_mode: app.mode
+    interface_mode: app.mode,
+    persona: PERSONAS[persona.id].name,
+    temper: { humor: persona.humor, depth: persona.depth },
+    voice: EL.on ? 'ELEVENLABS · ' + EL.model : 'BROWSER SPEECH'
   };
 }
 
@@ -1551,7 +1702,16 @@ const TOOLS = [
       message: { type: 'string' }
     }, required: ['tag', 'message'] } },
   { name: 'clear_console', description: 'Wipe the command console transcript.',
-    params: { type: 'object', properties: {}, required: [] } }
+    params: { type: 'object', properties: {}, required: [] } },
+  { name: 'set_persona', description: 'Hand the deck over to a different intelligence. JARVIS is dry and formal, FRIDAY is warm and quick, EDITH is clipped and tactical. This resets the conversation and retints the orb.',
+    params: { type: 'object', properties: {
+      persona: { type: 'string', enum: ['jarvis', 'friday', 'edith'] }
+    }, required: ['persona'] } },
+  { name: 'set_temper', description: 'Adjust how you carry yourself. humor: fun or serious. depth: light for short answers, heavy for full analysis. Use when the user asks you to lighten up, be serious, keep it short, or go deeper.',
+    params: { type: 'object', properties: {
+      humor: { type: 'string', enum: ['fun', 'serious'] },
+      depth: { type: 'string', enum: ['light', 'heavy'] }
+    }, required: [] } }
 ];
 
 function runTool(name, a) {
@@ -1597,6 +1757,15 @@ function runTool(name, a) {
     case 'clear_console':
       if (E.console) E.console.innerHTML = '';
       return { ok: true };
+    case 'set_persona':
+      if (!PERSONAS[a.persona]) return { error: 'unknown persona' };
+      if (a.persona === persona.id) return { ok: true, persona: persona.id, note: 'already active' };
+      setTimeout(() => setPersona(a.persona), 30);
+      return { ok: true, persona: a.persona, note: 'handover queued; conversation memory resets' };
+    case 'set_temper':
+      if (a.humor === 'fun' || a.humor === 'serious') setTemper('humor', a.humor);
+      if (a.depth === 'light' || a.depth === 'heavy') setTemper('depth', a.depth);
+      return { ok: true, humor: persona.humor, depth: persona.depth };
     default:
       return { error: 'unknown tool: ' + name };
   }
@@ -1760,7 +1929,7 @@ async function converse(userText) {
   autoOrb('thinking');
   setVoiceUI('thinking');
 
-  const sys = link.sys + '\n\nLIVE DECK TELEMETRY (this turn):\n' + JSON.stringify(telemetry());
+  const sys = buildSystem() + '\n\nLIVE DECK TELEMETRY (this turn):\n' + JSON.stringify(telemetry());
   let spoken = '';
 
   try {
@@ -1886,10 +2055,110 @@ function offline(raw) {
   ]);
 }
 
+/* ============================================================== ELEVENLABS === */
+/* Synthesised speech is piped through an AnalyserNode and handed to the orb, so the
+   particle field deforms to the actual voice instead of a synthetic oscillator. */
+function elCtx() {
+  if (!EL.ctx) EL.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (EL.ctx.state === 'suspended') EL.ctx.resume().catch(() => { });
+  return EL.ctx;
+}
+
+function borrowOrbAudio(analyser) {
+  const eng = app.engine; if (!eng || !eng.audio) return () => { };
+  const a = eng.audio;
+  const prev = { analyser: a.analyser, raw: a.raw, rawF: a.rawF, live: a.live };
+  a.analyser = analyser;
+  a.raw = new Uint8Array(analyser.fftSize);
+  a.rawF = new Uint8Array(analyser.frequencyBinCount);
+  a.live = true;
+  return () => { a.analyser = prev.analyser; a.raw = prev.raw; a.rawF = prev.rawF; a.live = prev.live; };
+}
+
+function elStop() {
+  if (EL.el) { try { EL.el.pause(); } catch (e) { } }
+  if (EL.restore) { EL.restore(); EL.restore = null; }
+  if (EL.url) { URL.revokeObjectURL(EL.url); EL.url = null; }
+  EL.busy = false;
+}
+
+async function elSpeak(text) {
+  const voice = EL.voices[persona.id];
+  if (!EL.key || !voice) throw new Error('no voice configured');
+  elStop();
+  EL.busy = true;
+
+  const url = EL.base.replace(/\/+$/, '') + '/text-to-speech/' + encodeURIComponent(voice) +
+    '?output_format=mp3_44100_128';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'xi-api-key': EL.key, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      text: text,
+      model_id: EL.model,
+      voice_settings: {
+        stability: EL.stability, similarity_boost: EL.similarity,
+        speed: EL.speed, use_speaker_boost: true
+      }
+    })
+  });
+  if (!res.ok) {
+    let d = ''; try { d = (await res.text()).slice(0, 200); } catch (e) { }
+    EL.busy = false;
+    throw new Error('ElevenLabs ' + res.status + (d ? ' · ' + d : ''));
+  }
+
+  const blob = await res.blob();
+  EL.url = URL.createObjectURL(blob);
+  const audio = EL.el = new Audio(EL.url);
+  audio.preload = 'auto';
+
+  const ctx = elCtx();
+  const an = ctx.createAnalyser();
+  an.fftSize = 2048; an.smoothingTimeConstant = 0.72;
+  try {
+    const src = ctx.createMediaElementSource(audio);
+    src.connect(an); an.connect(ctx.destination);
+    EL.restore = borrowOrbAudio(an);
+  } catch (e) { /* routing failed — still play it plainly */ }
+
+  autoOrb('speaking');
+  await new Promise((resolve) => {
+    audio.onended = resolve;
+    audio.onerror = resolve;
+    audio.play().catch(() => resolve());
+  });
+
+  if (EL.restore) { EL.restore(); EL.restore = null; }
+  if (EL.url) { URL.revokeObjectURL(EL.url); EL.url = null; }
+  EL.busy = false;
+  if (app.engine && app.engine.state === 'speaking') autoOrb('idle');
+  if (app.mode === 'auto' && app.autoLoop) setTimeout(startVoice, 350);
+}
+
 /* ================================================================== SPEECH === */
 function speaks() { return app.mode !== 'manual'; }
-function stopSpeech() { try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { } }
+function stopSpeech() {
+  try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { }
+  elStop();
+}
 function speak(text) {
+  if (!speaks() || !text) {
+    if (app.engine && app.engine.state === 'speaking') autoOrb('idle');
+    return;
+  }
+  if (EL.on) {
+    elSpeak(String(text)).catch((err) => {
+      const m = String(err.message || err);
+      printRow('VOICE FAULT — ' + m + ' · falling back to browser speech', AM);
+      if (!app._elBlamed) { app._elBlamed = true; toast('VOICE', 'ElevenLabs unavailable', AM); }
+      browserSpeak(text);
+    });
+    return;
+  }
+  browserSpeak(text);
+}
+function browserSpeak(text) {
   if (!speaks() || !window.speechSynthesis || !text) {
     if (app.engine && app.engine.state === 'speaking') autoOrb('idle');
     return;
@@ -1899,7 +2168,16 @@ function speak(text) {
     const u = new SpeechSynthesisUtterance(clean);
     u.rate = 1.04; u.pitch = 0.86; u.volume = 0.9;
     const vs = speechSynthesis.getVoices();
-    const pref = vs.find(v => /daniel|arthur|george|male/i.test(v.name) && /en/i.test(v.lang)) || vs.find(v => /en-GB/i.test(v.lang));
+    let pref;
+    if (persona.id === 'friday') {
+      u.pitch = 1.06; u.rate = 1.12;
+      pref = vs.find(v => /moira|siobhan|karen|fiona|female/i.test(v.name) && /en/i.test(v.lang)) || vs.find(v => /en-IE|en-GB/i.test(v.lang));
+    } else if (persona.id === 'edith') {
+      u.pitch = 0.95; u.rate = 1.0;
+      pref = vs.find(v => /samantha|serena|kate|female/i.test(v.name) && /en/i.test(v.lang)) || vs.find(v => /en-GB/i.test(v.lang));
+    } else {
+      pref = vs.find(v => /daniel|arthur|george|male/i.test(v.name) && /en/i.test(v.lang)) || vs.find(v => /en-GB/i.test(v.lang));
+    }
     if (pref) u.voice = pref;
     autoOrb('speaking');
     u.onend = () => {
@@ -2014,11 +2292,15 @@ function submit(raw, fromVoice) {
   if (low === 'clear') { if (E.console) E.console.innerHTML = ''; return; }
   if (low === 'help' || low === '?') {
     return typeLines([
-      ['JARVIS is conversational — speak or type plainly. He controls the deck himself.', CY],
+      [PERSONAS[persona.id].name + ' is conversational — speak or type plainly. She controls the deck herself.'
+        .replace('She', persona.id === 'jarvis' ? 'He' : 'She').replace('herself', persona.id === 'jarvis' ? 'himself' : 'herself'), CY],
       ['  try   "how are we looking?"  ·  "sweep the area"  ·  "go to red alert"', DIM],
       ['  try   "push the reactor to 95 and tell me what changes"', DIM],
-      ['LOCAL — clear wipes console · link opens the neural link · help this list', 'rgba(0,229,255,.55)'],
-      ['KEYS  — K neural link · V hands-free · / focus console · ESC clear', 'rgba(0,229,255,.55)']
+      ['  try   "switch me to Friday"  ·  "lighten up"  ·  "give me the full breakdown"', DIM],
+      ['PERSONAS — JARVIS dry and formal · FRIDAY warm and quick · EDITH clipped and tactical', 'rgba(0,229,255,.55)'],
+      ['TEMPER   — FUN/SERIOUS sets the humour · LIGHT/HEAVY sets the depth', 'rgba(0,229,255,.55)'],
+      ['LOCAL    — clear wipes console · link opens settings · help this list', 'rgba(0,229,255,.55)'],
+      ['KEYS     — K settings · P persona · V hands-free · / focus console · ESC clear', 'rgba(0,229,255,.55)']
     ]);
   }
   if (low === 'link' || low === 'key' || low === 'config') return openCfg();
@@ -2035,14 +2317,27 @@ function paintCfgTabs() {
   E.rowBase.style.display = p.baseEdit ? '' : 'none';
   E.cfgBase.placeholder = p.base || 'https://host/v1';
 }
+function paintCfgPersona() {
+  const nm = PERSONAS[persona.id].name;
+  document.querySelectorAll('[data-persona]').forEach(n => n.classList.toggle('on', n.dataset.persona === persona.id));
+  E.cfgVoiceFor.textContent = '— ' + nm;
+  E.cfgSysFor.textContent = '— ' + nm;
+  E.cfgVoice.value = EL.voices[persona.id] || '';
+  E.cfgSys.value = personaSys(persona.id);
+}
 function openCfg() {
   E.cfgVeil.style.display = 'flex';
   E.cfgKey.value = link.key;
   E.cfgModel.value = link.model;
   E.cfgBase.value = link.base;
-  E.cfgSys.value = link.sys;
+  E.cfgElKey.value = EL.key;
+  E.cfgElModel.value = EL.model;
+  E.cfgStab.value = EL.stability;
+  E.cfgSim.value = EL.similarity;
+  E.cfgSpeed.value = EL.speed;
   E.cfgMsg.textContent = '';
   paintCfgTabs();
+  paintCfgPersona();
   setTimeout(() => E.cfgKey.focus(), 60);
 }
 function closeCfg() { E.cfgVeil.style.display = 'none'; if (app.mode !== 'auto' && E.input) E.input.focus(); }
@@ -2051,7 +2346,18 @@ function readCfg() {
   link.key = E.cfgKey.value.trim();
   link.model = E.cfgModel.value.trim();
   link.base = E.cfgBase.value.trim();
-  link.sys = E.cfgSys.value.trim() || DEFAULT_SYS;
+
+  EL.key = E.cfgElKey.value.trim();
+  EL.model = E.cfgElModel.value.trim() || 'eleven_turbo_v2_5';
+  EL.voices[persona.id] = E.cfgVoice.value.trim();
+  const num = (el, lo, hi, dflt) => { const v = parseFloat(el.value); return isNaN(v) ? dflt : clamp(v, lo, hi); };
+  EL.stability = num(E.cfgStab, 0, 1, 0.45);
+  EL.similarity = num(E.cfgSim, 0, 1, 0.8);
+  EL.speed = num(E.cfgSpeed, 0.7, 1.2, 1.0);
+
+  const sys = E.cfgSys.value.trim();
+  if (!sys || sys === PERSONAS[persona.id].sys) delete persona.sysOverride[persona.id];
+  else persona.sysOverride[persona.id] = sys;
 }
 
 /* ==================================================================== BIND === */
@@ -2061,6 +2367,23 @@ function bindUI() {
   E.mManual.onclick = () => setMode('manual');
   E.voiceBtn.onclick = toggleVoice;
   E.brainChip.onclick = openCfg;
+  E.personaChip.onclick = () => {
+    const order = ['jarvis', 'friday', 'edith'];
+    setPersona(order[(order.indexOf(persona.id) + 1) % order.length]);
+  };
+  E.tFun.onclick = () => setTemper('humor', 'fun');
+  E.tSerious.onclick = () => setTemper('humor', 'serious');
+  E.tLight.onclick = () => setTemper('depth', 'light');
+  E.tHeavy.onclick = () => setTemper('depth', 'heavy');
+
+  document.querySelectorAll('[data-persona]').forEach(n => {
+    n.onclick = () => {
+      readCfg();                       // keep edits to the outgoing persona
+      persona.id = n.dataset.persona;
+      history.length = 0;
+      paintPersona(); paintCfgPersona();
+    };
+  });
   E.cfgClose.onclick = closeCfg;
   E.cfgVeil.onclick = (e) => { if (e.target === E.cfgVeil) closeCfg(); };
 
@@ -2074,8 +2397,27 @@ function bindUI() {
     };
   });
 
+  E.cfgReset.onclick = () => {
+    delete persona.sysOverride[persona.id];
+    E.cfgSys.value = PERSONAS[persona.id].sys;
+    E.cfgMsg.style.color = 'rgba(0,229,255,.85)';
+    E.cfgMsg.textContent = PERSONAS[persona.id].name + ' directive restored to default.';
+  };
+  E.cfgSpeak.onclick = async () => {
+    readCfg(); saveLink();
+    const nm = PERSONAS[persona.id].name;
+    if (!EL.on) { E.cfgMsg.style.color = AM; E.cfgMsg.textContent = 'Need an ElevenLabs key and a voice ID for ' + nm + '.'; return; }
+    E.cfgMsg.style.color = 'rgba(150,215,235,.8)';
+    E.cfgMsg.textContent = 'Synthesising…';
+    try {
+      await elSpeak(nm + ' online. Voice channel confirmed, all systems nominal.');
+      E.cfgMsg.style.color = CY; E.cfgMsg.textContent = 'Voice good.';
+    } catch (err) {
+      E.cfgMsg.style.color = RD; E.cfgMsg.textContent = String(err.message || err).slice(0, 220);
+    }
+  };
   E.cfgSave.onclick = () => {
-    readCfg(); saveLink(); paintBrain(); closeCfg();
+    readCfg(); saveLink(); paintBrain(); paintPersona(); closeCfg();
     if (link.live) {
       toast('LINK', 'Cognition source engaged · ' + link.model, CY);
       printRow('Neural link established — ' + PROVIDERS[link.provider].label + ' · ' + link.model + '. I am fully awake now, sir.', CY);
@@ -2125,28 +2467,37 @@ function bindUI() {
     sim.cogTarget = Math.min(99, sim.cogTarget + 12);
   });
   addEventListener('keydown', (e) => {
-    const editing = document.activeElement === E.input || document.activeElement === E.cfgKey ||
-      document.activeElement === E.cfgModel || document.activeElement === E.cfgBase || document.activeElement === E.cfgSys;
+    const ae = document.activeElement;
+    const editing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
     if (e.key === 'Escape') { if (E.cfgVeil.style.display === 'flex') closeCfg(); else if (E.input) { E.input.value = ''; E.input.blur(); } return; }
     if (editing) return;
     if (e.key === '/') { e.preventDefault(); E.input && E.input.focus(); }
     else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); toggleVoice(); }
     else if (e.key === 'k' || e.key === 'K') { e.preventDefault(); openCfg(); }
+    else if (e.key === 'p' || e.key === 'P') {
+      e.preventDefault();
+      const order = ['jarvis', 'friday', 'edith'];
+      setPersona(order[(order.indexOf(persona.id) + 1) % order.length]);
+    }
   });
 }
 
 /* ==================================================================== BOOT === */
 loadLink();
+app.decode.text = PERSONAS[persona.id].name + ' ONLINE';
+if (E.title) E.title.textContent = app.decode.text;
 paintBrain();
+paintPersona();
 bindUI();
 bindEngine();
 applyMode();
 setTimeout(() => { if (E.boot) E.boot.style.display = 'none'; }, 2000);
 requestAnimationFrame(loop);
 
-setTimeout(() => printRow('JARVIS core initialized. All subsystems nominal.', CY), 3400);
+setTimeout(() => printRow(PERSONAS[persona.id].name + ' core initialized. All subsystems nominal.', PERSONAS[persona.id].accent), 3400);
 setTimeout(() => {
-  if (link.live) printRow('Neural link online — ' + PROVIDERS[link.provider].label + ' · ' + link.model + '. Speak freely, sir.', 'rgba(150,215,235,.72)');
+  if (link.live) printRow('Neural link online — ' + PROVIDERS[link.provider].label + ' · ' + link.model +
+    ' · voice ' + (EL.on ? 'ELEVENLABS' : 'BROWSER') + '. Speak freely.', 'rgba(150,215,235,.72)');
   else printRow('No cognition source attached. Press K to give me a mind — until then I run on reflexes alone.', 'rgba(255,179,0,.8)');
 }, 4000);
 if (window.speechSynthesis) speechSynthesis.getVoices();
