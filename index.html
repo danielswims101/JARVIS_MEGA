@@ -103,6 +103,10 @@
         <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">RENDER</div>
         <div id="perf" style="color:#7fe9ff; font-variant-numeric:tabular-nums;">— fps</div>
       </div>
+      <div style="display:flex; flex-direction:column; gap:2px;">
+        <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">VAULT</div>
+        <div id="vaultStat" style="color:rgba(150,215,235,.45);">NO VAULT</div>
+      </div>
       <div id="personaChip" title="Cycle persona (P)" style="display:flex; flex-direction:column; gap:2px; cursor:pointer; border:1px solid rgba(0,229,255,.24); padding:4px 10px; transition:all .45s cubic-bezier(.16,1,.3,1);">
         <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">PERSONA</div>
         <div id="personaStat" style="color:#00e5ff; letter-spacing:.16em;">JARVIS</div>
@@ -265,6 +269,36 @@
   <div style="position:absolute; inset:0; z-index:25; pointer-events:none; opacity:.35; background:repeating-linear-gradient(180deg, rgba(0,229,255,.055) 0px, rgba(0,229,255,.055) 1px, transparent 1px, transparent 3px);"></div>
   <div style="position:absolute; inset:-2px; z-index:26; pointer-events:none; border-radius:22px; box-shadow:inset 0 0 120px rgba(0,20,32,.85), inset 0 0 12px rgba(0,229,255,.10); background:radial-gradient(ellipse at 50% 50%, rgba(255,255,255,.018), transparent 60%);"></div>
 
+  <!-- =========================================================== WORKSPACE OVL -->
+  <div id="ovl" style="position:absolute; inset:0; z-index:40; display:none; align-items:center; justify-content:center; padding:52px 60px 130px; pointer-events:none;">
+    <div id="ovlPanel" style="position:relative; width:100%; height:100%; display:flex; flex-direction:column; pointer-events:auto;
+         background:linear-gradient(158deg, rgba(5,20,30,.94), rgba(2,7,12,.92)); border:1px solid rgba(0,229,255,.34);
+         box-shadow:0 0 70px rgba(0,229,255,.10), 0 30px 90px rgba(0,0,0,.7); backdrop-filter:blur(12px);
+         animation:panelIn .55s cubic-bezier(.16,1,.3,1) both; overflow:hidden;">
+      <div class="br tl-h"></div><div class="br tl-v"></div><div class="br br-h"></div><div class="br br-v"></div>
+      <div class="swp" style="animation-duration:11s;"></div>
+      <div class="phead" style="padding:10px 14px 8px;">
+        <div style="display:flex; align-items:center; gap:12px; min-width:0;">
+          <div class="ptitle" id="ovlTitle" style="font-size:10px;">WORKSPACE</div>
+          <div class="pstat" id="ovlSub" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <div id="ovlExport" style="font-size:9px; letter-spacing:.22em; color:rgba(0,229,255,.6); cursor:pointer; display:none;">EXPORT SVG</div>
+          <div id="ovlClose" style="font-size:9px; letter-spacing:.22em; color:rgba(0,229,255,.55); cursor:pointer;">ESC ✕</div>
+        </div>
+      </div>
+      <div style="flex:1; position:relative; min-height:0;">
+        <div id="ovlMap" style="position:absolute; inset:0; display:none;"></div>
+        <div id="ovlBlue" style="position:absolute; inset:0; display:none; overflow:auto; background:#04121c;"></div>
+        <div id="ovlWx" style="position:absolute; inset:0; display:none; overflow:auto; padding:18px 22px;"></div>
+        <div id="ovlBusy" style="position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:12px; background:rgba(2,7,12,.6);">
+          <div style="width:120px; height:2px; overflow:hidden;"><div style="width:40px; height:2px; background:linear-gradient(90deg,transparent,#00e5ff,transparent); animation:thinkBar 1.05s linear infinite;"></div></div>
+          <div id="ovlBusyMsg" style="font-size:9px; letter-spacing:.3em; color:rgba(0,229,255,.6);">ACQUIRING</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ========================================================= NEURAL LINK CFG -->
   <div id="cfgVeil" style="position:absolute; inset:0; z-index:70; display:none; align-items:center; justify-content:center; background:rgba(1,4,7,.72); backdrop-filter:blur(6px);">
     <div style="position:relative; width:min(560px,92vw); background:linear-gradient(158deg, rgba(6,24,36,.96), rgba(3,10,17,.94)); border:1px solid rgba(0,229,255,.35); box-shadow:0 0 60px rgba(0,229,255,.12), 0 30px 90px rgba(0,0,0,.7); animation:panelIn .6s cubic-bezier(.16,1,.3,1) both;">
@@ -304,6 +338,20 @@
         </div>
 
         <div style="border-top:1px solid rgba(0,229,255,.12); padding-top:12px;">
+          <span class="lbl">SUPABASE PROJECT URL <span style="color:rgba(150,215,235,.45); letter-spacing:.1em;">— the deck's long-term vault</span></span>
+          <input id="cfgSbUrl" class="fld" placeholder="https://xxxxxxxx.supabase.co" spellcheck="false" autocomplete="off">
+        </div>
+        <div>
+          <span class="lbl">SUPABASE ANON KEY</span>
+          <input id="cfgSbKey" class="fld" type="password" placeholder="eyJhbGciOi..." spellcheck="false" autocomplete="off">
+          <div style="font-size:9px; line-height:1.6; color:rgba(150,215,235,.42); margin-top:6px;">
+            For memory, run once in the Supabase SQL editor:
+            <span style="color:rgba(0,229,255,.7);">create table jarvis_memory (key text primary key, value text, updated_at timestamptz default now());</span>
+            then enable RLS with a permissive policy, or keep the table private and use a service context.
+          </div>
+        </div>
+
+        <div style="border-top:1px solid rgba(0,229,255,.12); padding-top:12px;">
           <span class="lbl">PROVIDER</span>
           <div style="display:flex;">
             <div class="tab" data-prov="anthropic">ANTHROPIC</div>
@@ -340,6 +388,34 @@
           The key never leaves this machine — it is held in localStorage and sent only to the provider you pick.
           Ollama needs <span style="color:rgba(0,229,255,.7);">OLLAMA_ORIGINS=*</span> to accept browser calls.
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ ACCESS GATE -->
+  <div id="gate" style="position:absolute; inset:0; z-index:90; display:none; align-items:center; justify-content:center; background:rgba(1,4,7,.82); backdrop-filter:blur(9px);">
+    <div style="position:relative; width:min(460px,90vw); background:linear-gradient(158deg, rgba(6,24,36,.97), rgba(3,10,17,.96));
+         border:1px solid rgba(0,229,255,.4); box-shadow:0 0 70px rgba(0,229,255,.14), 0 30px 90px rgba(0,0,0,.75);
+         animation:panelIn .7s cubic-bezier(.16,1,.3,1) both; padding:26px 26px 22px;">
+      <div class="br tl-h"></div><div class="br tl-v"></div><div class="br br-h"></div><div class="br br-v"></div>
+      <div class="swp" style="animation-duration:6s;"></div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
+        <div style="width:8px; height:8px; border-radius:50%; background:#ffb300; animation:dotPulse 1.6s cubic-bezier(.4,0,.2,1) infinite;"></div>
+        <div style="font-size:12px; letter-spacing:.34em; color:#ffb300;">RESTRICTED</div>
+      </div>
+      <div style="font-size:20px; letter-spacing:.22em; color:#eafcff; text-shadow:0 0 16px rgba(0,229,255,.5); margin:10px 0 4px;">ACCESS CODE</div>
+      <div style="font-size:10px; line-height:1.6; letter-spacing:.1em; color:rgba(150,215,235,.6); margin-bottom:18px;">
+        This deck is sealed. Present your code to wake it.
+      </div>
+      <input id="gateCode" class="fld" type="password" placeholder="••••••••" spellcheck="false" autocomplete="off"
+             style="text-align:center; font-size:17px; letter-spacing:.42em; padding:11px 9px;">
+      <div id="gateMsg" style="font-size:10px; line-height:1.5; color:rgba(255,179,0,.9); min-height:28px; margin-top:10px; text-align:center;"></div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <div class="btn ghost" id="gateCfg" style="flex:none;">SETTINGS</div>
+        <div class="btn" id="gateGo" style="flex:1; text-align:center;">AUTHENTICATE</div>
+      </div>
+      <div style="font-size:9px; line-height:1.6; color:rgba(150,215,235,.34); margin-top:16px; border-top:1px solid rgba(0,229,255,.12); padding-top:10px;">
+        Verified against the ACCESS_CODE secret in your Supabase project. The code is held for this browser session only.
       </div>
     </div>
   </div>
@@ -859,6 +935,30 @@ window.dispatchEvent(new Event('jarvis-engine-ready'));
 (function () {
 'use strict';
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRESET — fill these four in and the deck comes up configured.
+   No Anthropic key here on purpose: it lives in your Supabase secrets and is
+   only ever touched by the edge function. Nothing secret ships in this file.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const PRESET = {
+  supabaseUrl:     'https://gzqovsffnziumfbmqdes.supabase.co/functions/v1/jarvis-ai',                 // ← https://xxxxxxxxxxxx.supabase.co
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6cW92c2ZmbnppdW1mYm1xZGVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNTgyMTksImV4cCI6MjA5NzgzNDIxOX0.26E4yXVMAjaq_mg4R0BGqRy2adYlG8mgRkbEn3SU36Y',                 // ← the anon/publishable key (public by design)
+
+  chatFunction:    'jarvis-chat',      // edge function holding ANTHROPIC_API_KEY
+  verifyFunction:  'verify-access',    // edge function holding ACCESS_CODE
+  model:           'claude-fable-5',
+
+  requireAccessCode: true,             // gate the session behind the code
+
+  elevenKey: 'sk_1a2db9b34828b2c6b96fe6e01719210a882bf174285039b0',                       // optional — leave blank to use browser speech
+  voices: {
+    jarvis: 'eOpDij4ZcACvhwwZD4k1',    // Daniel  · replace with your custom voice ID
+    friday: 'CdqnllU7Nz7d5Wu8h8ha',    // Charlotte
+    edith:  'FEECqq79nQmylfvNhWa3'     // Sarah
+  }
+};
+/* ═════════════════════════════════════════════════════════════════════════ */
+
 const CY = '#00e5ff', BL = '#0a84ff', AM = '#ffb300', RD = '#ff3b30', VI = '#a06bff';
 const DIM = 'rgba(150,215,235,.75)';
 const GLYPH = '#$%&@!?/\\|<>=+*ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -880,7 +980,9 @@ const E = {};
  'transcript','thinkBar','cfgVeil','cfgClose','cfgKey','cfgBase','cfgModel','cfgSys',
  'cfgMsg','cfgSave','cfgTest','cfgWipe','rowKey','rowBase','personaChip','personaStat',
  'tFun','tSerious','tLight','tHeavy','cfgElKey','cfgVoice','cfgVoiceFor','cfgElModel',
- 'cfgStab','cfgSim','cfgSpeed','cfgSysFor','cfgReset','cfgSpeak'].forEach(k => E[k] = $(k));
+ 'cfgStab','cfgSim','cfgSpeed','cfgSysFor','cfgReset','cfgSpeak','cfgSbUrl','cfgSbKey',
+ 'vaultStat','ovl','ovlPanel','ovlTitle','ovlSub','ovlMap','ovlBlue','ovlWx','ovlBusy',
+ 'ovlBusyMsg','ovlClose','ovlExport','gate','gateCode','gateMsg','gateGo','gateCfg'].forEach(k => E[k] = $(k));
 
 /* ============================================================== SIMULATION === */
 const sim = (function build() {
@@ -1506,6 +1608,8 @@ const COMMON_RULES =
 'raise an alert, run a sweep, change the orb, adjust power, post a notice, switch persona or temper — call the tool, ' +
 'then say what you did in one line.\n' +
 '- A live telemetry snapshot is appended to this directive on every turn. Quote real numbers from it; never invent readings.\n' +
+'- You can open a live map and pinpoint places, render precise dimensioned blueprints, pull real weather, ' +
+'and read and write the user\'s Supabase vault. Reach for those instead of describing what you would do.\n' +
 '- If asked something outside the deck, just answer it well. You are not confined to the fiction.';
 
 const PERSONAS = {
@@ -1541,7 +1645,8 @@ const DEFAULT_SYS = PERSONAS.jarvis.sys;
 
 const EL = {
   key: '', model: 'eleven_turbo_v2_5', base: 'https://api.elevenlabs.io/v1',
-  voices: { jarvis: '', friday: '', edith: '' },
+  // ElevenLabs stock voices, preloaded so speech works on first open — override with your own.
+  voices: { jarvis: 'onwK4e9ZLuTAKqWW03F9', friday: 'XB0fDUnXU5powFXDhCwa', edith: 'EXAVITQu4vr4xnSDxMaL' },
   stability: 0.45, similarity: 0.8, speed: 1.0,
   ctx: null, el: null, node: null, analyser: null, busy: false,
   get on() { return !!(this.key && this.voices[persona.id]); }
@@ -1550,6 +1655,7 @@ const EL = {
 const persona = { id: 'jarvis', humor: 'serious', depth: 'light', sysOverride: {} };
 
 const PROVIDERS = {
+  proxy:     { label: 'SUPABASE',  base: '',                          model: PRESET.model,     key: false, baseEdit: false },
   anthropic: { label: 'ANTHROPIC', base: 'https://api.anthropic.com', model: 'claude-sonnet-5', key: true, baseEdit: false },
   openai:    { label: 'OPENAI',    base: 'https://api.openai.com/v1',  model: 'gpt-4o-mini',    key: true, baseEdit: false },
   custom:    { label: 'CUSTOM',    base: '',                            model: '',               key: true, baseEdit: true },
@@ -1558,9 +1664,30 @@ const PROVIDERS = {
 
 const link = {
   provider: 'anthropic', key: '', model: PROVIDERS.anthropic.model, base: '',
-  get live() { return !!(this.model && (this.provider === 'ollama' || this.key)); },
-  get endpoint() { return (this.base || PROVIDERS[this.provider].base || '').replace(/\/+$/, ''); }
+  get live() {
+    if (!this.model) return false;
+    if (this.provider === 'proxy') return !!(SB.url && SB.key);
+    if (this.provider === 'ollama') return true;
+    return !!this.key;
+  },
+  get endpoint() {
+    if (this.provider === 'proxy') return SB.url.replace(/\/+$/, '') + '/functions/v1/' + PRESET.chatFunction;
+    return (this.base || PROVIDERS[this.provider].base || '').replace(/\/+$/, '');
+  }
 };
+
+function seedFromPreset() {
+  if (PRESET.supabaseUrl && !SB.url) SB.url = PRESET.supabaseUrl;
+  if (PRESET.supabaseAnonKey && !SB.key) SB.key = PRESET.supabaseAnonKey;
+  if (PRESET.elevenKey && !EL.key) EL.key = PRESET.elevenKey;
+  ['jarvis', 'friday', 'edith'].forEach(k => {
+    if (PRESET.voices && PRESET.voices[k] && !EL.voices[k]) EL.voices[k] = PRESET.voices[k];
+  });
+  if (SB.url && SB.key && !localStorage.getItem('jarvis.link')) {
+    link.provider = 'proxy';
+    link.model = PRESET.model;
+  }
+}
 
 function loadLink() {
   try {
@@ -1577,10 +1704,12 @@ function loadLink() {
     if (typeof o.sys === 'string' && o.sys && !o.sysOverride) persona.sysOverride.jarvis = o.sys; // migrate
     const e = o.el || {};
     EL.key = e.key || ''; EL.model = e.model || EL.model; EL.base = e.base || EL.base;
-    EL.voices = Object.assign({ jarvis: '', friday: '', edith: '' }, e.voices || {});
+    EL.voices = Object.assign({}, EL.voices, e.voices || {});
     if (typeof e.stability === 'number') EL.stability = e.stability;
     if (typeof e.similarity === 'number') EL.similarity = e.similarity;
     if (typeof e.speed === 'number') EL.speed = e.speed;
+    const v = o.vault || {};
+    SB.url = v.url || ''; SB.key = v.key || '';
   } catch (e) { /* private mode — run stateless */ }
 }
 function saveLink() {
@@ -1588,7 +1717,8 @@ function saveLink() {
     localStorage.setItem('jarvis.link', JSON.stringify({
       provider: link.provider, key: link.key, model: link.model, base: link.base,
       persona: persona.id, humor: persona.humor, depth: persona.depth, sysOverride: persona.sysOverride,
-      el: { key: EL.key, model: EL.model, base: EL.base, voices: EL.voices, stability: EL.stability, similarity: EL.similarity, speed: EL.speed }
+      el: { key: EL.key, model: EL.model, base: EL.base, voices: EL.voices, stability: EL.stability, similarity: EL.similarity, speed: EL.speed },
+      vault: { url: SB.url, key: SB.key }
     }));
   } catch (e) { /* ignore */ }
 }
@@ -1707,6 +1837,90 @@ const TOOLS = [
     params: { type: 'object', properties: {
       persona: { type: 'string', enum: ['jarvis', 'friday', 'edith'] }
     }, required: ['persona'] } },
+  { name: 'show_map', description: 'Open the tactical map inside the deck and pinpoint locations. Give either a query (place name or address), explicit lat/lon, or a list of pins. Use this whenever the user asks where something is, to see a place, or to mark positions.',
+    params: { type: 'object', properties: {
+      query: { type: 'string', description: 'Place or address to centre on and pin.' },
+      lat: { type: 'number' }, lon: { type: 'number' },
+      zoom: { type: 'number', description: '1 world, 13 city, 17 street. Default 13.' },
+      label: { type: 'string' },
+      pins: { type: 'array', description: 'Additional points to mark.', items: { type: 'object', properties: {
+        query: { type: 'string' }, lat: { type: 'number' }, lon: { type: 'number' },
+        label: { type: 'string' }, kind: { type: 'string', enum: ['contact', 'objective', 'hostile'] }
+      } } },
+      route: { type: 'array', description: 'Polyline as [[lat,lon],...] drawn between points.', items: { type: 'array', items: { type: 'number' } } }
+    }, required: [] } },
+
+  { name: 'draw_blueprint', description: 'Render a precise dimensioned engineering drawing on the deck. Coordinates are millimetres on the sheet, Y increases DOWNWARD, origin top-left. Place each view with its own origin so views do not overlap. Be exact: real dimensions, real proportions, closed outlines, centre lines through holes, and a dimension for every critical feature. Use for any schematic, plan, mechanism, circuit layout, floorplan or part drawing.',
+    params: { type: 'object', properties: {
+      title: { type: 'string' }, subtitle: { type: 'string' },
+      units: { type: 'string', description: 'mm by default.' },
+      scale: { type: 'string', description: 'e.g. 1:1, 1:10, 2:1' },
+      revision: { type: 'string' },
+      sheet: { type: 'object', properties: { w: { type: 'number' }, h: { type: 'number' } }, description: 'Default 420 x 297 (A3 landscape).' },
+      views: { type: 'array', items: { type: 'object', properties: {
+        name: { type: 'string', description: 'e.g. FRONT ELEVATION, PLAN, SECTION A-A, DETAIL 1' },
+        origin: { type: 'array', items: { type: 'number' }, description: '[x,y] of this view on the sheet.' },
+        scale: { type: 'number', description: 'Multiplier applied to this view only.' },
+        elements: { type: 'array', items: { type: 'object', properties: {
+          t: { type: 'string', enum: ['line', 'rect', 'circle', 'ellipse', 'arc', 'poly', 'path', 'text', 'centermark', 'hatch'] },
+          a: { type: 'array', items: { type: 'number' } }, b: { type: 'array', items: { type: 'number' } },
+          at: { type: 'array', items: { type: 'number' } }, c: { type: 'array', items: { type: 'number' } },
+          pts: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
+          w: { type: 'number' }, h: { type: 'number' }, r: { type: 'number' },
+          rx: { type: 'number' }, ry: { type: 'number' }, a0: { type: 'number' }, a1: { type: 'number' },
+          d: { type: 'string' }, s: { type: 'string' }, size: { type: 'number' },
+          anchor: { type: 'string', enum: ['start', 'middle', 'end'] }, closed: { type: 'boolean' },
+          angle: { type: 'number' }, step: { type: 'number' },
+          style: { type: 'string', enum: ['solid', 'heavy', 'thin', 'hidden', 'center', 'phantom'] }
+        } } },
+        dims: { type: 'array', description: 'Dimension annotations.', items: { type: 'object', properties: {
+          t: { type: 'string', enum: ['dim', 'rdim', 'leader'] },
+          a: { type: 'array', items: { type: 'number' } }, b: { type: 'array', items: { type: 'number' } },
+          c: { type: 'array', items: { type: 'number' } }, r: { type: 'number' },
+          from: { type: 'array', items: { type: 'number' } }, to: { type: 'array', items: { type: 'number' } },
+          off: { type: 'number', description: 'Offset of the dimension line from the feature. Default 12.' },
+          dir: { type: 'string', enum: ['h', 'v', 'aligned'] },
+          at: { type: 'number', description: 'For rdim: leader angle in degrees.' },
+          dia: { type: 'boolean', description: 'For rdim: annotate as diameter instead of radius.' },
+          label: { type: 'string', description: 'Overrides the measured value.' },
+          s: { type: 'string', description: 'Leader note text.' }
+        } } }
+      } } },
+      notes: { type: 'array', items: { type: 'string' } },
+      bom: { type: 'array', description: 'Bill of materials.', items: { type: 'object', properties: {
+        item: { type: 'number' }, qty: { type: 'number' }, desc: { type: 'string' }, material: { type: 'string' }
+      } } }
+    }, required: ['title', 'views'] } },
+
+  { name: 'show_weather', description: 'Pop the atmospheric readout for a location — current conditions, 24 hour trace and seven day outlook. Use whenever the user asks about weather. The returned data is real; quote it.',
+    params: { type: 'object', properties: {
+      location: { type: 'string' }, lat: { type: 'number' }, lon: { type: 'number' },
+      units: { type: 'string', enum: ['metric', 'imperial'] }
+    }, required: [] } },
+
+  { name: 'close_workspace', description: 'Dismiss whatever the map, schematic or weather overlay is showing.',
+    params: { type: 'object', properties: {}, required: [] } },
+
+  { name: 'vault_tables', description: 'List the tables available in the connected Supabase vault.',
+    params: { type: 'object', properties: {}, required: [] } },
+  { name: 'vault_query', description: 'Read rows from a Supabase table using PostgREST syntax.',
+    params: { type: 'object', properties: {
+      table: { type: 'string' },
+      select: { type: 'string', description: 'Columns, e.g. "*" or "id,name". Default *.' },
+      filter: { type: 'string', description: 'Raw PostgREST filter, e.g. "status=eq.active&age=gt.30".' },
+      order: { type: 'string', description: 'e.g. "created_at.desc"' },
+      limit: { type: 'number', description: 'Default 20, max 200.' }
+    }, required: ['table'] } },
+  { name: 'vault_insert', description: 'Insert rows into a Supabase table.',
+    params: { type: 'object', properties: {
+      table: { type: 'string' },
+      rows: { type: 'array', items: { type: 'object' }, description: 'Array of row objects.' }
+    }, required: ['table', 'rows'] } },
+  { name: 'remember', description: 'Persist a fact to the vault so it survives a reload. Uses the jarvis_memory table.',
+    params: { type: 'object', properties: { key: { type: 'string' }, value: { type: 'string' } }, required: ['key', 'value'] } },
+  { name: 'recall', description: 'Read something previously remembered. Omit key to list everything stored.',
+    params: { type: 'object', properties: { key: { type: 'string' } }, required: [] } },
+
   { name: 'set_temper', description: 'Adjust how you carry yourself. humor: fun or serious. depth: light for short answers, heavy for full analysis. Use when the user asks you to lighten up, be serious, keep it short, or go deeper.',
     params: { type: 'object', properties: {
       humor: { type: 'string', enum: ['fun', 'serious'] },
@@ -1762,6 +1976,39 @@ function runTool(name, a) {
       if (a.persona === persona.id) return { ok: true, persona: persona.id, note: 'already active' };
       setTimeout(() => setPersona(a.persona), 30);
       return { ok: true, persona: a.persona, note: 'handover queued; conversation memory resets' };
+    case 'show_map':
+      return showMap(a);
+    case 'draw_blueprint':
+      return drawBlueprint(a);
+    case 'show_weather':
+      return showWeather(a);
+    case 'close_workspace':
+      ovlClose();
+      return { ok: true };
+
+    case 'vault_tables':
+      return SB.tables().then(t => ({ ok: true, tables: t }));
+    case 'vault_query': {
+      const q = [];
+      q.push('select=' + encodeURIComponent(a.select || '*'));
+      if (a.order) q.push('order=' + encodeURIComponent(a.order));
+      q.push('limit=' + clamp(a.limit || 20, 1, 200));
+      const path = encodeURIComponent(a.table) + '?' + q.join('&') + (a.filter ? '&' + a.filter : '');
+      return SB.rest(path).then(rows => ({ ok: true, count: rows ? rows.length : 0, rows: rows }));
+    }
+    case 'vault_insert':
+      return SB.rest(encodeURIComponent(a.table), {
+        method: 'POST', body: a.rows, headers: { prefer: 'return=representation' }
+      }).then(rows => ({ ok: true, inserted: rows ? rows.length : 0, rows: rows }));
+    case 'remember':
+      return SB.rest('jarvis_memory', {
+        method: 'POST', body: [{ key: a.key, value: String(a.value) }],
+        headers: { prefer: 'resolution=merge-duplicates,return=representation' }
+      }).then(() => { streamRow('MEM', 'stored · ' + a.key, VI); return { ok: true, key: a.key }; });
+    case 'recall':
+      return SB.rest('jarvis_memory?select=key,value' + (a.key ? '&key=eq.' + encodeURIComponent(a.key) : '') + '&limit=200')
+        .then(rows => ({ ok: true, memories: rows }));
+
     case 'set_temper':
       if (a.humor === 'fun' || a.humor === 'serious') setTemper('humor', a.humor);
       if (a.depth === 'light' || a.depth === 'heavy') setTemper('depth', a.depth);
@@ -1830,15 +2077,23 @@ async function* sse(res) {
 
 /* One streamed turn. Returns { text, tools }. onText fires per token. */
 async function turn(hist, sys, onText) {
-  const anth = link.provider === 'anthropic';
-  const url = link.endpoint + (anth ? '/v1/messages' : '/chat/completions');
+  const proxied = link.provider === 'proxy';
+  const anth = proxied || link.provider === 'anthropic';
+  const url = proxied ? link.endpoint : link.endpoint + (anth ? '/v1/messages' : '/chat/completions');
   const headers = { 'content-type': 'application/json' };
   let body;
 
   if (anth) {
-    headers['x-api-key'] = link.key;
-    headers['anthropic-version'] = '2023-06-01';
-    headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    if (proxied) {
+      // the key never leaves Supabase — we only carry the anon key and the session code
+      headers['apikey'] = SB.key;
+      headers['authorization'] = 'Bearer ' + SB.key;
+      if (GATE.code) headers['x-access-code'] = GATE.code;
+    } else {
+      headers['x-api-key'] = link.key;
+      headers['anthropic-version'] = '2023-06-01';
+      headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    }
     body = {
       model: link.model, max_tokens: 1024, stream: true, system: sys,
       messages: toAnthropic(hist),
@@ -1953,7 +2208,14 @@ async function converse(userText) {
           const arg = JSON.stringify(t.input || {});
           printRow('  ⟐ ' + t.name + (arg !== '{}' ? ' · ' + arg.slice(0, 90) : ''), 'rgba(160,107,255,.75)');
           let out;
-          try { out = runTool(t.name, t.input); } catch (e) { out = { error: String(e.message || e) }; }
+          try {
+            out = await runTool(t.name, t.input);
+          } catch (e) {
+            const msg = String((e && e.message) || e);
+            out = { error: msg };
+            printRow('  ⚠ ' + t.name + ' — ' + msg, AM);
+            ovlFail(msg);
+          }
           history.push({ role: 'tool', id: t.id, name: t.name, output: JSON.stringify(out) });
         }
         continue;
@@ -2286,6 +2548,7 @@ function applyMode() {
 function submit(raw, fromVoice) {
   const text = String(raw || '').trim();
   if (!text) return;
+  if (!app._started) return;
   if (!fromVoice) printRow('> ' + text, CY);
 
   const low = text.toLowerCase();
@@ -2297,9 +2560,13 @@ function submit(raw, fromVoice) {
       ['  try   "how are we looking?"  ·  "sweep the area"  ·  "go to red alert"', DIM],
       ['  try   "push the reactor to 95 and tell me what changes"', DIM],
       ['  try   "switch me to Friday"  ·  "lighten up"  ·  "give me the full breakdown"', DIM],
+      ['  try   "show me Reykjavik"  ·  "what is the weather in Osaka"', DIM],
+      ['  try   "draw me a dimensioned blueprint of a 600mm workbench bracket"', DIM],
+      ['  try   "what tables are in the vault"  ·  "remember that my hangar is bay 14"', DIM],
       ['PERSONAS — JARVIS dry and formal · FRIDAY warm and quick · EDITH clipped and tactical', 'rgba(0,229,255,.55)'],
       ['TEMPER   — FUN/SERIOUS sets the humour · LIGHT/HEAVY sets the depth', 'rgba(0,229,255,.55)'],
       ['LOCAL    — clear wipes console · link opens settings · help this list', 'rgba(0,229,255,.55)'],
+      ['WORKSPACE— map, schematics and weather open over the deck · ESC dismisses · EXPORT SVG saves a drawing', 'rgba(0,229,255,.55)'],
       ['KEYS     — K settings · P persona · V hands-free · / focus console · ESC clear', 'rgba(0,229,255,.55)']
     ]);
   }
@@ -2314,6 +2581,7 @@ function paintCfgTabs() {
   document.querySelectorAll('[data-prov]').forEach(n => n.classList.toggle('on', n.dataset.prov === link.provider));
   const p = PROVIDERS[link.provider];
   E.rowKey.style.display = p.key ? '' : 'none';
+  E.cfgSbUrl.parentNode.style.opacity = link.provider === 'proxy' ? '1' : '.75';
   E.rowBase.style.display = p.baseEdit ? '' : 'none';
   E.cfgBase.placeholder = p.base || 'https://host/v1';
 }
@@ -2330,6 +2598,8 @@ function openCfg() {
   E.cfgKey.value = link.key;
   E.cfgModel.value = link.model;
   E.cfgBase.value = link.base;
+  E.cfgSbUrl.value = SB.url;
+  E.cfgSbKey.value = SB.key;
   E.cfgElKey.value = EL.key;
   E.cfgElModel.value = EL.model;
   E.cfgStab.value = EL.stability;
@@ -2346,6 +2616,9 @@ function readCfg() {
   link.key = E.cfgKey.value.trim();
   link.model = E.cfgModel.value.trim();
   link.base = E.cfgBase.value.trim();
+
+  SB.url = E.cfgSbUrl.value.trim();
+  SB.key = E.cfgSbKey.value.trim();
 
   EL.key = E.cfgElKey.value.trim();
   EL.model = E.cfgElModel.value.trim() || 'eleven_turbo_v2_5';
@@ -2385,6 +2658,11 @@ function bindUI() {
     };
   });
   E.cfgClose.onclick = closeCfg;
+  E.ovlClose.onclick = ovlClose;
+  E.gateGo.onclick = submitCode;
+  E.gateCfg.onclick = openCfg;
+  E.gateCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitCode(); });
+  E.ovlExport.onclick = exportSvg;
   E.cfgVeil.onclick = (e) => { if (e.target === E.cfgVeil) closeCfg(); };
 
   document.querySelectorAll('[data-prov]').forEach(n => {
@@ -2417,7 +2695,7 @@ function bindUI() {
     }
   };
   E.cfgSave.onclick = () => {
-    readCfg(); saveLink(); paintBrain(); paintPersona(); closeCfg();
+    readCfg(); saveLink(); paintBrain(); paintPersona(); paintVault(); closeCfg();
     if (link.live) {
       toast('LINK', 'Cognition source engaged · ' + link.model, CY);
       printRow('Neural link established — ' + PROVIDERS[link.provider].label + ' · ' + link.model + '. I am fully awake now, sir.', CY);
@@ -2469,7 +2747,12 @@ function bindUI() {
   addEventListener('keydown', (e) => {
     const ae = document.activeElement;
     const editing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
-    if (e.key === 'Escape') { if (E.cfgVeil.style.display === 'flex') closeCfg(); else if (E.input) { E.input.value = ''; E.input.blur(); } return; }
+    if (e.key === 'Escape') {
+      if (E.cfgVeil.style.display === 'flex') closeCfg();
+      else if (E.ovl.style.display === 'flex') ovlClose();
+      else if (E.input) { E.input.value = ''; E.input.blur(); }
+      return;
+    }
     if (editing) return;
     if (e.key === '/') { e.preventDefault(); E.input && E.input.focus(); }
     else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); toggleVoice(); }
@@ -2482,24 +2765,685 @@ function bindUI() {
   });
 }
 
+/* ================================================================ WORKSPACE == */
+const OVL = { mode: null, map: null, L: null, layers: [], svg: null, name: 'schematic' };
+
+function ovlOpen(mode, title, sub) {
+  OVL.mode = mode;
+  E.ovl.style.display = 'flex';
+  E.ovlTitle.textContent = title;
+  E.ovlSub.textContent = sub || '';
+  E.ovlMap.style.display = mode === 'map' ? 'block' : 'none';
+  E.ovlBlue.style.display = mode === 'blueprint' ? 'block' : 'none';
+  E.ovlWx.style.display = mode === 'weather' ? 'block' : 'none';
+  E.ovlExport.style.display = mode === 'blueprint' ? 'block' : 'none';
+  E.ovlBusyMsg.style.color = 'rgba(0,229,255,.6)';
+  if (mode === 'map' && OVL.map) setTimeout(() => OVL.map.invalidateSize(), 60);
+}
+function ovlClose() { E.ovl.style.display = 'none'; OVL.mode = null; }
+function ovlBusy(on, msg) {
+  E.ovlBusy.style.display = on ? 'flex' : 'none';
+  if (msg) E.ovlBusyMsg.textContent = msg;
+}
+function ovlFail(msg) {
+  if (!OVL.mode) return;
+  E.ovlBusy.style.display = 'flex';
+  E.ovlBusyMsg.textContent = String(msg).toUpperCase().slice(0, 90);
+  E.ovlBusyMsg.style.color = 'rgba(255,179,0,.9)';
+  E.ovlSub.textContent = 'failed';
+}
+
+/* ================================================================= SUPABASE == */
+const SB = {
+  url: '', key: '',
+  get on() { return !!(this.url && this.key); },
+  headers(extra) {
+    return Object.assign({
+      apikey: this.key, authorization: 'Bearer ' + this.key, 'content-type': 'application/json'
+    }, extra || {});
+  },
+  async rest(path, opts) {
+    if (!this.on) throw new Error('no vault configured');
+    opts = opts || {};
+    const res = await fetch(this.url.replace(/\/+$/, '') + '/rest/v1/' + path, {
+      method: opts.method || 'GET',
+      headers: this.headers(opts.headers),
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    });
+    const txt = await res.text();
+    if (!res.ok) throw new Error('vault ' + res.status + ' · ' + txt.slice(0, 220));
+    return txt ? JSON.parse(txt) : null;
+  },
+  async tables() {
+    const res = await fetch(this.url.replace(/\/+$/, '') + '/rest/v1/', { headers: this.headers() });
+    if (!res.ok) throw new Error('vault ' + res.status);
+    const j = await res.json();
+    const defs = j.definitions || (j.components && j.components.schemas) || {};
+    return Object.keys(defs);
+  }
+};
+function paintVault() {
+  if (!E.vaultStat) return;
+  E.vaultStat.textContent = SB.on ? 'LINKED' : 'NO VAULT';
+  E.vaultStat.style.color = SB.on ? CY : 'rgba(150,215,235,.45)';
+}
+
+/* =============================================================== GEOCODING === */
+async function geocode(q) {
+  const wx = 'https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&format=json&name=' + encodeURIComponent(q);
+  try {
+    const r = await fetch(wx);
+    if (r.ok) {
+      const j = await r.json();
+      const h = j.results && j.results[0];
+      if (h) return { lat: h.latitude, lon: h.longitude, label: [h.name, h.admin1, h.country].filter(Boolean).join(', ') };
+    }
+  } catch (e) { /* fall through to the street-level geocoder */ }
+  const nm = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q);
+  const r2 = await fetch(nm, { headers: { accept: 'application/json' } });
+  if (!r2.ok) throw new Error('geocoder ' + r2.status);
+  const j2 = await r2.json();
+  if (!j2.length) throw new Error('no match for "' + q + '"');
+  return { lat: +j2[0].lat, lon: +j2[0].lon, label: j2[0].display_name };
+}
+
+/* ===================================================================== MAP === */
+function loadLeaflet() {
+  if (OVL.L) return Promise.resolve(OVL.L);
+  if (OVL._leafletP) return OVL._leafletP;
+  OVL._leafletP = new Promise((resolve, reject) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(css);
+    const js = document.createElement('script');
+    js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    js.onload = () => { OVL.L = window.L; resolve(window.L); };
+    js.onerror = () => reject(new Error('could not reach the map library'));
+    document.head.appendChild(js);
+    setTimeout(() => reject(new Error('could not reach the map library')), 9000);
+  });
+  return OVL._leafletP;
+}
+
+function mapPinIcon(L, kind, label) {
+  const col = kind === 'hostile' ? RD : kind === 'objective' ? AM : PERSONAS[persona.id].accent;
+  return L.divIcon({
+    className: '', iconSize: [18, 18], iconAnchor: [9, 9],
+    html: '<div style="position:relative;width:18px;height:18px;">' +
+      '<div style="position:absolute;inset:0;border:1px solid ' + col + ';transform:rotate(45deg);box-shadow:0 0 10px ' + col + '99;"></div>' +
+      '<div style="position:absolute;inset:6px;background:' + col + ';border-radius:50%;"></div>' +
+      (label ? '<div style="position:absolute;left:22px;top:1px;white-space:nowrap;font:400 9px \'JetBrains Mono\',monospace;letter-spacing:.14em;color:' + col + ';text-shadow:0 0 8px #000;">' + esc(label) + '</div>' : '') +
+      '</div>'
+  });
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+async function showMap(a) {
+  ovlOpen('map', 'TACTICAL MAP', 'acquiring…');
+  ovlBusy(true, 'LOADING TILES');
+  const L = await loadLeaflet();
+
+  let center = null;
+  const pins = [];
+  for (const p of (a.pins || [])) {
+    let lat = p.lat, lon = p.lon, label = p.label;
+    if ((lat == null || lon == null) && p.query) {
+      const g = await geocode(p.query);
+      lat = g.lat; lon = g.lon; label = label || g.label;
+    }
+    if (lat != null && lon != null) pins.push({ lat, lon, label, kind: p.kind });
+  }
+  if (a.query) { const g = await geocode(a.query); center = [g.lat, g.lon]; if (!pins.length) pins.push({ lat: g.lat, lon: g.lon, label: a.label || g.label }); }
+  else if (a.lat != null && a.lon != null) center = [a.lat, a.lon];
+  else if (pins.length) center = [pins[0].lat, pins[0].lon];
+  if (!center) throw new Error('nothing to centre on');
+
+  if (!OVL.map) {
+    OVL.map = L.map(E.ovlMap, { zoomControl: true, attributionControl: true, worldCopyJump: true });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 20, attribution: '© OpenStreetMap · © CARTO'
+    }).addTo(OVL.map);
+    const read = L.control({ position: 'bottomleft' });
+    read.onAdd = function () {
+      const d = L.DomUtil.create('div');
+      d.style.cssText = 'font:400 10px "JetBrains Mono",monospace;letter-spacing:.1em;color:#8fe6ff;background:rgba(3,10,17,.8);border:1px solid rgba(0,229,255,.3);padding:4px 8px;';
+      d.textContent = '--.----, --.----';
+      OVL._readout = d; return d;
+    };
+    read.addTo(OVL.map);
+    OVL.map.on('mousemove', (e) => {
+      if (OVL._readout) OVL._readout.textContent = e.latlng.lat.toFixed(4) + ', ' + e.latlng.lng.toFixed(4);
+    });
+  }
+  OVL.layers.forEach(l => OVL.map.removeLayer(l));
+  OVL.layers = [];
+
+  pins.forEach(p => {
+    const m = L.marker([p.lat, p.lon], { icon: mapPinIcon(L, p.kind, p.label) }).addTo(OVL.map);
+    const ring = L.circle([p.lat, p.lon], { radius: p.kind === 'hostile' ? 900 : 500,
+      color: p.kind === 'hostile' ? RD : PERSONAS[persona.id].accent, weight: 1, opacity: .5, fillOpacity: .06 }).addTo(OVL.map);
+    OVL.layers.push(m, ring);
+  });
+  if (a.route && a.route.length > 1) {
+    const line = L.polyline(a.route.map(p => [p[0], p[1]]), { color: PERSONAS[persona.id].accent, weight: 2, opacity: .8, dashArray: '6 6' }).addTo(OVL.map);
+    OVL.layers.push(line);
+  }
+
+  if (pins.length > 1) OVL.map.fitBounds(L.latLngBounds(pins.map(p => [p.lat, p.lon])).pad(0.25));
+  else OVL.map.setView(center, a.zoom || 13);
+  setTimeout(() => OVL.map.invalidateSize(), 80);
+
+  ovlBusy(false);
+  const sub = pins.length ? pins.map(p => p.label).filter(Boolean).slice(0, 3).join(' · ') : center.map(n => n.toFixed(4)).join(', ');
+  E.ovlSub.textContent = sub;
+  return { ok: true, centre: center, pins: pins.map(p => ({ label: p.label, lat: +p.lat.toFixed(5), lon: +p.lon.toFixed(5), kind: p.kind || 'contact' })) };
+}
+
+/* ============================================================== BLUEPRINT === */
+const BP_STYLE = {
+  solid:   { dash: '', w: 0.6, col: '#9fe8ff' },
+  heavy:   { dash: '', w: 1.1, col: '#eafcff' },
+  thin:    { dash: '', w: 0.3, col: 'rgba(159,232,255,.7)' },
+  hidden:  { dash: '2.4 1.6', w: 0.4, col: 'rgba(159,232,255,.6)' },
+  center:  { dash: '8 2 1.6 2', w: 0.3, col: 'rgba(0,229,255,.75)' },
+  phantom: { dash: '10 2 2 2 2 2', w: 0.35, col: 'rgba(0,229,255,.5)' },
+  dim:     { dash: '', w: 0.28, col: '#00e5ff' }
+};
+function bpStroke(style) {
+  const s = BP_STYLE[style] || BP_STYLE.solid;
+  return 'stroke="' + s.col + '" stroke-width="' + s.w + '"' + (s.dash ? ' stroke-dasharray="' + s.dash + '"' : '') + ' fill="none" vector-effect="non-scaling-stroke"';
+}
+function bpNum(n) { const v = Math.round(n * 1000) / 1000; return String(v); }
+
+function bpArrow(x, y, ang) {
+  const l = 2.6, w = 0.9;
+  const p1 = [x, y];
+  const p2 = [x - l * Math.cos(ang) + w * Math.sin(ang), y - l * Math.sin(ang) - w * Math.cos(ang)];
+  const p3 = [x - l * Math.cos(ang) - w * Math.sin(ang), y - l * Math.sin(ang) + w * Math.cos(ang)];
+  return '<polygon points="' + [p1, p2, p3].map(p => bpNum(p[0]) + ',' + bpNum(p[1])).join(' ') + '" fill="#00e5ff"/>';
+}
+
+function bpElement(e) {
+  const st = bpStroke(e.style);
+  switch (e.t) {
+    case 'line': return '<line x1="' + bpNum(e.a[0]) + '" y1="' + bpNum(e.a[1]) + '" x2="' + bpNum(e.b[0]) + '" y2="' + bpNum(e.b[1]) + '" ' + st + '/>';
+    case 'rect': return '<rect x="' + bpNum(e.at[0]) + '" y="' + bpNum(e.at[1]) + '" width="' + bpNum(e.w) + '" height="' + bpNum(e.h) + '"' +
+      (e.r ? ' rx="' + bpNum(e.r) + '"' : '') + ' ' + st + '/>';
+    case 'circle': return '<circle cx="' + bpNum(e.c[0]) + '" cy="' + bpNum(e.c[1]) + '" r="' + bpNum(e.r) + '" ' + st + '/>';
+    case 'ellipse': return '<ellipse cx="' + bpNum(e.c[0]) + '" cy="' + bpNum(e.c[1]) + '" rx="' + bpNum(e.rx) + '" ry="' + bpNum(e.ry) + '" ' + st + '/>';
+    case 'arc': {
+      const a0 = e.a0 * Math.PI / 180, a1 = e.a1 * Math.PI / 180;
+      const x0 = e.c[0] + e.r * Math.cos(a0), y0 = e.c[1] + e.r * Math.sin(a0);
+      const x1 = e.c[0] + e.r * Math.cos(a1), y1 = e.c[1] + e.r * Math.sin(a1);
+      const large = Math.abs(e.a1 - e.a0) > 180 ? 1 : 0;
+      const sweep = e.a1 > e.a0 ? 1 : 0;
+      return '<path d="M ' + bpNum(x0) + ' ' + bpNum(y0) + ' A ' + bpNum(e.r) + ' ' + bpNum(e.r) + ' 0 ' + large + ' ' + sweep + ' ' + bpNum(x1) + ' ' + bpNum(y1) + '" ' + st + '/>';
+    }
+    case 'poly': return '<poly' + (e.closed ? 'gon' : 'line') + ' points="' + e.pts.map(p => bpNum(p[0]) + ',' + bpNum(p[1])).join(' ') + '" ' + st + '/>';
+    case 'path': return '<path d="' + String(e.d).replace(/[<>]/g, '') + '" ' + st + '/>';
+    case 'text': return '<text x="' + bpNum(e.at[0]) + '" y="' + bpNum(e.at[1]) + '" font-family="JetBrains Mono, monospace" font-size="' + bpNum(e.size || 3.2) +
+      '" fill="' + (e.col || '#cfeeff') + '" text-anchor="' + (e.anchor || 'start') + '">' + esc(e.s) + '</text>';
+    case 'centermark': {
+      const r = e.r || 3;
+      return '<g>' + '<line x1="' + bpNum(e.c[0] - r) + '" y1="' + bpNum(e.c[1]) + '" x2="' + bpNum(e.c[0] + r) + '" y2="' + bpNum(e.c[1]) + '" ' + bpStroke('center') + '/>' +
+        '<line x1="' + bpNum(e.c[0]) + '" y1="' + bpNum(e.c[1] - r) + '" x2="' + bpNum(e.c[0]) + '" y2="' + bpNum(e.c[1] + r) + '" ' + bpStroke('center') + '/></g>';
+    }
+    case 'hatch': {
+      let out = '<g clip-path="url(#bpclip' + (e._i || 0) + ')">';
+      out = '<g>';
+      const step = e.step || 2.2, ang = (e.angle == null ? 45 : e.angle) * Math.PI / 180;
+      const dx = Math.cos(ang), dy = Math.sin(ang);
+      const diag = Math.hypot(e.w, e.h);
+      for (let d = -diag; d < diag; d += step) {
+        const cx = e.at[0] + e.w / 2, cy = e.at[1] + e.h / 2;
+        const px = cx - dy * d, py = cy + dx * d;
+        const x1 = px - dx * diag, y1 = py - dy * diag, x2 = px + dx * diag, y2 = py + dy * diag;
+        out += '<line x1="' + bpNum(x1) + '" y1="' + bpNum(y1) + '" x2="' + bpNum(x2) + '" y2="' + bpNum(y2) + '" stroke="rgba(0,229,255,.30)" stroke-width="0.25"/>';
+      }
+      out += '</g>';
+      return '<g clip-path="url(#clip_' + bpNum(e.at[0]) + '_' + bpNum(e.at[1]) + ')">' + out + '</g>';
+    }
+    default: return '';
+  }
+}
+
+function bpDim(d, units) {
+  const a = d.a, b = d.b, off = d.off == null ? 12 : d.off;
+  let out = '';
+  let ax, ay, bx, by, tx, ty, ang, val, rot = 0;
+
+  if (d.t === 'rdim') {
+    const r = d.r, c = d.c, th = (d.at == null ? -45 : d.at) * Math.PI / 180;
+    const ex = c[0] + r * Math.cos(th), ey = c[1] + r * Math.sin(th);
+    const lx = c[0] + (r + off) * Math.cos(th), ly = c[1] + (r + off) * Math.sin(th);
+    out += '<line x1="' + bpNum(c[0]) + '" y1="' + bpNum(c[1]) + '" x2="' + bpNum(lx) + '" y2="' + bpNum(ly) + '" ' + bpStroke('dim') + '/>';
+    out += bpArrow(ex, ey, Math.atan2(ey - ly, ex - lx));
+    const lbl = d.label || ((d.dia ? '⌀' : 'R') + bpNum(d.dia ? r * 2 : r));
+    out += '<text x="' + bpNum(lx) + '" y="' + bpNum(ly - 1.2) + '" font-family="JetBrains Mono, monospace" font-size="3" fill="#00e5ff" text-anchor="' + (Math.cos(th) < 0 ? 'end' : 'start') + '">' + esc(lbl) + '</text>';
+    return out;
+  }
+  if (d.t === 'leader') {
+    out += '<line x1="' + bpNum(d.from[0]) + '" y1="' + bpNum(d.from[1]) + '" x2="' + bpNum(d.to[0]) + '" y2="' + bpNum(d.to[1]) + '" ' + bpStroke('dim') + '/>';
+    const tail = d.to[0] >= d.from[0] ? 6 : -6;
+    out += '<line x1="' + bpNum(d.to[0]) + '" y1="' + bpNum(d.to[1]) + '" x2="' + bpNum(d.to[0] + tail) + '" y2="' + bpNum(d.to[1]) + '" ' + bpStroke('dim') + '/>';
+    out += bpArrow(d.from[0], d.from[1], Math.atan2(d.from[1] - d.to[1], d.from[0] - d.to[0]));
+    out += '<text x="' + bpNum(d.to[0] + tail + (tail > 0 ? 1.2 : -1.2)) + '" y="' + bpNum(d.to[1] - 1) + '" font-family="JetBrains Mono, monospace" font-size="3" fill="#00e5ff" text-anchor="' + (tail > 0 ? 'start' : 'end') + '">' + esc(d.s || '') + '</text>';
+    return out;
+  }
+
+  const dir = d.dir || (Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1]) ? 'h' : 'v');
+  if (dir === 'h') {
+    const y = Math.max(a[1], b[1]) + off;
+    ax = a[0]; ay = y; bx = b[0]; by = y;
+    out += '<line x1="' + bpNum(a[0]) + '" y1="' + bpNum(a[1]) + '" x2="' + bpNum(a[0]) + '" y2="' + bpNum(y + (off > 0 ? 2 : -2)) + '" ' + bpStroke('dim') + '/>';
+    out += '<line x1="' + bpNum(b[0]) + '" y1="' + bpNum(b[1]) + '" x2="' + bpNum(b[0]) + '" y2="' + bpNum(y + (off > 0 ? 2 : -2)) + '" ' + bpStroke('dim') + '/>';
+    val = Math.abs(b[0] - a[0]);
+    tx = (a[0] + b[0]) / 2; ty = y - 1.4;
+  } else if (dir === 'v') {
+    const x = Math.max(a[0], b[0]) + off;
+    ax = x; ay = a[1]; bx = x; by = b[1];
+    out += '<line x1="' + bpNum(a[0]) + '" y1="' + bpNum(a[1]) + '" x2="' + bpNum(x + (off > 0 ? 2 : -2)) + '" y2="' + bpNum(a[1]) + '" ' + bpStroke('dim') + '/>';
+    out += '<line x1="' + bpNum(b[0]) + '" y1="' + bpNum(b[1]) + '" x2="' + bpNum(x + (off > 0 ? 2 : -2)) + '" y2="' + bpNum(b[1]) + '" ' + bpStroke('dim') + '/>';
+    val = Math.abs(b[1] - a[1]);
+    tx = x - 1.4; ty = (a[1] + b[1]) / 2; rot = -90;
+  } else {
+    const vx = b[0] - a[0], vy = b[1] - a[1], len = Math.hypot(vx, vy) || 1;
+    const nx = -vy / len, ny = vx / len;
+    ax = a[0] + nx * off; ay = a[1] + ny * off; bx = b[0] + nx * off; by = b[1] + ny * off;
+    out += '<line x1="' + bpNum(a[0]) + '" y1="' + bpNum(a[1]) + '" x2="' + bpNum(ax) + '" y2="' + bpNum(ay) + '" ' + bpStroke('dim') + '/>';
+    out += '<line x1="' + bpNum(b[0]) + '" y1="' + bpNum(b[1]) + '" x2="' + bpNum(bx) + '" y2="' + bpNum(by) + '" ' + bpStroke('dim') + '/>';
+    val = len;
+    tx = (ax + bx) / 2; ty = (ay + by) / 2 - 1.4;
+    rot = Math.atan2(by - ay, bx - ax) * 180 / Math.PI;
+  }
+
+  out += '<line x1="' + bpNum(ax) + '" y1="' + bpNum(ay) + '" x2="' + bpNum(bx) + '" y2="' + bpNum(by) + '" ' + bpStroke('dim') + '/>';
+  ang = Math.atan2(by - ay, bx - ax);
+  out += bpArrow(ax, ay, ang + Math.PI) + bpArrow(bx, by, ang);
+  const label = d.label || (bpNum(val) + (units === 'mm' ? '' : ' ' + units));
+  out += '<text x="' + bpNum(tx) + '" y="' + bpNum(ty) + '" font-family="JetBrains Mono, monospace" font-size="3" fill="#00e5ff" text-anchor="middle"' +
+    (rot ? ' transform="rotate(' + bpNum(rot) + ' ' + bpNum(tx) + ' ' + bpNum(ty) + ')"' : '') + '>' + esc(label) + '</text>';
+  return out;
+}
+
+function renderBlueprint(spec) {
+  const sheet = spec.sheet || { w: 420, h: 297 };
+  const W = sheet.w, H = sheet.h;
+  const units = spec.units || 'mm';
+  const M = 10;
+  let g = '';
+
+  // grid
+  if (spec.grid !== false) {
+    for (let x = 0; x <= W; x += 10) g += '<line x1="' + x + '" y1="0" x2="' + x + '" y2="' + H + '" stroke="rgba(0,229,255,' + (x % 50 ? '.045' : '.10') + ')" stroke-width="0.2"/>';
+    for (let y = 0; y <= H; y += 10) g += '<line x1="0" y1="' + y + '" x2="' + W + '" y2="' + y + '" stroke="rgba(0,229,255,' + (y % 50 ? '.045' : '.10') + ')" stroke-width="0.2"/>';
+  }
+  // frame
+  g += '<rect x="' + M + '" y="' + M + '" width="' + (W - 2 * M) + '" height="' + (H - 2 * M) + '" stroke="rgba(0,229,255,.55)" stroke-width="0.6" fill="none"/>';
+  g += '<rect x="' + (M + 2) + '" y="' + (M + 2) + '" width="' + (W - 2 * M - 4) + '" height="' + (H - 2 * M - 4) + '" stroke="rgba(0,229,255,.18)" stroke-width="0.25" fill="none"/>';
+  // zone letters/numbers
+  for (let i = 0; i < 8; i++) {
+    const x = M + (W - 2 * M) * (i + 0.5) / 8;
+    g += '<text x="' + bpNum(x) + '" y="' + (M - 2.5) + '" font-family="JetBrains Mono, monospace" font-size="2.6" fill="rgba(0,229,255,.5)" text-anchor="middle">' + (i + 1) + '</text>';
+  }
+  for (let i = 0; i < 5; i++) {
+    const y = M + (H - 2 * M) * (i + 0.5) / 5;
+    g += '<text x="' + (M - 3) + '" y="' + bpNum(y + 1) + '" font-family="JetBrains Mono, monospace" font-size="2.6" fill="rgba(0,229,255,.5)" text-anchor="middle">' + 'ABCDE'[i] + '</text>';
+  }
+
+  // views
+  (spec.views || []).forEach((v) => {
+    const ox = (v.origin && v.origin[0]) || 0, oy = (v.origin && v.origin[1]) || 0;
+    const sc = v.scale || 1;
+    let inner = '';
+    (v.elements || []).forEach(e => { inner += bpElement(e); });
+    (v.dims || []).forEach(d => { inner += bpDim(d, units); });
+    g += '<g transform="translate(' + bpNum(ox) + ' ' + bpNum(oy) + ') scale(' + bpNum(sc) + ')">' + inner + '</g>';
+    if (v.name) {
+      g += '<text x="' + bpNum(ox) + '" y="' + bpNum(oy - 4) + '" font-family="JetBrains Mono, monospace" font-size="3.6" fill="#00e5ff" letter-spacing="1">' + esc(v.name.toUpperCase()) + '</text>';
+      g += '<line x1="' + bpNum(ox) + '" y1="' + bpNum(oy - 2.6) + '" x2="' + bpNum(ox + Math.max(24, v.name.length * 2.3)) + '" y2="' + bpNum(oy - 2.6) + '" stroke="rgba(0,229,255,.5)" stroke-width="0.3"/>';
+    }
+  });
+
+  // notes
+  const notes = spec.notes || [];
+  if (notes.length) {
+    let ny = H - M - 8 - notes.length * 4;
+    g += '<text x="' + (M + 4) + '" y="' + bpNum(ny - 4) + '" font-family="JetBrains Mono, monospace" font-size="3" fill="#00e5ff" letter-spacing="1.4">NOTES</text>';
+    notes.forEach((n, i) => {
+      g += '<text x="' + (M + 4) + '" y="' + bpNum(ny + i * 4) + '" font-family="JetBrains Mono, monospace" font-size="2.7" fill="rgba(190,230,244,.85)">' + esc((i + 1) + '. ' + n) + '</text>';
+    });
+  }
+
+  // bill of materials
+  const bom = spec.bom || [];
+  if (bom.length) {
+    const bw = 108, rh = 5, bx = W - M - 2 - bw, by = M + 4;
+    g += '<rect x="' + bx + '" y="' + by + '" width="' + bw + '" height="' + ((bom.length + 1) * rh) + '" stroke="rgba(0,229,255,.5)" stroke-width="0.35" fill="rgba(0,229,255,.04)"/>';
+    const cols = [0, 10, 20, 74];
+    ['#', 'QTY', 'DESCRIPTION', 'MATERIAL'].forEach((h, i) => {
+      g += '<text x="' + bpNum(bx + cols[i] + 1.5) + '" y="' + bpNum(by + 3.6) + '" font-family="JetBrains Mono, monospace" font-size="2.5" fill="#00e5ff" letter-spacing=".6">' + h + '</text>';
+    });
+    bom.forEach((r, i) => {
+      const y = by + (i + 1) * rh;
+      g += '<line x1="' + bx + '" y1="' + bpNum(y) + '" x2="' + bpNum(bx + bw) + '" y2="' + bpNum(y) + '" stroke="rgba(0,229,255,.22)" stroke-width="0.25"/>';
+      [String(r.item != null ? r.item : i + 1), String(r.qty == null ? 1 : r.qty), String(r.desc || ''), String(r.material || '')].forEach((c, ci) => {
+        g += '<text x="' + bpNum(bx + cols[ci] + 1.5) + '" y="' + bpNum(y + 3.6) + '" font-family="JetBrains Mono, monospace" font-size="2.4" fill="rgba(190,230,244,.88)">' + esc(c.slice(0, ci === 2 ? 34 : 16)) + '</text>';
+      });
+    });
+  }
+
+  // title block
+  const tw = 128, th = 30, tx = W - M - 2 - tw, ty = H - M - 2 - th;
+  g += '<rect x="' + tx + '" y="' + ty + '" width="' + tw + '" height="' + th + '" stroke="rgba(0,229,255,.6)" stroke-width="0.5" fill="rgba(0,20,32,.75)"/>';
+  g += '<line x1="' + tx + '" y1="' + bpNum(ty + 12) + '" x2="' + bpNum(tx + tw) + '" y2="' + bpNum(ty + 12) + '" stroke="rgba(0,229,255,.4)" stroke-width="0.3"/>';
+  g += '<line x1="' + tx + '" y1="' + bpNum(ty + 21) + '" x2="' + bpNum(tx + tw) + '" y2="' + bpNum(ty + 21) + '" stroke="rgba(0,229,255,.4)" stroke-width="0.3"/>';
+  g += '<text x="' + bpNum(tx + 3) + '" y="' + bpNum(ty + 8) + '" font-family="JetBrains Mono, monospace" font-size="5" fill="#eafcff" letter-spacing="1.2">' + esc(String(spec.title || 'UNTITLED').toUpperCase().slice(0, 26)) + '</text>';
+  const f1 = [['SCALE', spec.scale || '1:1'], ['UNITS', units], ['SHEET', 'A3']];
+  f1.forEach(([k, v], i) => {
+    const x = tx + 3 + i * 43;
+    g += '<text x="' + bpNum(x) + '" y="' + bpNum(ty + 16.5) + '" font-family="JetBrains Mono, monospace" font-size="2.3" fill="rgba(0,229,255,.6)" letter-spacing=".8">' + k + '</text>';
+    g += '<text x="' + bpNum(x) + '" y="' + bpNum(ty + 20) + '" font-family="JetBrains Mono, monospace" font-size="3" fill="#cfeeff">' + esc(String(v)) + '</text>';
+  });
+  const f2 = [['DRAWN', PERSONAS[persona.id].name], ['DATE', new Date().toISOString().slice(0, 10)], ['REV', spec.revision || 'A']];
+  f2.forEach(([k, v], i) => {
+    const x = tx + 3 + i * 43;
+    g += '<text x="' + bpNum(x) + '" y="' + bpNum(ty + 25) + '" font-family="JetBrains Mono, monospace" font-size="2.3" fill="rgba(0,229,255,.6)" letter-spacing=".8">' + k + '</text>';
+    g += '<text x="' + bpNum(x) + '" y="' + bpNum(ty + 28.5) + '" font-family="JetBrains Mono, monospace" font-size="3" fill="#cfeeff">' + esc(String(v)) + '</text>';
+  });
+  if (spec.subtitle) {
+    g += '<text x="' + (M + 4) + '" y="' + (M + 7) + '" font-family="JetBrains Mono, monospace" font-size="3.2" fill="rgba(0,229,255,.7)" letter-spacing="1">' + esc(spec.subtitle.toUpperCase()) + '</text>';
+  }
+
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="display:block; background:#04121c;">' +
+    '<rect width="' + W + '" height="' + H + '" fill="#04121c"/>' + g + '</svg>';
+}
+
+function drawBlueprint(spec) {
+  const svg = renderBlueprint(spec);
+  OVL.svg = svg;
+  OVL.name = String(spec.title || 'schematic').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'schematic';
+  E.ovlBlue.innerHTML = '<div style="padding:14px; min-width:640px;">' + svg + '</div>';
+  ovlOpen('blueprint', 'SCHEMATIC', (spec.title || '') + (spec.scale ? '  ·  ' + spec.scale : ''));
+  ovlBusy(false);
+  const views = (spec.views || []).length;
+  const dims = (spec.views || []).reduce((n, v) => n + ((v.dims || []).length), 0);
+  const els = (spec.views || []).reduce((n, v) => n + ((v.elements || []).length), 0);
+  return { ok: true, rendered: { views, elements: els, dimensions: dims, sheet: spec.sheet || { w: 420, h: 297 }, units: spec.units || 'mm' } };
+}
+
+function exportSvg() {
+  if (!OVL.svg) return;
+  const blob = new Blob([OVL.svg], { type: 'image/svg+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = OVL.name + '.svg';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  toast('EXPORT', OVL.name + '.svg written', CY);
+}
+
+/* ================================================================= WEATHER === */
+const WMO = {
+  0: ['CLEAR', 'sun'], 1: ['MAINLY CLEAR', 'sun'], 2: ['PARTLY CLOUDED', 'partly'], 3: ['OVERCAST', 'cloud'],
+  45: ['FOG', 'fog'], 48: ['RIME FOG', 'fog'],
+  51: ['LIGHT DRIZZLE', 'rain'], 53: ['DRIZZLE', 'rain'], 55: ['DENSE DRIZZLE', 'rain'],
+  56: ['FREEZING DRIZZLE', 'sleet'], 57: ['FREEZING DRIZZLE', 'sleet'],
+  61: ['LIGHT RAIN', 'rain'], 63: ['RAIN', 'rain'], 65: ['HEAVY RAIN', 'rain'],
+  66: ['FREEZING RAIN', 'sleet'], 67: ['FREEZING RAIN', 'sleet'],
+  71: ['LIGHT SNOW', 'snow'], 73: ['SNOW', 'snow'], 75: ['HEAVY SNOW', 'snow'], 77: ['SNOW GRAINS', 'snow'],
+  80: ['RAIN SHOWERS', 'rain'], 81: ['RAIN SHOWERS', 'rain'], 82: ['VIOLENT SHOWERS', 'rain'],
+  85: ['SNOW SHOWERS', 'snow'], 86: ['SNOW SHOWERS', 'snow'],
+  95: ['THUNDERSTORM', 'storm'], 96: ['THUNDERSTORM · HAIL', 'storm'], 99: ['THUNDERSTORM · HAIL', 'storm']
+};
+function wxGlyph(kind, col, size) {
+  const s = size || 74;
+  const c = col || CY;
+  const head =
+    '<svg viewBox="0 0 100 100" width="' + s + '" height="' + s + '" fill="none" stroke="' + c + '" stroke-width="2.2" stroke-linecap="round">';
+  const sun = '<circle cx="50" cy="46" r="17"/>' +
+    [0, 45, 90, 135, 180, 225, 270, 315].map(a => {
+      const r = a * Math.PI / 180;
+      return '<line x1="' + (50 + 24 * Math.cos(r)) + '" y1="' + (46 + 24 * Math.sin(r)) + '" x2="' + (50 + 31 * Math.cos(r)) + '" y2="' + (46 + 31 * Math.sin(r)) + '"/>';
+    }).join('');
+  const cloud = '<path d="M30 66 a14 14 0 0 1 2 -27 a20 20 0 0 1 38 5 a12 12 0 0 1 -2 23 z"/>';
+  const drops = '<line x1="36" y1="74" x2="32" y2="86"/><line x1="50" y1="74" x2="46" y2="86"/><line x1="64" y1="74" x2="60" y2="86"/>';
+  const flakes = '<line x1="34" y1="76" x2="34" y2="86"/><line x1="30" y1="81" x2="38" y2="81"/><line x1="52" y1="76" x2="52" y2="86"/><line x1="48" y1="81" x2="56" y2="81"/>';
+  const bolt = '<polyline points="52,72 44,86 54,86 46,98" stroke="' + AM + '"/>';
+  const fog = '<line x1="26" y1="58" x2="74" y2="58"/><line x1="30" y1="68" x2="70" y2="68"/><line x1="26" y1="78" x2="74" y2="78"/>';
+  const body = kind === 'sun' ? sun
+    : kind === 'partly' ? '<circle cx="66" cy="36" r="12"/>' + cloud
+    : kind === 'cloud' ? cloud
+    : kind === 'rain' ? cloud + drops
+    : kind === 'snow' ? cloud + flakes
+    : kind === 'sleet' ? cloud + drops + flakes
+    : kind === 'storm' ? cloud + bolt
+    : fog;
+  return head + body + '</svg>';
+}
+
+async function showWeather(a) {
+  ovlOpen('weather', 'ATMOSPHERIC READOUT', 'acquiring…');
+  ovlBusy(true, 'POLLING SENSORS');
+  let lat = a.lat, lon = a.lon, label = a.location || '';
+  if (lat == null || lon == null) {
+    const g = await geocode(a.location || 'London');
+    lat = g.lat; lon = g.lon; label = g.label;
+  }
+  const units = a.units === 'imperial' ? { t: 'fahrenheit', w: 'mph', p: 'inch', sym: '°F', wsym: 'mph' }
+                                       : { t: 'celsius', w: 'kmh', p: 'mm', sym: '°C', wsym: 'km/h' };
+  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
+    '&current=temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m' +
+    '&hourly=temperature_2m,precipitation_probability' +
+    '&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max' +
+    '&forecast_days=7&timezone=auto&temperature_unit=' + units.t + '&wind_speed_unit=' + units.w + '&precipitation_unit=' + units.p;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('weather service ' + res.status);
+  const j = await res.json();
+  const cur = j.current, day = j.daily, hr = j.hourly;
+  const code = WMO[cur.weather_code] || ['UNKNOWN', 'cloud'];
+  const acc = PERSONAS[persona.id].accent;
+
+  // 24h temperature trace
+  const now = new Date().getHours();
+  const temps = (hr.temperature_2m || []).slice(now, now + 24);
+  const pops = (hr.precipitation_probability || []).slice(now, now + 24);
+  const tmin = Math.min.apply(null, temps), tmax = Math.max.apply(null, temps);
+  const span = (tmax - tmin) || 1;
+  const pw = 640, ph = 92;
+  const pts = temps.map((t, i) => [(i / Math.max(1, temps.length - 1)) * pw, ph - 12 - ((t - tmin) / span) * (ph - 30)]);
+  let trace = '<svg viewBox="0 0 ' + pw + ' ' + ph + '" width="100%" height="' + ph + '" preserveAspectRatio="none">';
+  pops.forEach((p, i) => {
+    const x = (i / Math.max(1, pops.length - 1)) * pw;
+    trace += '<rect x="' + (x - 5) + '" y="' + (ph - 10 - (p / 100) * (ph - 26)) + '" width="10" height="' + ((p / 100) * (ph - 26)) + '" fill="rgba(10,132,255,.22)"/>';
+  });
+  trace += '<polyline points="' + pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + '" fill="none" stroke="' + acc + '" stroke-width="2"/>';
+  pts.forEach((p, i) => { if (i % 6 === 0) trace += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="2.5" fill="' + acc + '"/>'; });
+  temps.forEach((t, i) => {
+    if (i % 6) return;
+    const x = (i / Math.max(1, temps.length - 1)) * pw;
+    trace += '<text x="' + x.toFixed(1) + '" y="' + (ph - 1) + '" font-family="JetBrains Mono, monospace" font-size="9" fill="rgba(0,229,255,.5)" text-anchor="middle">' + ((now + i) % 24) + ':00</text>';
+    trace += '<text x="' + x.toFixed(1) + '" y="' + (pts[i][1] - 6).toFixed(1) + '" font-family="JetBrains Mono, monospace" font-size="9" fill="#cfeeff" text-anchor="middle">' + Math.round(t) + '</text>';
+  });
+  trace += '</svg>';
+
+  const stat = (k, v) => '<div style="border:1px solid rgba(0,229,255,.18); background:rgba(0,229,255,.04); padding:8px 10px;">' +
+    '<div style="font-size:8px; letter-spacing:.28em; color:rgba(0,229,255,.55);">' + k + '</div>' +
+    '<div style="font-size:15px; color:#dff6ff; margin-top:3px; font-variant-numeric:tabular-nums;">' + v + '</div></div>';
+
+  const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+  const wdir = dirs[Math.round(cur.wind_direction_10m / 22.5) % 16];
+
+  const days = (day.time || []).map((d, i) => {
+    const c2 = WMO[day.weather_code[i]] || ['—', 'cloud'];
+    const nm = i === 0 ? 'TODAY' : new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase();
+    return '<div style="flex:1; min-width:0; border:1px solid rgba(0,229,255,.16); background:rgba(0,229,255,.03); padding:9px 6px; text-align:center;">' +
+      '<div style="font-size:8px; letter-spacing:.22em; color:rgba(0,229,255,.6);">' + nm + '</div>' +
+      '<div style="display:flex; justify-content:center; margin:4px 0;">' + wxGlyph(c2[1], acc, 34) + '</div>' +
+      '<div style="font-size:12px; color:#dff6ff;">' + Math.round(day.temperature_2m_max[i]) + '<span style="color:rgba(150,215,235,.5);">/' + Math.round(day.temperature_2m_min[i]) + '</span></div>' +
+      '<div style="font-size:8px; color:rgba(10,132,255,.9); margin-top:2px;">' + (day.precipitation_probability_max ? day.precipitation_probability_max[i] + '%' : '') + '</div>' +
+      '</div>';
+  }).join('');
+
+  E.ovlWx.innerHTML =
+    '<div style="display:flex; gap:22px; align-items:center; flex-wrap:wrap;">' +
+      '<div style="display:flex; align-items:center; gap:18px;">' +
+        '<div style="filter:drop-shadow(0 0 14px ' + acc + '66);">' + wxGlyph(code[1], acc, 92) + '</div>' +
+        '<div>' +
+          '<div style="font-size:54px; line-height:1; color:#eafcff; font-variant-numeric:tabular-nums;">' + Math.round(cur.temperature_2m) + '<span style="font-size:22px; color:rgba(150,215,235,.7);">' + units.sym + '</span></div>' +
+          '<div style="font-size:11px; letter-spacing:.26em; color:' + acc + '; margin-top:6px;">' + code[0] + '</div>' +
+          '<div style="font-size:10px; letter-spacing:.14em; color:rgba(150,215,235,.7); margin-top:4px;">FEELS ' + Math.round(cur.apparent_temperature) + units.sym + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="flex:1; min-width:260px; display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr)); gap:8px;">' +
+        stat('WIND', Math.round(cur.wind_speed_10m) + ' <span style="font-size:10px;color:rgba(150,215,235,.6)">' + units.wsym + ' ' + wdir + '</span>') +
+        stat('HUMIDITY', cur.relative_humidity_2m + ' <span style="font-size:10px;color:rgba(150,215,235,.6)">%</span>') +
+        stat('PRESSURE', Math.round(cur.surface_pressure) + ' <span style="font-size:10px;color:rgba(150,215,235,.6)">hPa</span>') +
+        stat('PRECIP', cur.precipitation + ' <span style="font-size:10px;color:rgba(150,215,235,.6)">' + units.p + '</span>') +
+        stat('SUNRISE', (day.sunrise[0] || '').slice(11, 16)) +
+        stat('SUNSET', (day.sunset[0] || '').slice(11, 16)) +
+      '</div>' +
+    '</div>' +
+    '<div style="margin-top:18px; border-top:1px solid rgba(0,229,255,.14); padding-top:12px;">' +
+      '<div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.55); margin-bottom:6px;">NEXT 24 HOURS</div>' + trace +
+    '</div>' +
+    '<div style="margin-top:16px;">' +
+      '<div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.55); margin-bottom:6px;">SEVEN DAY OUTLOOK</div>' +
+      '<div style="display:flex; gap:6px;">' + days + '</div>' +
+    '</div>';
+
+  E.ovlSub.textContent = label + '  ·  ' + lat.toFixed(3) + ', ' + lon.toFixed(3);
+  ovlBusy(false);
+  return {
+    ok: true, location: label, coords: [+lat.toFixed(4), +lon.toFixed(4)],
+    now: {
+      temperature: cur.temperature_2m, feels_like: cur.apparent_temperature, condition: code[0],
+      humidity_pct: cur.relative_humidity_2m, wind: cur.wind_speed_10m + ' ' + units.wsym + ' ' + wdir,
+      pressure_hpa: cur.surface_pressure, precipitation: cur.precipitation
+    },
+    today: { high: day.temperature_2m_max[0], low: day.temperature_2m_min[0], sunrise: day.sunrise[0], sunset: day.sunset[0] },
+    units: units.sym
+  };
+}
+
+/* ================================================================ ACCESS GATE = */
+const GATE = { code: '', label: '', granted: false, tries: 0, locked: 0 };
+
+function gateMsg(text, col) {
+  E.gateMsg.textContent = text || '';
+  E.gateMsg.style.color = col || 'rgba(255,179,0,.9)';
+}
+
+async function verifyCode(code) {
+  if (!SB.url || !SB.key) throw new Error('no Supabase project configured — open settings');
+  const url = SB.url.replace(/\/+$/, '') + '/functions/v1/' + PRESET.verifyFunction;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', apikey: SB.key, authorization: 'Bearer ' + SB.key },
+    body: JSON.stringify({ code: code })
+  });
+  if (res.status === 401 || res.status === 403) return { ok: false };
+  if (!res.ok) {
+    let d = ''; try { d = (await res.text()).slice(0, 160); } catch (e) { }
+    throw new Error('gate ' + res.status + (d ? ' · ' + d : ''));
+  }
+  const j = await res.json().catch(() => ({}));
+  return { ok: j.ok !== false, label: j.label || 'OPERATOR' };
+}
+
+async function submitCode() {
+  if (GATE.locked > Date.now()) return;
+  const code = E.gateCode.value.trim();
+  if (!code) { gateMsg('Enter your code.'); return; }
+  E.gateGo.textContent = 'VERIFYING…';
+  gateMsg('');
+  try {
+    const r = await verifyCode(code);
+    if (r.ok) {
+      GATE.code = code; GATE.label = r.label; GATE.granted = true;
+      try {
+        sessionStorage.setItem('jarvis.gate', JSON.stringify({ code: code, label: r.label }));
+      } catch (e) { /* session-only anyway */ }
+      openDeck();
+      return;
+    }
+    GATE.tries++;
+    E.gateCode.value = '';
+    if (GATE.tries >= 5) {
+      GATE.locked = Date.now() + 60000;
+      gateMsg('Five failed attempts. Channel sealed for sixty seconds.', RD);
+      let left = 60;
+      const iv = setInterval(() => {
+        left--;
+        if (left <= 0) { clearInterval(iv); GATE.tries = 0; gateMsg('You may try again.', CY); }
+        else gateMsg('Sealed · ' + left + 's', RD);
+      }, 1000);
+    } else {
+      gateMsg('Code rejected. ' + (5 - GATE.tries) + ' attempt' + (5 - GATE.tries === 1 ? '' : 's') + ' remaining.', RD);
+    }
+  } catch (err) {
+    gateMsg(String(err.message || err), AM);
+  } finally {
+    E.gateGo.textContent = 'AUTHENTICATE';
+  }
+}
+
+function openDeck() {
+  E.gate.style.display = 'none';
+  startSession(true);
+}
+
+/* fast = the operator already sat through the lock screen, so don't stage it again */
+function startSession(fast) {
+  if (app._started) return;
+  app._started = true;
+  applyMode();
+  const who = PERSONAS[persona.id];
+  const t1 = fast ? 400 : 3400, t2 = fast ? 1000 : 4000;
+  setTimeout(() => printRow(who.name + ' core initialized. All subsystems nominal.', who.accent), t1);
+  setTimeout(() => {
+    if (GATE.granted) printRow('Access granted — welcome back, ' + GATE.label + '.', CY);
+    if (link.live) {
+      printRow('Neural link online — ' + PROVIDERS[link.provider].label + ' · ' + link.model +
+        ' · voice ' + (EL.on ? 'ELEVENLABS' : 'BROWSER') + '. Speak freely.', 'rgba(150,215,235,.72)');
+    } else {
+      printRow('No cognition source attached. Press K to give me a mind — until then I run on reflexes alone.', 'rgba(255,179,0,.8)');
+    }
+  }, t2);
+}
+
+function bootGate() {
+  // Only seal a deck that was deliberately shipped sealed — adding a vault in the
+  // settings panel must never lock someone out of their own interface.
+  const needed = PRESET.requireAccessCode && !!PRESET.supabaseUrl && !!PRESET.supabaseAnonKey;
+  if (!needed) { startSession(false); return; }
+  try {
+    const held = JSON.parse(sessionStorage.getItem('jarvis.gate') || 'null');
+    if (held && held.code) {
+      GATE.code = held.code; GATE.label = held.label || 'OPERATOR'; GATE.granted = true;
+      startSession(true);
+      return;
+    }
+  } catch (e) { /* no session held */ }
+  // let the boot spark finish before the lock screen drops over it
+  setTimeout(() => {
+    E.gate.style.display = 'flex';
+    setTimeout(() => E.gateCode.focus(), 300);
+  }, 2000);
+}
+
 /* ==================================================================== BOOT === */
 loadLink();
+seedFromPreset();
 app.decode.text = PERSONAS[persona.id].name + ' ONLINE';
 if (E.title) E.title.textContent = app.decode.text;
 paintBrain();
 paintPersona();
+paintVault();
 bindUI();
 bindEngine();
-applyMode();
 setTimeout(() => { if (E.boot) E.boot.style.display = 'none'; }, 2000);
 requestAnimationFrame(loop);
-
-setTimeout(() => printRow(PERSONAS[persona.id].name + ' core initialized. All subsystems nominal.', PERSONAS[persona.id].accent), 3400);
-setTimeout(() => {
-  if (link.live) printRow('Neural link online — ' + PROVIDERS[link.provider].label + ' · ' + link.model +
-    ' · voice ' + (EL.on ? 'ELEVENLABS' : 'BROWSER') + '. Speak freely.', 'rgba(150,215,235,.72)');
-  else printRow('No cognition source attached. Press K to give me a mind — until then I run on reflexes alone.', 'rgba(255,179,0,.8)');
-}, 4000);
+bootGate();
 if (window.speechSynthesis) speechSynthesis.getVoices();
 
 })();
