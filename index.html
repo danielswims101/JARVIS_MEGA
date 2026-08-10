@@ -80,7 +80,11 @@
 
 <div id="deck" style="position:fixed; inset:0; background:#03060a; color:#bfe6f4; overflow:hidden; display:grid; grid-template-rows:58px minmax(0,1fr) auto;">
 
-  <canvas id="orb" style="position:absolute; inset:0; width:100%; height:100%; display:block; z-index:0;"></canvas>
+  <canvas id="orb" style="position:absolute; left:0; top:0; width:100%; height:100%; display:block; z-index:0;
+       transition:width .7s cubic-bezier(.16,1,.3,1), height .7s cubic-bezier(.16,1,.3,1),
+                  right .7s cubic-bezier(.16,1,.3,1), bottom .7s cubic-bezier(.16,1,.3,1),
+                  border-radius .7s ease, box-shadow .7s ease;"></canvas>
+  <div id="moodVeil" style="position:absolute; inset:0; z-index:1; pointer-events:none; background:#000; opacity:0; transition:opacity .8s ease;"></div>
 
   <!-- ================================================================ TOP BAR -->
   <div style="position:relative; z-index:3; display:flex; align-items:center; gap:22px; padding:0 18px; border-bottom:1px solid rgba(0,229,255,.16); background:linear-gradient(180deg, rgba(4,14,22,.82), rgba(3,8,13,.28)); backdrop-filter:blur(10px);">
@@ -243,6 +247,7 @@
             <div class="tab" id="tLight" title="Short answers, glanceable">LIGHT</div>
             <div class="tab" id="tHeavy" style="border-left:none;" title="Deep analysis, full reasoning">HEAVY</div>
           </div>
+          <div id="moodStat" style="font-size:9px; letter-spacing:.26em; color:#00e5ff; flex:none; min-width:62px;">CLEAR</div>
         </div>
         <div id="console" style="height:104px; flex:none; overflow-y:auto; overflow-x:hidden; font-size:11.5px; line-height:1.5; display:flex; flex-direction:column; justify-content:flex-end;"></div>
         <div id="inputWrap" style="display:flex; align-items:center; gap:9px; border:1px solid rgba(0,229,255,.24); background:rgba(0,32,45,.32); padding:7px 11px; transition:border-color .5s cubic-bezier(.16,1,.3,1), box-shadow .5s;">
@@ -284,6 +289,7 @@
         </div>
         <div style="display:flex; align-items:center; gap:12px;">
           <div id="ovlExport" style="font-size:9px; letter-spacing:.22em; color:rgba(0,229,255,.6); cursor:pointer; display:none;">EXPORT SVG</div>
+          <div id="ovlIcs" style="font-size:9px; letter-spacing:.22em; color:rgba(0,229,255,.6); cursor:pointer; display:none;">EXPORT .ICS</div>
           <div id="ovlClose" style="font-size:9px; letter-spacing:.22em; color:rgba(0,229,255,.55); cursor:pointer;">ESC ✕</div>
         </div>
       </div>
@@ -291,12 +297,36 @@
         <div id="ovlMap" style="position:absolute; inset:0; display:none;"></div>
         <div id="ovlBlue" style="position:absolute; inset:0; display:none; overflow:auto; background:#04121c;"></div>
         <div id="ovlWx" style="position:absolute; inset:0; display:none; overflow:auto; padding:18px 22px;"></div>
+        <div id="ovlCal" style="position:absolute; inset:0; display:none; overflow:auto; padding:18px 22px;"></div>
+        <iframe id="ovlEmbed" style="position:absolute; inset:0; width:100%; height:100%; display:none; border:0; background:#04121c;"
+                referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
         <div id="ovlBusy" style="position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:12px; background:rgba(2,7,12,.6);">
           <div style="width:120px; height:2px; overflow:hidden;"><div style="width:40px; height:2px; background:linear-gradient(90deg,transparent,#00e5ff,transparent); animation:thinkBar 1.05s linear infinite;"></div></div>
           <div id="ovlBusyMsg" style="font-size:9px; letter-spacing:.3em; color:rgba(0,229,255,.6);">ACQUIRING</div>
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- =========================================================== CONTROL PANEL -->
+  <div id="panel" style="position:absolute; left:0; top:0; bottom:0; width:min(430px,38vw); z-index:50;
+       display:flex; flex-direction:column; transform:translateX(-102%); opacity:0;
+       transition:transform .6s cubic-bezier(.16,1,.3,1), opacity .5s ease;
+       background:linear-gradient(120deg, rgba(6,14,20,.97), rgba(2,6,10,.95));
+       border-right:1px solid rgba(0,229,255,.30); box-shadow:26px 0 70px rgba(0,0,0,.6);">
+    <div class="br tr-h"></div><div class="br tr-v"></div>
+    <div class="phead" style="padding:11px 14px 9px;">
+      <div class="ptitle" style="font-size:10px;">CONTROL PANEL · FULL TRACE</div>
+      <div style="display:flex; gap:12px;">
+        <div id="panelDump" style="font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.6); cursor:pointer;">DUMP</div>
+        <div id="panelClear" style="font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.6); cursor:pointer;">CLEAR</div>
+        <div id="panelClose" style="font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.5); cursor:pointer;">✕</div>
+      </div>
+    </div>
+    <div id="panelBody" style="flex:1; overflow-y:auto; padding:12px 14px; font-size:10.5px;
+         font-family:'JetBrains Mono', monospace; color:rgba(190,230,244,.9);"></div>
+    <div style="padding:8px 14px 10px; border-top:1px solid rgba(0,229,255,.14);
+         font-size:8px; letter-spacing:.22em; color:rgba(0,229,255,.4);">SERIOUS · HEAVY — EVERYTHING LOGGED</div>
   </div>
 
   <!-- ========================================================= NEURAL LINK CFG -->
@@ -538,8 +568,8 @@ vec3 curl(vec3 p, float t){
 const VERT = NOISE + `
 attribute vec3 aDir;
 attribute float aRad, aRand, aLayer, aSize, aSeed;
-uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot;
-uniform vec3 uShockDir, uTint;
+uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark;
+uniform vec3 uShockDir, uMood;
 varying vec3 vCol;
 varying float vA;
 
@@ -620,7 +650,10 @@ void main(){
   col = mix(col, vec3(0.55,0.24,1.0), wThink*0.85*(0.35+0.65*aRand));
   col = mix(col, vec3(1.0,0.20,0.07), wAlert*0.94);
   col = mix(col, vec3(1.0,0.66,0.20), wAlert*0.18*aRand);
-  vCol = col * (0.36 + energy*0.78 + shock*0.45) * (1.0 - wThink*0.44 - wAlert*0.14) * uTint;
+  vCol = col * (0.36 + energy*0.78 + shock*0.45) * (1.0 - wThink*0.44 - wAlert*0.14);
+  float lum = dot(vCol, vec3(0.299, 0.587, 0.114));
+  vCol = mix(vCol, uMood * lum * 1.75, uMoodAmt);
+  vCol *= (1.0 - uDark);
 
   float a = aLayer < 0.5 ? 0.52 : (aLayer < 1.5 ? 0.44 : 0.28);
   vA = a * uBoot * (0.6 + 0.4*breath);
@@ -765,7 +798,9 @@ function init(canvas, opts = {}) {
     uShockDir: { value: new THREE.Vector3(0, 0, 1) },
     uPixel: { value: 1 },
     uBoot: { value: 0 },
-    uTint: { value: new THREE.Vector3(1, 1, 1) }
+    uMood: { value: new THREE.Vector3(0, 0.9, 1) },
+    uMoodAmt: { value: 0 },
+    uDark: { value: 0 }
   };
   const mat = new THREE.ShaderMaterial({
     uniforms, vertexShader: VERT, fragmentShader: FRAG,
@@ -916,7 +951,11 @@ function init(canvas, opts = {}) {
       shockT = 0; shockAmp = 1;
     },
     setPointer(nx, ny) { pointer.tx = nx; pointer.ty = ny; },
-    setTint(r, g, b) { uniforms.uTint.value.set(r, g, b); }
+    setMood(r, g, b, amt, dark) {
+      uniforms.uMood.value.set(r, g, b);
+      uniforms.uMoodAmt.value = amt || 0;
+      uniforms.uDark.value = dark || 0;
+    }
   };
   frame();
   return api;
@@ -985,7 +1024,9 @@ const E = {};
  'tFun','tSerious','tLight','tHeavy','cfgElKey','cfgVoice','cfgVoiceFor','cfgElModel',
  'cfgStab','cfgSim','cfgSpeed','cfgSysFor','cfgReset','cfgSpeak','cfgSbUrl','cfgSbKey',
  'vaultStat','ovl','ovlPanel','ovlTitle','ovlSub','ovlMap','ovlBlue','ovlWx','ovlBusy',
- 'ovlBusyMsg','ovlClose','ovlExport','gate','gateCode','gateMsg','gateGo','gateCfg'].forEach(k => E[k] = $(k));
+ 'ovlBusyMsg','ovlClose','ovlExport','gate','gateCode','gateMsg','gateGo','gateCfg',
+ 'moodVeil','moodStat','panel','panelBody','panelDump','panelClear','panelClose',
+ 'ovlCal','ovlEmbed','ovlIcs'].forEach(k => E[k] = $(k));
 
 /* ============================================================== SIMULATION === */
 const sim = (function build() {
@@ -1611,8 +1652,10 @@ const COMMON_RULES =
 'raise an alert, run a sweep, change the orb, adjust power, post a notice, switch persona or temper — call the tool, ' +
 'then say what you did in one line.\n' +
 '- A live telemetry snapshot is appended to this directive on every turn. Quote real numbers from it; never invent readings.\n' +
-'- You can open a live map and pinpoint places, render precise dimensioned blueprints, pull real weather, ' +
-'and read and write the user\'s Supabase vault. Reach for those instead of describing what you would do.\n' +
+'- You can open apps and websites, find where the user physically is, put a live map and threat matrix on ' +
+'screen, render precise dimensioned blueprints, pull real weather, manage their calendar, and read and write ' +
+'their Supabase vault. Reach for those instead of describing what you would do.\n' +
+'- Blueprints: keep them to two or three views. Very large drawings risk being cut off mid-transmission.\n' +
 '- If asked something outside the deck, just answer it well. You are not confined to the fiction.';
 
 const PERSONAS = {
@@ -1635,6 +1678,21 @@ const PERSONAS = {
       'vectors, and probabilities, and you flag risk before anything else. Warmth is not in your remit; competence is.' + COMMON_RULES
   }
 };
+
+/* Temper drives the whole look. A multiply tint can't turn cyan red, so the orb
+   recolours by luminance in the shader — see uMood / uMoodAmt / uDark. */
+const MOODS = {
+  'fun|light':     { accent: null,      rgb: null,            amt: 0,    dark: 0,    name: 'CLEAR' },
+  'fun|heavy':     { accent: '#ffd400', rgb: [1.0, 0.83, 0.10], amt: .88, dark: .30, name: 'AMBER' },
+  'serious|light': { accent: '#ff8a3d', rgb: [1.0, 0.54, 0.24], amt: .85, dark: .22, name: 'EMBER' },
+  'serious|heavy': { accent: '#d81b3c', rgb: [1.0, 0.11, 0.24], amt: .92, dark: .52, name: 'CRIMSON' }
+};
+function mood() { return MOODS[persona.humor + '|' + persona.depth] || MOODS['fun|light']; }
+function accentNow() { return mood().accent || PERSONAS[persona.id].accent; }
+function hexRgb(h) {
+  const n = parseInt(h.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
 
 const TEMPERS = {
   fun:     'TEMPER — Playful. Be quick with a joke, warm, a little irreverent. Land the answer, then have some fun with it.',
@@ -1659,7 +1717,7 @@ const persona = { id: 'jarvis', humor: 'serious', depth: 'light', sysOverride: {
 
 const PROVIDERS = {
   proxy:     { label: 'SUPABASE',  base: '',                          model: PRESET.model,     key: false, baseEdit: false },
-  anthropic: { label: 'ANTHROPIC', base: 'https://api.anthropic.com', model: 'claude-sonnet-5', key: true, baseEdit: false },
+  anthropic: { label: 'ANTHROPIC', base: 'https://api.anthropic.com', model: 'claude-fable-5', key: true, baseEdit: false },
   openai:    { label: 'OPENAI',    base: 'https://api.openai.com/v1',  model: 'gpt-4o-mini',    key: true, baseEdit: false },
   custom:    { label: 'CUSTOM',    base: '',                            model: '',               key: true, baseEdit: true },
   ollama:    { label: 'OLLAMA',    base: 'http://localhost:11434/v1',  model: 'llama3.1',       key: false, baseEdit: true }
@@ -1733,22 +1791,37 @@ function buildSystem() {
 }
 function paintPersona() {
   const p = PERSONAS[persona.id];
-  if (E.personaStat) { E.personaStat.textContent = p.name; E.personaStat.style.color = p.accent; }
+  const m = mood();
+  const acc = accentNow();
+
+  if (E.personaStat) { E.personaStat.textContent = p.name; E.personaStat.style.color = acc; }
   if (E.personaChip) {
-    E.personaChip.style.borderColor = p.accent + '55';
-    E.personaChip.style.boxShadow = 'inset 0 0 16px ' + p.accent + '18';
+    E.personaChip.style.borderColor = acc + '55';
+    E.personaChip.style.boxShadow = 'inset 0 0 16px ' + acc + '18';
   }
   if (E.title) {
-    E.title.style.textShadow = '0 0 14px ' + p.accent + '8c';
+    E.title.style.textShadow = '0 0 14px ' + acc + '8c';
     app.decode.text = p.name + ' ONLINE';
     if (app.decode.done) E.title.textContent = app.decode.text;
   }
-  if (app.engine && app.engine.setTint) app.engine.setTint(p.tint[0], p.tint[1], p.tint[2]);
-  if (app.engine && app.engine.reserve) app.engine.setTint && app.engine.setTint(p.tint[0], p.tint[1], p.tint[2]);
+
+  // orb: temper mood wins, otherwise the persona's own hue
+  const rgb = m.rgb || hexRgb(p.accent);
+  const amt = m.rgb ? m.amt : (persona.id === 'jarvis' ? 0 : .8);
+  if (app.engine && app.engine.setMood) app.engine.setMood(rgb[0], rgb[1], rgb[2], amt, m.dark);
+
+  // deck dimming
+  if (E.moodVeil) E.moodVeil.style.opacity = String(m.dark);
+  document.documentElement.style.setProperty('--accent', acc);
+  if (E.moodStat) { E.moodStat.textContent = m.name; E.moodStat.style.color = acc; }
+
   [[E.tFun, persona.humor === 'fun'], [E.tSerious, persona.humor === 'serious'],
    [E.tLight, persona.depth === 'light'], [E.tHeavy, persona.depth === 'heavy']]
     .forEach(([n, on]) => { if (n) n.classList.toggle('on', on); });
   document.querySelectorAll('[data-persona]').forEach(n => n.classList.toggle('on', n.dataset.persona === persona.id));
+
+  // crimson runs the deck hot: full instrumentation
+  setPanel(persona.humor === 'serious' && persona.depth === 'heavy');
 }
 function setPersona(id, announce) {
   if (!PERSONAS[id] || id === persona.id) return;
@@ -1848,7 +1921,7 @@ const TOOLS = [
       label: { type: 'string' },
       pins: { type: 'array', description: 'Additional points to mark.', items: { type: 'object', properties: {
         query: { type: 'string' }, lat: { type: 'number' }, lon: { type: 'number' },
-        label: { type: 'string' }, kind: { type: 'string', enum: ['contact', 'objective', 'hostile'] }
+        label: { type: 'string' }, kind: { type: 'string', enum: ['contact', 'objective', 'hostile', 'ally', 'self'] }
       } } },
       route: { type: 'array', description: 'Polyline as [[lat,lon],...] drawn between points.', items: { type: 'array', items: { type: 'number' } } }
     }, required: [] } },
@@ -1923,6 +1996,47 @@ const TOOLS = [
     params: { type: 'object', properties: { key: { type: 'string' }, value: { type: 'string' } }, required: ['key', 'value'] } },
   { name: 'recall', description: 'Read something previously remembered. Omit key to list everything stored.',
     params: { type: 'object', properties: { key: { type: 'string' } }, required: [] } },
+
+  { name: 'open_target', description: 'Open an app or a website for the user, hands-free. Give app for a known application, or url for anything on the web. Native apps are handed to the OS by URL scheme; websites open in a new tab, or embedded in the deck if the browser blocks it or mode is "embed".',
+    params: { type: 'object', properties: {
+      app: { type: 'string', description: 'One of: spotify, slack, discord, zoom, notion, figma, vscode, obsidian, steam, whatsapp, messages, mail, maps, music, facetime, calendar, youtube, github, wikipedia, google.' },
+      url: { type: 'string', description: 'A URL, a bare domain, or search words.' },
+      query: { type: 'string', description: 'Search terms, for apps that support search.' },
+      mode: { type: 'string', enum: ['tab', 'embed'], description: 'embed shows it inside the deck. Default tab.' }
+    }, required: [] } },
+
+  { name: 'locate_me', description: 'Find where the user physically is, via the browser, and pin it on the tactical map. Also becomes the default centre for weather and the threat map. Ask before using it if the request was ambiguous.',
+    params: { type: 'object', properties: { zoom: { type: 'number' } }, required: [] } },
+
+  { name: 'show_threat_map', description: 'Open the tactical map as a threat matrix — hostile contacts in red, allied contacts in blue, scattered around the centre with callsigns, bearings and ranges. Also drives the deck radar panel. Use when asked for the threat matrix, tactical picture, or who is around.',
+    params: { type: 'object', properties: {
+      location: { type: 'string', description: 'Centre. Defaults to the user position if known.' },
+      lat: { type: 'number' }, lon: { type: 'number' },
+      radius_km: { type: 'number', description: 'Scatter radius. Default 12.' },
+      hostiles: { type: 'number' }, allies: { type: 'number' }, zoom: { type: 'number' }
+    }, required: [] } },
+
+  { name: 'show_calendar', description: 'Open the calendar overlay for a month and read back what is scheduled.',
+    params: { type: 'object', properties: {
+      month: { type: 'string', description: 'YYYY-MM. Defaults to the current month.' }
+    }, required: [] } },
+  { name: 'calendar_add', description: 'Add an event to the user\'s calendar. Times are ISO 8601; assume the user\'s local timezone when they speak casually.',
+    params: { type: 'object', properties: {
+      title: { type: 'string' },
+      starts_at: { type: 'string', description: 'ISO datetime, e.g. 2026-08-14T09:30' },
+      ends_at: { type: 'string' }, notes: { type: 'string' }
+    }, required: ['title', 'starts_at'] } },
+  { name: 'calendar_update', description: 'Change an existing event. Supply the id and only the fields to change.',
+    params: { type: 'object', properties: {
+      id: { type: 'number' }, title: { type: 'string' },
+      starts_at: { type: 'string' }, ends_at: { type: 'string' }, notes: { type: 'string' }
+    }, required: ['id'] } },
+  { name: 'calendar_remove', description: 'Delete an event by id. Confirm with the user first unless they were explicit.',
+    params: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] } },
+  { name: 'calendar_find', description: 'Search events by text, or list a date range. Use this to get an id before updating or removing.',
+    params: { type: 'object', properties: {
+      query: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }
+    }, required: [] } },
 
   { name: 'set_temper', description: 'Adjust how you carry yourself. humor: fun or serious. depth: light for short answers, heavy for full analysis. Use when the user asks you to lighten up, be serious, keep it short, or go deeper.',
     params: { type: 'object', properties: {
@@ -2012,6 +2126,52 @@ function runTool(name, a) {
       return SB.rest('jarvis_memory?select=key,value' + (a.key ? '&key=eq.' + encodeURIComponent(a.key) : '') + '&limit=200')
         .then(rows => ({ ok: true, memories: rows }));
 
+    case 'open_target':
+      return openTarget(a);
+    case 'locate_me':
+      return locateMe(a);
+    case 'show_threat_map':
+      return showThreatMap(a);
+
+    case 'show_calendar':
+      return showCalendar(a);
+    case 'calendar_add':
+      return SB.rest('jarvis_calendar', {
+        method: 'POST',
+        body: [{ title: a.title, starts_at: a.starts_at, ends_at: a.ends_at || null, notes: a.notes || null }],
+        headers: { prefer: 'return=representation' }
+      }).then(rows => {
+        const e = rows && rows[0];
+        toast('CALENDAR', a.title + ' · ' + prettyTime(a.starts_at), accentNow());
+        if (OVL.mode === 'calendar') showCalendar({});
+        return { ok: true, added: e };
+      });
+    case 'calendar_update': {
+      const patch = {};
+      ['title', 'starts_at', 'ends_at', 'notes'].forEach(k => { if (a[k] != null) patch[k] = a[k]; });
+      if (!Object.keys(patch).length) return { error: 'nothing to change' };
+      return SB.rest('jarvis_calendar?id=eq.' + encodeURIComponent(a.id), {
+        method: 'PATCH', body: patch, headers: { prefer: 'return=representation' }
+      }).then(rows => {
+        if (OVL.mode === 'calendar') showCalendar({});
+        return rows && rows.length ? { ok: true, updated: rows[0] } : { error: 'no event with id ' + a.id };
+      });
+    }
+    case 'calendar_remove':
+      return SB.rest('jarvis_calendar?id=eq.' + encodeURIComponent(a.id), {
+        method: 'DELETE', headers: { prefer: 'return=representation' }
+      }).then(rows => {
+        if (OVL.mode === 'calendar') showCalendar({});
+        return rows && rows.length ? { ok: true, removed: rows[0] } : { error: 'no event with id ' + a.id };
+      });
+    case 'calendar_find': {
+      let q = 'jarvis_calendar?select=*&order=starts_at.asc&limit=100';
+      if (a.from) q += '&starts_at=gte.' + encodeURIComponent(a.from);
+      if (a.to) q += '&starts_at=lte.' + encodeURIComponent(a.to);
+      if (a.query) q += '&title=ilike.*' + encodeURIComponent(a.query) + '*';
+      return SB.rest(q).then(rows => ({ ok: true, count: rows ? rows.length : 0, events: rows }));
+    }
+
     case 'set_temper':
       if (a.humor === 'fun' || a.humor === 'serious') setTemper('humor', a.humor);
       if (a.depth === 'light' || a.depth === 'heavy') setTemper('depth', a.depth);
@@ -2098,14 +2258,16 @@ async function turn(hist, sys, onText) {
       headers['anthropic-dangerous-direct-browser-access'] = 'true';
     }
     body = {
-      model: link.model, max_tokens: 1024, stream: true, system: sys,
+      // A dimensioned drawing is a large tool call; 1024 truncated it mid-JSON,
+      // which is why blueprints silently produced nothing.
+      model: link.model, max_tokens: 8192, stream: true, system: sys,
       messages: toAnthropic(hist),
       tools: TOOLS.map(t => ({ name: t.name, description: t.description, input_schema: t.params }))
     };
   } else {
     if (link.key) headers['authorization'] = 'Bearer ' + link.key;
     body = {
-      model: link.model, stream: true, max_tokens: 1024,
+      model: link.model, stream: true, max_tokens: 8192,
       messages: toOpenAI(hist, sys),
       tools: TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.params } }))
     };
@@ -2135,8 +2297,14 @@ async function turn(hist, sys, onText) {
       } else if (ev.type === 'content_block_stop') {
         const b = blocks[ev.index];
         if (b && b.kind === 'tool') {
-          let input = {};
-          try { input = b.json ? JSON.parse(b.json) : {}; } catch (e) { }
+          let input = {}, broke = false;
+          try { input = b.json ? JSON.parse(b.json) : {}; }
+          catch (e) { broke = true; }
+          if (broke) {
+            printRow('  ⚠ ' + b.name + ' — the argument stream was cut off (' + b.json.length +
+              ' chars). The reply hit its token ceiling.', AM);
+            plog('✕ TRUNCATED · ' + b.name, b.json.slice(-500), 'error');
+          }
           tools.push({ id: b.id, name: b.name, input });
         }
       } else if (ev.type === 'error') {
@@ -2180,6 +2348,7 @@ function setBusy(on) {
 }
 
 async function converse(userText) {
+  plog('▸ YOU', userText, 'user');
   history.push({ role: 'user', text: userText });
   while (history.length > 30) history.shift();
 
@@ -2202,7 +2371,10 @@ async function converse(userText) {
         if (row) { row.textContent += chunk; E.console.scrollTop = E.console.scrollHeight; }
       };
 
+      const t0 = performance.now();
       const res = await turn(history, sys, onText);
+      const ms = Math.round(performance.now() - t0);
+      if (res.text) plog(PERSONAS[persona.id].name + ' · ' + ms + 'ms', res.text, 'ai');
       spoken = res.text || spoken;
 
       if (res.tools.length) {
@@ -2210,6 +2382,7 @@ async function converse(userText) {
         for (const t of res.tools) {
           const arg = JSON.stringify(t.input || {});
           printRow('  ⟐ ' + t.name + (arg !== '{}' ? ' · ' + arg.slice(0, 90) : ''), 'rgba(160,107,255,.75)');
+          plog('⟐ TOOL · ' + t.name, JSON.stringify(t.input || {}, null, 2), 'tool');
           let out;
           try {
             out = await runTool(t.name, t.input);
@@ -2217,8 +2390,12 @@ async function converse(userText) {
             const msg = String((e && e.message) || e);
             out = { error: msg };
             printRow('  ⚠ ' + t.name + ' — ' + msg, AM);
+            plog('✕ TOOL FAULT · ' + t.name, msg, 'error');
             ovlFail(msg);
           }
+          const outStr = JSON.stringify(out, null, 2);
+          plog('◂ RESULT · ' + t.name, outStr.length > 4000 ? outStr.slice(0, 4000) + '\n… truncated' : outStr,
+               out && out.error ? 'error' : 'result');
           history.push({ role: 'tool', id: t.id, name: t.name, output: JSON.stringify(out) });
         }
         continue;
@@ -2234,6 +2411,7 @@ async function converse(userText) {
     setOrb('alert', 2200);
     const msg = String((err && err.message) || err);
     printRow('NEURAL LINK FAULT — ' + msg, RD);
+    plog('✕ FAULT', msg, 'error');
     if (/failed to fetch|networkerror|load failed/i.test(msg)) {
       printRow('  the browser blocked or could not reach the endpoint.', DIM);
       if (link.provider === 'proxy' && PRESET.codeHeader) {
@@ -2669,6 +2847,10 @@ function bindUI() {
   E.gateCfg.onclick = openCfg;
   E.gateCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitCode(); });
   E.ovlExport.onclick = exportSvg;
+  E.ovlIcs.onclick = () => calList().then(icsExport).catch(e => toast('EXPORT', String(e.message || e), AM));
+  E.panelDump.onclick = panelDump;
+  E.panelClear.onclick = () => { PANEL.rows.length = 0; E.panelBody.innerHTML = ''; };
+  E.panelClose.onclick = () => setPanel(false);
   E.cfgVeil.onclick = (e) => { if (e.target === E.cfgVeil) closeCfg(); };
 
   document.querySelectorAll('[data-prov]').forEach(n => {
@@ -2771,22 +2953,108 @@ function bindUI() {
   });
 }
 
+/* ============================================================ CONTROL PANEL == */
+/* Serious + heavy opens the full instrumentation dock: every message, every tool
+   call with its raw arguments, every result, every fault, timestamped. */
+const PANEL = { on: false, rows: [] };
+
+function setPanel(on) {
+  if (PANEL.on === on) return;
+  PANEL.on = on;
+  if (!E.panel) return;
+  E.panel.style.transform = on ? 'translateX(0)' : 'translateX(-102%)';
+  E.panel.style.opacity = on ? '1' : '0';
+  if (on && !PANEL.rows.length) plog('SYS', 'Control panel engaged — full instrumentation.', 'sys');
+}
+
+function plog(tag, text, kind) {
+  const row = { t: new Date(), tag: tag, text: String(text), kind: kind || 'sys' };
+  PANEL.rows.push(row);
+  while (PANEL.rows.length > 800) PANEL.rows.shift();
+  if (!E.panelBody) return;
+  const acc = accentNow();
+  const col = kind === 'user' ? acc
+    : kind === 'ai' ? '#dff6ff'
+    : kind === 'tool' ? VI
+    : kind === 'result' ? 'rgba(120,220,170,.9)'
+    : kind === 'error' ? RD
+    : 'rgba(150,215,235,.6)';
+  const el = document.createElement('div');
+  el.style.cssText = 'margin-bottom:7px; white-space:pre-wrap; word-break:break-word; line-height:1.45;';
+  const ts = row.t.toTimeString().slice(0, 8) + '.' + String(row.t.getMilliseconds()).padStart(3, '0');
+  el.innerHTML = '<span style="color:rgba(0,229,255,.35);">' + ts + '</span> ' +
+    '<span style="color:' + col + '; letter-spacing:.18em;">' + esc(tag) + '</span>\n' +
+    '<span style="color:' + col + '; opacity:.92;">' + esc(row.text) + '</span>';
+  E.panelBody.appendChild(el);
+  while (E.panelBody.children.length > 800) E.panelBody.removeChild(E.panelBody.firstChild);
+  E.panelBody.scrollTop = E.panelBody.scrollHeight;
+}
+
+function panelDump() {
+  const txt = PANEL.rows.map(r => r.t.toISOString() + '  [' + r.tag + ']  ' + r.text).join('\n\n');
+  const blob = new Blob([txt || 'empty'], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'jarvis-log-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.txt';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  toast('LOG', PANEL.rows.length + ' entries written', accentNow());
+}
+
 /* ================================================================ WORKSPACE == */
 const OVL = { mode: null, map: null, L: null, layers: [], svg: null, name: 'schematic' };
 
+/* Shrink the particle orb into the bottom-right corner while something is on
+   screen, so it stays fully visible instead of hiding behind the panel. */
+function dockOrb(on) {
+  if (app.orbDocked === on) return;
+  app.orbDocked = on;
+  const set = (c) => {
+    if (!c) return;
+    if (on) {
+      c.style.left = 'auto'; c.style.top = 'auto';
+      c.style.right = '26px'; c.style.bottom = '26px';
+      c.style.width = '188px'; c.style.height = '188px';
+      c.style.zIndex = '46';
+      c.style.borderRadius = '50%';
+      c.style.boxShadow = '0 0 40px ' + accentNow() + '3a, inset 0 0 30px rgba(0,0,0,.6)';
+      c.style.border = '1px solid ' + accentNow() + '55';
+    } else {
+      c.style.left = '0'; c.style.top = '0';
+      c.style.right = 'auto'; c.style.bottom = 'auto';
+      c.style.width = '100%'; c.style.height = '100%';
+      c.style.zIndex = '0';
+      c.style.borderRadius = '0';
+      c.style.boxShadow = 'none';
+      c.style.border = 'none';
+    }
+  };
+  set(E.orb);
+  if (app.engine && app.engine.reserve && app.engine.canvas) set(app.engine.canvas);
+}
+
 function ovlOpen(mode, title, sub) {
   OVL.mode = mode;
+  dockOrb(true);
   E.ovl.style.display = 'flex';
   E.ovlTitle.textContent = title;
   E.ovlSub.textContent = sub || '';
   E.ovlMap.style.display = mode === 'map' ? 'block' : 'none';
   E.ovlBlue.style.display = mode === 'blueprint' ? 'block' : 'none';
   E.ovlWx.style.display = mode === 'weather' ? 'block' : 'none';
+  E.ovlCal.style.display = mode === 'calendar' ? 'block' : 'none';
+  E.ovlEmbed.style.display = mode === 'embed' ? 'block' : 'none';
   E.ovlExport.style.display = mode === 'blueprint' ? 'block' : 'none';
+  E.ovlIcs.style.display = mode === 'calendar' ? 'block' : 'none';
   E.ovlBusyMsg.style.color = 'rgba(0,229,255,.6)';
   if (mode === 'map' && OVL.map) setTimeout(() => OVL.map.invalidateSize(), 60);
 }
-function ovlClose() { E.ovl.style.display = 'none'; OVL.mode = null; }
+function ovlClose() {
+  E.ovl.style.display = 'none';
+  OVL.mode = null;
+  if (E.ovlEmbed) { E.ovlEmbed.src = 'about:blank'; E.ovlEmbed.style.display = 'none'; }
+  dockOrb(false);
+}
 function ovlBusy(on, msg) {
   E.ovlBusy.style.display = on ? 'flex' : 'none';
   if (msg) E.ovlBusyMsg.textContent = msg;
@@ -2872,7 +3140,11 @@ function loadLeaflet() {
 }
 
 function mapPinIcon(L, kind, label) {
-  const col = kind === 'hostile' ? RD : kind === 'objective' ? AM : PERSONAS[persona.id].accent;
+  const col = kind === 'hostile' ? RD
+    : kind === 'ally' ? '#2f80ff'
+    : kind === 'self' ? '#eafcff'
+    : kind === 'objective' ? AM
+    : accentNow();
   return L.divIcon({
     className: '', iconSize: [18, 18], iconAnchor: [9, 9],
     html: '<div style="position:relative;width:18px;height:18px;">' +
@@ -2926,12 +3198,13 @@ async function showMap(a) {
 
   pins.forEach(p => {
     const m = L.marker([p.lat, p.lon], { icon: mapPinIcon(L, p.kind, p.label) }).addTo(OVL.map);
-    const ring = L.circle([p.lat, p.lon], { radius: p.kind === 'hostile' ? 900 : 500,
-      color: p.kind === 'hostile' ? RD : PERSONAS[persona.id].accent, weight: 1, opacity: .5, fillOpacity: .06 }).addTo(OVL.map);
+    const rc = p.kind === 'hostile' ? RD : p.kind === 'ally' ? '#2f80ff' : p.kind === 'self' ? '#eafcff' : accentNow();
+    const ring = L.circle([p.lat, p.lon], { radius: p.kind === 'hostile' ? 900 : p.kind === 'self' ? 300 : 500,
+      color: rc, weight: 1, opacity: .5, fillOpacity: .06 }).addTo(OVL.map);
     OVL.layers.push(m, ring);
   });
   if (a.route && a.route.length > 1) {
-    const line = L.polyline(a.route.map(p => [p[0], p[1]]), { color: PERSONAS[persona.id].accent, weight: 2, opacity: .8, dashArray: '6 6' }).addTo(OVL.map);
+    const line = L.polyline(a.route.map(p => [p[0], p[1]]), { color: accentNow(), weight: 2, opacity: .8, dashArray: '6 6' }).addTo(OVL.map);
     OVL.layers.push(line);
   }
 
@@ -3166,6 +3439,13 @@ function renderBlueprint(spec) {
 }
 
 function drawBlueprint(spec) {
+  if (!spec || !Array.isArray(spec.views) || !spec.views.length) {
+    ovlOpen('blueprint', 'SCHEMATIC', 'no geometry');
+    E.ovlBlue.innerHTML = '<div style="padding:40px; color:rgba(255,179,0,.9); font-size:12px; line-height:1.7;">' +
+      'The drawing arrived with no views.<br>Usually the reply was cut off before the geometry finished. ' +
+      'Ask for a simpler drawing, or for fewer views.</div>';
+    return { error: 'no views supplied — the tool call may have been truncated. Retry with fewer elements.' };
+  }
   const svg = renderBlueprint(spec);
   OVL.svg = svg;
   OVL.name = String(spec.title || 'schematic').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'schematic';
@@ -3247,7 +3527,7 @@ async function showWeather(a) {
   const j = await res.json();
   const cur = j.current, day = j.daily, hr = j.hourly;
   const code = WMO[cur.weather_code] || ['UNKNOWN', 'cloud'];
-  const acc = PERSONAS[persona.id].accent;
+  const acc = accentNow();
 
   // 24h temperature trace
   const now = new Date().getHours();
@@ -3329,6 +3609,306 @@ async function showWeather(a) {
     today: { high: day.temperature_2m_max[0], low: day.temperature_2m_min[0], sunrise: day.sunrise[0], sunset: day.sunset[0] },
     units: units.sym
   };
+}
+
+/* ============================================================ LAUNCH / OPEN == */
+/* Native apps answer on a URL scheme; anything else is a website. Browsers block
+   window.open outside a user gesture, so a blocked popup falls back to an
+   embedded frame, and a frame-refusing site falls back to a big button. */
+const APPS = {
+  spotify:   { scheme: 'spotify:',              web: 'https://open.spotify.com',        search: 'spotify:search:' },
+  slack:     { scheme: 'slack://open',          web: 'https://app.slack.com' },
+  discord:   { scheme: 'discord://',            web: 'https://discord.com/app' },
+  zoom:      { scheme: 'zoommtg://zoom.us',     web: 'https://zoom.us' },
+  notion:    { scheme: 'notion://',             web: 'https://www.notion.so' },
+  figma:     { scheme: 'figma://',              web: 'https://www.figma.com' },
+  vscode:    { scheme: 'vscode://',             web: 'https://vscode.dev' },
+  obsidian:  { scheme: 'obsidian://',           web: '' },
+  steam:     { scheme: 'steam://open/main',     web: 'https://store.steampowered.com' },
+  whatsapp:  { scheme: 'whatsapp://',           web: 'https://web.whatsapp.com' },
+  messages:  { scheme: 'sms:',                  web: '' },
+  mail:      { scheme: 'mailto:',               web: 'https://mail.google.com' },
+  maps:      { scheme: 'maps://',               web: 'https://www.google.com/maps' },
+  music:     { scheme: 'music://',              web: 'https://music.apple.com' },
+  facetime:  { scheme: 'facetime:',             web: '' },
+  calendar:  { scheme: 'webcal://',             web: 'https://calendar.google.com' },
+  youtube:   { scheme: '',                      web: 'https://www.youtube.com', search: 'https://www.youtube.com/results?search_query=' },
+  github:    { scheme: '',                      web: 'https://github.com',      search: 'https://github.com/search?q=' },
+  wikipedia: { scheme: '',                      web: 'https://en.wikipedia.org', search: 'https://en.wikipedia.org/w/index.php?search=' },
+  google:    { scheme: '',                      web: 'https://www.google.com',  search: 'https://www.google.com/search?q=' }
+};
+
+function normaliseUrl(u) {
+  const s = String(u || '').trim();
+  if (!s) return '';
+  if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return s;               // already has a scheme
+  if (/^[\w-]+(\.[\w-]+)+([/?#].*)?$/.test(s)) return 'https://' + s;
+  return 'https://www.google.com/search?q=' + encodeURIComponent(s);
+}
+
+function openTab(url) {
+  let w = null;
+  try { w = window.open(url, '_blank', 'noopener'); } catch (e) { }
+  return !!(w && !w.closed);
+}
+
+function launchScheme(scheme) {
+  try {
+    const f = document.createElement('iframe');
+    f.style.display = 'none';
+    f.src = scheme;
+    document.body.appendChild(f);
+    setTimeout(() => f.remove(), 2500);
+    return true;
+  } catch (e) { return false; }
+}
+
+function embedSite(url, title) {
+  ovlOpen('embed', 'EXTERNAL VIEW', url);
+  E.ovlEmbed.style.display = 'block';
+  E.ovlEmbed.src = url;
+  ovlBusy(true, 'REQUESTING PAGE');
+
+  let settled = false;
+  const done = () => { if (!settled) { settled = true; ovlBusy(false); } };
+  E.ovlEmbed.onload = done;
+
+  // A site that refuses framing never fires load with content — offer the tab.
+  setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    E.ovlEmbed.style.display = 'none';
+    E.ovlBlue.style.display = 'block';
+    E.ovlBlue.innerHTML =
+      '<div style="padding:46px; text-align:center;">' +
+      '<div style="font-size:10px; letter-spacing:.3em; color:rgba(255,179,0,.9); margin-bottom:14px;">' +
+      'THIS SITE REFUSES TO BE EMBEDDED</div>' +
+      '<div style="font-size:11px; color:rgba(150,215,235,.7); margin-bottom:22px; line-height:1.7;">' +
+      esc(url) + '</div>' +
+      '<a href="' + esc(url) + '" target="_blank" rel="noopener" class="btn" ' +
+      'style="display:inline-block; text-decoration:none;">OPEN IN A NEW TAB</a></div>';
+    ovlBusy(false);
+  }, 3500);
+}
+
+function openTarget(a) {
+  const wantEmbed = a.mode === 'embed';
+  let url = '', app = null;
+
+  if (a.app) {
+    const k = String(a.app).toLowerCase().replace(/[^a-z]/g, '');
+    app = APPS[k];
+    if (!app) return { error: 'unknown app "' + a.app + '". Known: ' + Object.keys(APPS).join(', ') };
+    if (a.query && app.search) url = app.search + (app.search.startsWith('http') ? encodeURIComponent(a.query) : a.query);
+    else url = app.web || app.scheme;
+  } else {
+    url = normaliseUrl(a.url || a.query || a.site);
+  }
+  if (!url) return { error: 'nothing to open' };
+
+  // native app first, if it has a scheme
+  let launched = false;
+  if (app && app.scheme && !url.startsWith('http')) {
+    launched = launchScheme(url);
+    toast('LAUNCH', String(a.app).toUpperCase() + ' handoff sent', accentNow());
+    return { ok: true, launched_app: a.app, via: 'url scheme', note: 'the OS will prompt if the app is installed' };
+  }
+  if (app && app.scheme && a.prefer_app !== false) launchScheme(app.scheme);
+
+  if (wantEmbed) { embedSite(url, a.app || url); return { ok: true, opened: url, via: 'embedded in the deck' }; }
+
+  if (openTab(url)) {
+    toast('OPEN', url.replace(/^https?:\/\//, '').slice(0, 40), accentNow());
+    return { ok: true, opened: url, via: 'new tab' };
+  }
+
+  // popup blocked — embed instead, and say why
+  toast('OPEN', 'Popup blocked — showing it in the deck', AM);
+  printRow('  the browser blocked a new tab. Allow popups for this page to have them open directly.', DIM);
+  embedSite(url, a.app || url);
+  return { ok: true, opened: url, via: 'embedded (the browser blocked the new tab)' };
+}
+
+/* ============================================================== GEOLOCATION == */
+const ME = { lat: null, lon: null, acc: null, at: 0 };
+
+function locateMe(a) {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve({ error: 'this browser exposes no geolocation' });
+      return;
+    }
+    ovlOpen('map', 'TACTICAL MAP', 'fixing position…');
+    ovlBusy(true, 'ACQUIRING FIX');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        ME.lat = pos.coords.latitude; ME.lon = pos.coords.longitude;
+        ME.acc = pos.coords.accuracy; ME.at = Date.now();
+        try {
+          const r = await showMap({ lat: ME.lat, lon: ME.lon, zoom: a && a.zoom ? a.zoom : 14,
+            pins: [{ lat: ME.lat, lon: ME.lon, label: 'YOU', kind: 'self' }] });
+          resolve({ ok: true, latitude: +ME.lat.toFixed(5), longitude: +ME.lon.toFixed(5),
+            accuracy_m: Math.round(ME.acc), map: r.ok === true });
+        } catch (e) {
+          resolve({ ok: true, latitude: +ME.lat.toFixed(5), longitude: +ME.lon.toFixed(5),
+            accuracy_m: Math.round(ME.acc), map: 'could not draw: ' + String(e.message || e) });
+        }
+      },
+      (err) => {
+        ovlBusy(false);
+        const why = err.code === 1 ? 'permission denied — allow location for this page'
+          : err.code === 2 ? 'position unavailable'
+          : err.code === 3 ? 'timed out' : String(err.message || err);
+        ovlFail(why);
+        resolve({ error: 'location failed: ' + why +
+          (location.protocol === 'file:' ? '. Note: browsers block geolocation on file:// pages — serve the deck over http://localhost instead.' : '') });
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+    );
+  });
+}
+
+/* ============================================================= THREAT MAP === */
+const CALLSIGN = ['VIPER', 'KESTREL', 'HALCYON', 'MERIDIAN', 'ONYX', 'SABLE', 'TALON', 'VESPER',
+                  'ORACLE', 'CINDER', 'RAVEN', 'ATLAS', 'NOMAD', 'PHANTOM', 'ECHO', 'WRAITH'];
+
+async function showThreatMap(a) {
+  a = a || {};
+  let lat = a.lat, lon = a.lon, label = a.location || '';
+  if (lat == null || lon == null) {
+    if (a.location) { const g = await geocode(a.location); lat = g.lat; lon = g.lon; label = g.label; }
+    else if (ME.lat != null) { lat = ME.lat; lon = ME.lon; label = 'your position'; }
+    else if (OVL.map) { const c = OVL.map.getCenter(); lat = c.lat; lon = c.lng; label = 'last centre'; }
+    else { const g = await geocode('London'); lat = g.lat; lon = g.lon; label = g.label; }
+  }
+
+  const radius = clamp(a.radius_km || 12, 1, 400);
+  const nH = clamp(Math.round(a.hostiles == null ? rnd(3, 6) : a.hostiles), 0, 20);
+  const nA = clamp(Math.round(a.allies == null ? rnd(2, 5) : a.allies), 0, 20);
+
+  const used = {};
+  const scatter = (kind, n) => Array.from({ length: n }, () => {
+    const brg = rnd(0, 360), dist = radius * Math.sqrt(Math.random());
+    const dLat = (dist / 111) * Math.cos(brg * Math.PI / 180);
+    const dLon = (dist / (111 * Math.cos(lat * Math.PI / 180))) * Math.sin(brg * Math.PI / 180);
+    let cs; do { cs = pick(CALLSIGN); } while (used[cs]); used[cs] = 1;
+    return {
+      lat: lat + dLat, lon: lon + dLon, kind: kind,
+      label: cs + ' · ' + (kind === 'hostile' ? 'HOSTILE' : 'ALLY'),
+      callsign: cs, bearing: Math.round(brg), range_km: +dist.toFixed(1)
+    };
+  });
+
+  const contacts = scatter('hostile', nH).concat(scatter('ally', nA));
+  const r = await showMap({ lat: lat, lon: lon, zoom: a.zoom || (radius > 60 ? 8 : radius > 20 ? 10 : 12), pins: contacts });
+  E.ovlTitle.textContent = 'THREAT MATRIX · TACTICAL';
+  E.ovlSub.textContent = nH + ' hostile · ' + nA + ' allied · ' + radius + 'km radius' + (label ? '  ·  ' + label : '');
+
+  // mirror onto the deck's radar panel
+  sim.contacts.length = 0;
+  contacts.forEach((c, i) => setTimeout(() => sim.contacts.push({
+    a: c.bearing * Math.PI / 180, r: clamp(c.range_km / radius, 0.15, 0.96), life: 0,
+    cls: c.kind === 'hostile' ? 'HOSTILE' : 'FRIEND', hostile: c.kind === 'hostile',
+    id: (Math.random() * 9000 + 1000 | 0)
+  }), i * 120));
+
+  return {
+    ok: true, centre: [+lat.toFixed(5), +lon.toFixed(5)], location: label, radius_km: radius,
+    hostiles: contacts.filter(c => c.kind === 'hostile').map(c => ({ callsign: c.callsign, bearing: c.bearing, range_km: c.range_km })),
+    allies: contacts.filter(c => c.kind === 'ally').map(c => ({ callsign: c.callsign, bearing: c.bearing, range_km: c.range_km }))
+  };
+}
+
+/* ================================================================ CALENDAR === */
+function isoDay(d) { return new Date(d).toISOString().slice(0, 10); }
+function prettyTime(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? String(iso) : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+async function calList(from, to) {
+  const q = 'jarvis_calendar?select=*&order=starts_at.asc&limit=200' +
+    (from ? '&starts_at=gte.' + encodeURIComponent(from) : '') +
+    (to ? '&starts_at=lte.' + encodeURIComponent(to) : '');
+  return SB.rest(q);
+}
+
+async function showCalendar(a) {
+  a = a || {};
+  ovlOpen('calendar', 'CALENDAR', 'loading…');
+  ovlBusy(true, 'READING VAULT');
+
+  const base = a.month ? new Date(a.month + '-01T12:00:00') : new Date();
+  const y = base.getFullYear(), m = base.getMonth();
+  const first = new Date(y, m, 1), last = new Date(y, m + 1, 0);
+  const rows = await calList(new Date(y, m, 1).toISOString(), new Date(y, m + 1, 0, 23, 59).toISOString());
+
+  const byDay = {};
+  (rows || []).forEach(r => { (byDay[isoDay(r.starts_at)] = byDay[isoDay(r.starts_at)] || []).push(r); });
+
+  const acc = accentNow();
+  const pad = (first.getDay() + 6) % 7;                 // week starts Monday
+  let cells = '';
+  for (let i = 0; i < pad; i++) cells += '<div></div>';
+  for (let d = 1; d <= last.getDate(); d++) {
+    const key = isoDay(new Date(y, m, d, 12));
+    const evs = byDay[key] || [];
+    const today = key === isoDay(new Date());
+    cells += '<div style="min-height:82px; border:1px solid ' + (today ? acc + '66' : 'rgba(0,229,255,.14)') +
+      '; background:' + (today ? acc + '10' : 'rgba(0,229,255,.03)') + '; padding:5px 6px; overflow:hidden;">' +
+      '<div style="font-size:9px; color:' + (today ? acc : 'rgba(150,215,235,.55)') + '; letter-spacing:.1em;">' + d + '</div>' +
+      evs.slice(0, 3).map(e => '<div title="' + esc(e.title) + '" style="margin-top:3px; font-size:9px; line-height:1.3; ' +
+        'color:#dff6ff; border-left:2px solid ' + acc + '; padding-left:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' +
+        new Date(e.starts_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) + ' ' + esc(e.title) + '</div>').join('') +
+      (evs.length > 3 ? '<div style="font-size:8px; color:' + acc + '; margin-top:2px;">+' + (evs.length - 3) + ' more</div>' : '') +
+      '</div>';
+  }
+
+  const agenda = (rows || []).slice(0, 14).map(e =>
+    '<div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(0,229,255,.10);">' +
+    '<div style="flex:none; width:132px; font-size:10px; color:' + acc + ';">' + esc(prettyTime(e.starts_at)) + '</div>' +
+    '<div style="flex:1; min-width:0;"><div style="font-size:11.5px; color:#dff6ff;">' + esc(e.title) + '</div>' +
+    (e.notes ? '<div style="font-size:9.5px; color:rgba(150,215,235,.6); margin-top:2px;">' + esc(e.notes) + '</div>' : '') + '</div>' +
+    '<div style="flex:none; font-size:9px; color:rgba(150,215,235,.35);">#' + esc(String(e.id)) + '</div></div>').join('')
+    || '<div style="font-size:11px; color:rgba(150,215,235,.5); padding:12px 0;">Nothing scheduled this month.</div>';
+
+  E.ovlCal.innerHTML =
+    '<div style="display:flex; align-items:baseline; gap:14px; margin-bottom:12px;">' +
+    '<div style="font-size:20px; letter-spacing:.16em; color:#eafcff;">' +
+    base.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }).toUpperCase() + '</div>' +
+    '<div style="font-size:9px; letter-spacing:.24em; color:' + acc + ';">' + (rows || []).length + ' ENTRIES</div></div>' +
+    '<div style="display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-bottom:4px;">' +
+    ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map(d =>
+      '<div style="font-size:8px; letter-spacing:.24em; color:rgba(0,229,255,.5); text-align:center;">' + d + '</div>').join('') + '</div>' +
+    '<div style="display:grid; grid-template-columns:repeat(7,1fr); gap:4px;">' + cells + '</div>' +
+    '<div style="margin-top:18px; border-top:1px solid rgba(0,229,255,.14); padding-top:10px;">' +
+    '<div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.55); margin-bottom:4px;">AGENDA</div>' + agenda + '</div>';
+
+  E.ovlSub.textContent = (rows || []).length + ' entries';
+  ovlBusy(false);
+  return {
+    ok: true, month: y + '-' + String(m + 1).padStart(2, '0'), count: (rows || []).length,
+    events: (rows || []).map(e => ({ id: e.id, title: e.title, starts_at: e.starts_at, ends_at: e.ends_at, notes: e.notes }))
+  };
+}
+
+function icsExport(rows) {
+  const stamp = (d) => new Date(d).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  const body = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//JARVIS Command Deck//EN']
+    .concat((rows || []).flatMap(e => [
+      'BEGIN:VEVENT', 'UID:jarvis-' + e.id + '@deck', 'DTSTAMP:' + stamp(new Date()),
+      'DTSTART:' + stamp(e.starts_at),
+      'DTEND:' + stamp(e.ends_at || new Date(new Date(e.starts_at).getTime() + 3600000)),
+      'SUMMARY:' + String(e.title || '').replace(/\n/g, ' '),
+      e.notes ? 'DESCRIPTION:' + String(e.notes).replace(/\n/g, ' ') : '', 'END:VEVENT'
+    ].filter(Boolean)))
+    .concat(['END:VCALENDAR']).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([body], { type: 'text/calendar' }));
+  a.download = 'jarvis-calendar.ics';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  toast('EXPORT', 'jarvis-calendar.ics written', accentNow());
 }
 
 /* ================================================================ ACCESS GATE = */
