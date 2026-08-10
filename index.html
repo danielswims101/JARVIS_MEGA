@@ -941,20 +941,20 @@ window.dispatchEvent(new Event('jarvis-engine-ready'));
    only ever touched by the edge function. Nothing secret ships in this file.
    ═══════════════════════════════════════════════════════════════════════════ */
 const PRESET = {
-  supabaseUrl:     'https://gzqovsffnziumfbmqdes.supabase.co/functions/v1/jarvis-ai',                 // ← https://xxxxxxxxxxxx.supabase.co
-  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6cW92c2ZmbnppdW1mYm1xZGVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNTgyMTksImV4cCI6MjA5NzgzNDIxOX0.26E4yXVMAjaq_mg4R0BGqRy2adYlG8mgRkbEn3SU36Y',                 // ← the anon/publishable key (public by design)
+  supabaseUrl:     'https://gzqovsffnziumfbmqdes.supabase.co',
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6cW92c2ZmbnppdW1mYm1xZGVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNTgyMTksImV4cCI6MjA5NzgzNDIxOX0.26E4yXVMAjaq_mg4R0BGqRy2adYlG8mgRkbEn3SU36Y',
 
-  chatFunction:    'jarvis-chat',      // edge function holding ANTHROPIC_API_KEY
+  chatFunction:    'jarvis-ai',        // your deployed function
   verifyFunction:  'verify-access',    // edge function holding ACCESS_CODE
   model:           'claude-fable-5',
 
   requireAccessCode: true,             // gate the session behind the code
 
-  elevenKey: 'sk_1a2db9b34828b2c6b96fe6e01719210a882bf174285039b0',                       // optional — leave blank to use browser speech
+  elevenKey: 'sk_1a2db9b34828b2c6b96fe6e01719210a882bf174285039b0',
   voices: {
-    jarvis: 'eOpDij4ZcACvhwwZD4k1',    // Daniel  · replace with your custom voice ID
-    friday: 'CdqnllU7Nz7d5Wu8h8ha',    // Charlotte
-    edith:  'FEECqq79nQmylfvNhWa3'     // Sarah
+    jarvis: 'eOpDij4ZcACvhwwZD4k1',    // your custom voice
+    friday: 'CdqnllU7Nz7d5Wu8h8ha',
+    edith:  'FEECqq79nQmylfvNhWa3'
   }
 };
 /* ═════════════════════════════════════════════════════════════════════════ */
@@ -2088,7 +2088,10 @@ async function turn(hist, sys, onText) {
       // the key never leaves Supabase — we only carry the anon key and the session code
       headers['apikey'] = SB.key;
       headers['authorization'] = 'Bearer ' + SB.key;
-      if (GATE.code) headers['x-access-code'] = GATE.code;
+      if (GATE.code) {
+        headers['x-access-code'] = GATE.code;
+        headers['x-deck-code'] = GATE.code;
+      }
     } else {
       headers['x-api-key'] = link.key;
       headers['anthropic-version'] = '2023-06-01';
@@ -3340,12 +3343,25 @@ async function verifyCode(code) {
   if (!SB.url || !SB.key) throw new Error('no Supabase project configured — press SETTINGS');
   const url = SB.url.replace(/\/+$/, '') + '/functions/v1/' + PRESET.verifyFunction;
 
+  // Send the code under every field name a verify function might reasonably use,
+  // plus as a header. Costs nothing and means the deck works with whatever
+  // contract your function already expects.
+  const payload = {
+    code: code, accessCode: code, access_code: code,
+    password: code, token: code, passcode: code
+  };
+
   let res;
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', apikey: SB.key, authorization: 'Bearer ' + SB.key },
-      body: JSON.stringify({ code: code })
+      headers: {
+        'content-type': 'application/json',
+        apikey: SB.key,
+        authorization: 'Bearer ' + SB.key,
+        'x-access-code': code
+      },
+      body: JSON.stringify(payload)
     });
   } catch (e) {
     throw new Error('cannot reach ' + PRESET.verifyFunction + ' — check the project URL is right and the function is deployed');
@@ -3353,23 +3369,36 @@ async function verifyCode(code) {
 
   const raw = await res.text().catch(() => '');
   let j = null;
-  try { j = JSON.parse(raw); } catch (e) { /* not our shape */ }
+  try { j = JSON.parse(raw); } catch (e) { /* plain text response */ }
 
-  // Our function always answers with an ok flag. Anything else came from the platform.
-  if (j && typeof j.ok === 'boolean') {
-    if (j.ok) return { ok: true, label: j.label || 'OPERATOR' };
-    if (j.error) throw new Error(j.error);
-    return { ok: false, reason: 'code' };
+  const flag = (o, k) => (o && typeof o[k] === 'boolean' ? o[k] : null);
+  const verdict = j ? (flag(j, 'ok') ?? flag(j, 'valid') ?? flag(j, 'success') ?? flag(j, 'authorized') ?? flag(j, 'granted')) : null;
+  const label = (j && (j.label || j.name || j.user || j.role)) || 'OPERATOR';
+  const serverMsg = (j && (j.error?.message || j.message || j.msg || j.error)) || '';
+
+  if (res.ok) {
+    if (verdict === false) return { ok: false, reason: 'code', detail: String(serverMsg || '') };
+    if (typeof serverMsg === 'string' && /invalid|denied|incorrect|wrong|unauthor/i.test(serverMsg)) {
+      return { ok: false, reason: 'code', detail: serverMsg };
+    }
+    return { ok: true, label: label };
   }
 
   if (res.status === 404) {
     throw new Error('no function named "' + PRESET.verifyFunction + '" on this project — check the name in the preset');
   }
+
   if (res.status === 401 || res.status === 403) {
-    throw new Error('Supabase refused the anon key before the function ran (' + res.status + '). Either the key is wrong, ' +
-      'or JWT verification is on and your key is not a JWT — use the legacy anon key (eyJ...) or turn off ' +
-      '"Verify JWT" for this function. ' + raw.slice(0, 110));
+    // Supabase's gateway rejects before the function runs and always talks about
+    // the key. Anything else on a 401 came from inside the function itself.
+    const gatewayish = /jwt|authorization header|api ?key|apikey|bearer|missing token/i.test(String(serverMsg) + raw);
+    if (gatewayish) {
+      throw new Error('Supabase refused the anon key before your function ran (' + res.status + '). Use the legacy anon key ' +
+        '(eyJ...) or turn off "Verify JWT" for this function. ' + raw.slice(0, 110));
+    }
+    return { ok: false, reason: 'code', detail: typeof serverMsg === 'string' ? serverMsg : '' };
   }
+
   throw new Error('gate ' + res.status + (raw ? ' · ' + raw.slice(0, 150) : ''));
 }
 
@@ -3391,9 +3420,12 @@ async function submitCode() {
     }
     GATE.tries++;
     E.gateCode.value = '';
+    const said = r.detail ? ' Your function said: "' + String(r.detail).slice(0, 70) + '".' : '';
     if (GATE.tries === 2) {
-      gateMsg('Code rejected. If you are certain it is right, check the ACCESS_CODE secret for a stray space or ' +
-        'wrapping quotes — the function trims both, but only after a redeploy of the latest version.', AM);
+      gateMsg('Still rejected.' + said + ' The deck sends the code as code / accessCode / access_code / password / token ' +
+        'and as an x-access-code header, so a field-name mismatch is ruled out. Two things left: a stray space or ' +
+        'wrapping quotes on the stored secret, or your function comparing against a different secret than you think. ' +
+        'Its Logs will show which.', AM);
       return;
     }
     if (GATE.tries >= 5) {
@@ -3406,7 +3438,7 @@ async function submitCode() {
         else gateMsg('Sealed · ' + left + 's', RD);
       }, 1000);
     } else {
-      gateMsg('Code rejected. ' + (5 - GATE.tries) + ' attempt' + (5 - GATE.tries === 1 ? '' : 's') + ' remaining.', RD);
+      gateMsg('Code rejected.' + said + ' ' + (5 - GATE.tries) + ' attempt' + (5 - GATE.tries === 1 ? '' : 's') + ' remaining.', RD);
     }
   } catch (err) {
     gateMsg(String(err.message || err), AM);
