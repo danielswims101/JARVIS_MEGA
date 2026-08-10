@@ -945,7 +945,7 @@ const PRESET = {
   supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6cW92c2ZmbnppdW1mYm1xZGVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNTgyMTksImV4cCI6MjA5NzgzNDIxOX0.26E4yXVMAjaq_mg4R0BGqRy2adYlG8mgRkbEn3SU36Y',
 
   chatFunction:    'jarvis-ai',        // your deployed function
-  verifyFunction:  'verify-access',    // edge function holding ACCESS_CODE
+  verifyFunction:  '',                 // blank on purpose — the gate checks the code against jarvis-ai
   model:           'claude-fable-5',
 
   requireAccessCode: true,             // gate the session behind the code
@@ -3339,8 +3339,48 @@ function gateMsg(text, col) {
 /* Returns {ok:true,label} on success, {ok:false,reason:'code'} for a genuine
    rejection, and throws for anything that never reached the function. Those two
    must never be confused — a gateway 401 is not a wrong password. */
+/* No dedicated verify function? Prove the code against the chat function instead —
+   it already rejects a bad code, and a 200 means the code genuinely works. */
+async function verifyViaChat(code) {
+  const url = SB.url.replace(/\/+$/, '') + '/functions/v1/' + PRESET.chatFunction;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        apikey: SB.key, authorization: 'Bearer ' + SB.key,
+        'x-access-code': code, 'x-deck-code': code
+      },
+      body: JSON.stringify({
+        model: link.model, max_tokens: 1,
+        messages: [{ role: 'user', content: 'ping' }]
+      })
+    });
+  } catch (e) {
+    throw new Error('cannot reach ' + PRESET.chatFunction + ' — either it is not deployed on this project, ' +
+      'or it is not answering the CORS preflight. A missing function looks exactly like this from a browser.');
+  }
+
+  const raw = await res.text().catch(() => '');
+  if (res.ok) return { ok: true, label: 'OPERATOR' };
+
+  let j = null; try { j = JSON.parse(raw); } catch (e) { }
+  const msg = (j && (j.error?.message || j.message || j.msg)) || raw.slice(0, 140);
+
+  if (res.status === 401 || res.status === 403) {
+    if (/jwt|authorization header|api ?key|apikey|bearer/i.test(msg)) {
+      throw new Error('Supabase refused the anon key before your function ran (' + res.status + '). Use the legacy anon ' +
+        'key (eyJ...) or turn off "Verify JWT" for this function.');
+    }
+    return { ok: false, reason: 'code', detail: msg };
+  }
+  throw new Error('gate ' + res.status + (msg ? ' · ' + msg : ''));
+}
+
 async function verifyCode(code) {
   if (!SB.url || !SB.key) throw new Error('no Supabase project configured — press SETTINGS');
+  if (!PRESET.verifyFunction) return verifyViaChat(code);
   const url = SB.url.replace(/\/+$/, '') + '/functions/v1/' + PRESET.verifyFunction;
 
   // Send the code under every field name a verify function might reasonably use,
@@ -3364,7 +3404,8 @@ async function verifyCode(code) {
       body: JSON.stringify(payload)
     });
   } catch (e) {
-    throw new Error('cannot reach ' + PRESET.verifyFunction + ' — check the project URL is right and the function is deployed');
+    throw new Error('cannot reach ' + PRESET.verifyFunction + ' — either it is not deployed on this project, or it is ' +
+      'not answering the CORS preflight. Leave verifyFunction blank in the preset to verify against ' + PRESET.chatFunction + ' instead.');
   }
 
   const raw = await res.text().catch(() => '');
