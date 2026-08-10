@@ -3333,21 +3333,44 @@ function gateMsg(text, col) {
   E.gateMsg.style.color = col || 'rgba(255,179,0,.9)';
 }
 
+/* Returns {ok:true,label} on success, {ok:false,reason:'code'} for a genuine
+   rejection, and throws for anything that never reached the function. Those two
+   must never be confused — a gateway 401 is not a wrong password. */
 async function verifyCode(code) {
-  if (!SB.url || !SB.key) throw new Error('no Supabase project configured — open settings');
+  if (!SB.url || !SB.key) throw new Error('no Supabase project configured — press SETTINGS');
   const url = SB.url.replace(/\/+$/, '') + '/functions/v1/' + PRESET.verifyFunction;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', apikey: SB.key, authorization: 'Bearer ' + SB.key },
-    body: JSON.stringify({ code: code })
-  });
-  if (res.status === 401 || res.status === 403) return { ok: false };
-  if (!res.ok) {
-    let d = ''; try { d = (await res.text()).slice(0, 160); } catch (e) { }
-    throw new Error('gate ' + res.status + (d ? ' · ' + d : ''));
+
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', apikey: SB.key, authorization: 'Bearer ' + SB.key },
+      body: JSON.stringify({ code: code })
+    });
+  } catch (e) {
+    throw new Error('cannot reach ' + PRESET.verifyFunction + ' — check the project URL is right and the function is deployed');
   }
-  const j = await res.json().catch(() => ({}));
-  return { ok: j.ok !== false, label: j.label || 'OPERATOR' };
+
+  const raw = await res.text().catch(() => '');
+  let j = null;
+  try { j = JSON.parse(raw); } catch (e) { /* not our shape */ }
+
+  // Our function always answers with an ok flag. Anything else came from the platform.
+  if (j && typeof j.ok === 'boolean') {
+    if (j.ok) return { ok: true, label: j.label || 'OPERATOR' };
+    if (j.error) throw new Error(j.error);
+    return { ok: false, reason: 'code' };
+  }
+
+  if (res.status === 404) {
+    throw new Error('no function named "' + PRESET.verifyFunction + '" on this project — check the name in the preset');
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('Supabase refused the anon key before the function ran (' + res.status + '). Either the key is wrong, ' +
+      'or JWT verification is on and your key is not a JWT — use the legacy anon key (eyJ...) or turn off ' +
+      '"Verify JWT" for this function. ' + raw.slice(0, 110));
+  }
+  throw new Error('gate ' + res.status + (raw ? ' · ' + raw.slice(0, 150) : ''));
 }
 
 async function submitCode() {
@@ -3368,6 +3391,11 @@ async function submitCode() {
     }
     GATE.tries++;
     E.gateCode.value = '';
+    if (GATE.tries === 2) {
+      gateMsg('Code rejected. If you are certain it is right, check the ACCESS_CODE secret for a stray space or ' +
+        'wrapping quotes — the function trims both, but only after a redeploy of the latest version.', AM);
+      return;
+    }
     if (GATE.tries >= 5) {
       GATE.locked = Date.now() + 60000;
       gateMsg('Five failed attempts. Channel sealed for sixty seconds.', RD);
