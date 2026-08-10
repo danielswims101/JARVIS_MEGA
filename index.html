@@ -945,10 +945,13 @@ const PRESET = {
   supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6cW92c2ZmbnppdW1mYm1xZGVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNTgyMTksImV4cCI6MjA5NzgzNDIxOX0.26E4yXVMAjaq_mg4R0BGqRy2adYlG8mgRkbEn3SU36Y',
 
   chatFunction:    'jarvis-ai',        // your deployed function
-  verifyFunction:  '',                 // blank on purpose — the gate checks the code against jarvis-ai
+  verifyFunction:  '',                 // leave blank to verify against chatFunction instead
   model:           'claude-fable-5',
 
   requireAccessCode: true,             // gate the session behind the code
+  codeHeader:      'x-access-code',    // header carrying the code. Your function must
+                                       // allow it in access-control-allow-headers, or
+                                       // set this to '' to send no custom header.
 
   elevenKey: 'sk_1a2db9b34828b2c6b96fe6e01719210a882bf174285039b0',
   voices: {
@@ -2088,10 +2091,7 @@ async function turn(hist, sys, onText) {
       // the key never leaves Supabase — we only carry the anon key and the session code
       headers['apikey'] = SB.key;
       headers['authorization'] = 'Bearer ' + SB.key;
-      if (GATE.code) {
-        headers['x-access-code'] = GATE.code;
-        headers['x-deck-code'] = GATE.code;
-      }
+      if (GATE.code && PRESET.codeHeader) headers[PRESET.codeHeader] = GATE.code;
     } else {
       headers['x-api-key'] = link.key;
       headers['anthropic-version'] = '2023-06-01';
@@ -2235,7 +2235,10 @@ async function converse(userText) {
     const msg = String((err && err.message) || err);
     printRow('NEURAL LINK FAULT — ' + msg, RD);
     if (/failed to fetch|networkerror|load failed/i.test(msg)) {
-      printRow('  the browser could not reach the endpoint (CORS, offline, or wrong base URL).', DIM);
+      printRow('  the browser blocked or could not reach the endpoint.', DIM);
+      if (link.provider === 'proxy' && PRESET.codeHeader) {
+        printRow('  if the function is deployed, its access-control-allow-headers must include "' + PRESET.codeHeader + '".', DIM);
+      }
     }
     toast('LINK', 'Cognition request failed', RD);
   } finally {
@@ -3350,7 +3353,7 @@ async function verifyViaChat(code) {
       headers: {
         'content-type': 'application/json',
         apikey: SB.key, authorization: 'Bearer ' + SB.key,
-        'x-access-code': code, 'x-deck-code': code
+        ...(PRESET.codeHeader ? { [PRESET.codeHeader]: code } : {})
       },
       body: JSON.stringify({
         model: link.model, max_tokens: 1,
@@ -3358,8 +3361,10 @@ async function verifyViaChat(code) {
       })
     });
   } catch (e) {
-    throw new Error('cannot reach ' + PRESET.chatFunction + ' — either it is not deployed on this project, ' +
-      'or it is not answering the CORS preflight. A missing function looks exactly like this from a browser.');
+    throw new Error('the browser blocked the call to ' + PRESET.chatFunction + '. Most likely its CORS ' +
+      'access-control-allow-headers does not list "' + (PRESET.codeHeader || 'content-type') + '", so the preflight ' +
+      'failed. Add that header in the function, or set codeHeader to \'\' in the preset. (A function that is not ' +
+      'deployed at all looks identical from here.)');
   }
 
   const raw = await res.text().catch(() => '');
