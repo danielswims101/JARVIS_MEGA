@@ -3368,9 +3368,16 @@ async function verifyViaChat(code) {
   }
 
   const raw = await res.text().catch(() => '');
-  if (res.ok) return { ok: true, label: 'OPERATOR' };
-
   let j = null; try { j = JSON.parse(raw); } catch (e) { }
+
+  if (res.ok) {
+    // an explicit false from the function still counts as a rejection
+    if (j && (j.ok === false || j.valid === false || j.success === false)) {
+      return { ok: false, reason: 'code', detail: String((j.error && j.error.message) || j.message || '') };
+    }
+    return { ok: true, label: (j && (j.label || j.name || j.user)) || 'OPERATOR' };
+  }
+
   const msg = (j && (j.error?.message || j.message || j.msg)) || raw.slice(0, 140);
 
   if (res.status === 401 || res.status === 403) {
