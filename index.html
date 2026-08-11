@@ -568,7 +568,7 @@ vec3 curl(vec3 p, float t){
 const VERT = NOISE + `
 attribute vec3 aDir;
 attribute float aRad, aRand, aLayer, aSize, aSeed;
-uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark;
+uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark, uVH;
 uniform vec3 uShockDir, uMood;
 varying vec3 vCol;
 varying float vA;
@@ -658,7 +658,7 @@ void main(){
   float a = aLayer < 0.5 ? 0.52 : (aLayer < 1.5 ? 0.44 : 0.28);
   vA = a * uBoot * (0.6 + 0.4*breath);
 
-  float size = aSize * (1.0 + energy*0.6 + shock*1.2) * uPixel;
+  float size = aSize * (1.0 + energy*0.6 + shock*1.2) * uPixel * uVH;
   gl_PointSize = size * (13.0 / max(0.001, -mv.z));
 }`;
 
@@ -800,7 +800,8 @@ function init(canvas, opts = {}) {
     uBoot: { value: 0 },
     uMood: { value: new THREE.Vector3(0, 0.9, 1) },
     uMoodAmt: { value: 0 },
-    uDark: { value: 0 }
+    uDark: { value: 0 },
+    uVH: { value: 1 }
   };
   const mat = new THREE.ShaderMaterial({
     uniforms, vertexShader: VERT, fragmentShader: FRAG,
@@ -873,6 +874,7 @@ function init(canvas, opts = {}) {
     renderer.setSize(w, h, false); composer.setSize(w, h);
     post.uniforms.uRes.value.set(w, h);
     bloom.setSize(w, h);
+    uniforms.uVH.value = Math.max(0.42, Math.min(1.6, h / 900));
   }
   addEventListener('resize', resize);
 
@@ -882,6 +884,8 @@ function init(canvas, opts = {}) {
     const dt = Math.min(0.05, clock.getDelta());
     const t = clock.elapsedTime;
     resize();
+    // the docked orb animates its size, so track it continuously
+    uniforms.uVH.value = Math.max(0.42, Math.min(1.6, (canvas.clientHeight || 900) / 900));
     audio.update(dt);
 
     for (let i = 0; i < 5; i++) weights[i] += (target[i] - weights[i]) * Math.min(1, dt * 3.4);
@@ -988,6 +992,7 @@ const PRESET = {
   model:           'claude-fable-5',
 
   requireAccessCode: true,             // gate the session behind the code
+  units:           'imperial',         // 'imperial' = degrees F / mph, 'metric' = C / km/h
   codeHeader:      'x-access-code',    // header carrying the code. Your function must
                                        // allow it in access-control-allow-headers, or
                                        // set this to '' to send no custom header.
@@ -1203,9 +1208,10 @@ function reserveOrb() {
           + lvl * 0.22 + shock * 0.3 * Math.sin(p[3] * 20 + t * 9);
         const s = 2.4 / (2.4 - z * wob);
         const a = 0.16 + s * 0.20;
+        const dot = 1.5 * s * Math.max(0.42, Math.min(1.6, H / 900));
         ctx.fillStyle = 'rgba(' + clamp(col[0] * tint[0] * (0.5 + z * 0.5), 0, 255).toFixed(0) + ',' +
           clamp(col[1] * tint[1] * (0.55 + z * 0.45), 0, 255).toFixed(0) + ',' + clamp(col[2] * tint[2], 0, 255).toFixed(0) + ',' + a.toFixed(3) + ')';
-        ctx.fillRect(cx + x * R * wob * s, cy + p[1] * R * wob * s, 1.5 * s, 1.5 * s);
+        ctx.fillRect(cx + x * R * wob * s, cy + p[1] * R * wob * s, dot, dot);
       }
       const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.5);
       g.addColorStop(0, 'rgba(' + clamp(col[0] * tint[0], 0, 255).toFixed(0) + ',' + clamp(col[1] * tint[1], 0, 255).toFixed(0) +
@@ -3515,8 +3521,9 @@ async function showWeather(a) {
     const g = await geocode(a.location || 'London');
     lat = g.lat; lon = g.lon; label = g.label;
   }
-  const units = a.units === 'imperial' ? { t: 'fahrenheit', w: 'mph', p: 'inch', sym: '°F', wsym: 'mph' }
-                                       : { t: 'celsius', w: 'kmh', p: 'mm', sym: '°C', wsym: 'km/h' };
+  const metric = (a.units || PRESET.units || 'imperial') === 'metric';
+  const units = metric ? { t: 'celsius', w: 'kmh', p: 'mm', sym: '°C', wsym: 'km/h' }
+                       : { t: 'fahrenheit', w: 'mph', p: 'inch', sym: '°F', wsym: 'mph' };
   const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
     '&current=temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m' +
     '&hourly=temperature_2m,precipitation_probability' +
@@ -3535,26 +3542,28 @@ async function showWeather(a) {
   const pops = (hr.precipitation_probability || []).slice(now, now + 24);
   const tmin = Math.min.apply(null, temps), tmax = Math.max.apply(null, temps);
   const span = (tmax - tmin) || 1;
-  const pw = 640, ph = 92;
-  const pts = temps.map((t, i) => [(i / Math.max(1, temps.length - 1)) * pw, ph - 12 - ((t - tmin) / span) * (ph - 30)]);
-  let trace = '<svg viewBox="0 0 ' + pw + ' ' + ph + '" width="100%" height="' + ph + '" preserveAspectRatio="none">';
+  const pw = 1000, ph = 132;
+  const pts = temps.map((t, i) => [(i / Math.max(1, temps.length - 1)) * pw, ph - 20 - ((t - tmin) / span) * (ph - 52)]);
+  // preserveAspectRatio="none" was stretching the graphic horizontally — that is
+  // what squashed every number printed on it.
+  let trace = '<svg viewBox="0 0 ' + pw + ' ' + ph + '" width="100%" style="display:block; height:auto;">';
   pops.forEach((p, i) => {
     const x = (i / Math.max(1, pops.length - 1)) * pw;
-    trace += '<rect x="' + (x - 5) + '" y="' + (ph - 10 - (p / 100) * (ph - 26)) + '" width="10" height="' + ((p / 100) * (ph - 26)) + '" fill="rgba(10,132,255,.22)"/>';
+    trace += '<rect x="' + (x - 8) + '" y="' + (ph - 16 - (p / 100) * (ph - 38)) + '" width="16" height="' + ((p / 100) * (ph - 38)) + '" fill="rgba(10,132,255,.22)"/>';
   });
-  trace += '<polyline points="' + pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + '" fill="none" stroke="' + acc + '" stroke-width="2"/>';
-  pts.forEach((p, i) => { if (i % 6 === 0) trace += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="2.5" fill="' + acc + '"/>'; });
+  trace += '<polyline points="' + pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + '" fill="none" stroke="' + acc + '" stroke-width="2.6"/>';
+  pts.forEach((p, i) => { if (i % 6 === 0) trace += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.4" fill="' + acc + '"/>'; });
   temps.forEach((t, i) => {
     if (i % 6) return;
     const x = (i / Math.max(1, temps.length - 1)) * pw;
-    trace += '<text x="' + x.toFixed(1) + '" y="' + (ph - 1) + '" font-family="JetBrains Mono, monospace" font-size="9" fill="rgba(0,229,255,.5)" text-anchor="middle">' + ((now + i) % 24) + ':00</text>';
-    trace += '<text x="' + x.toFixed(1) + '" y="' + (pts[i][1] - 6).toFixed(1) + '" font-family="JetBrains Mono, monospace" font-size="9" fill="#cfeeff" text-anchor="middle">' + Math.round(t) + '</text>';
+    trace += '<text x="' + x.toFixed(1) + '" y="' + (ph - 2) + '" font-family="JetBrains Mono, monospace" font-size="13" fill="rgba(0,229,255,.55)" text-anchor="middle">' + ((now + i) % 24) + ':00</text>';
+    trace += '<text x="' + x.toFixed(1) + '" y="' + (pts[i][1] - 9).toFixed(1) + '" font-family="JetBrains Mono, monospace" font-size="14" fill="#cfeeff" text-anchor="middle">' + Math.round(t) + '°</text>';
   });
   trace += '</svg>';
 
-  const stat = (k, v) => '<div style="border:1px solid rgba(0,229,255,.18); background:rgba(0,229,255,.04); padding:8px 10px;">' +
-    '<div style="font-size:8px; letter-spacing:.28em; color:rgba(0,229,255,.55);">' + k + '</div>' +
-    '<div style="font-size:15px; color:#dff6ff; margin-top:3px; font-variant-numeric:tabular-nums;">' + v + '</div></div>';
+  const stat = (k, v) => '<div style="border:1px solid rgba(0,229,255,.18); background:rgba(0,229,255,.04); padding:11px 14px;">' +
+    '<div style="font-size:8.5px; letter-spacing:.28em; color:rgba(0,229,255,.55); white-space:nowrap;">' + k + '</div>' +
+    '<div style="font-size:19px; line-height:1.25; color:#dff6ff; margin-top:5px; font-variant-numeric:tabular-nums; white-space:nowrap;">' + v + '</div></div>';
 
   const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
   const wdir = dirs[Math.round(cur.wind_direction_10m / 22.5) % 16];
@@ -3562,11 +3571,11 @@ async function showWeather(a) {
   const days = (day.time || []).map((d, i) => {
     const c2 = WMO[day.weather_code[i]] || ['—', 'cloud'];
     const nm = i === 0 ? 'TODAY' : new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase();
-    return '<div style="flex:1; min-width:0; border:1px solid rgba(0,229,255,.16); background:rgba(0,229,255,.03); padding:9px 6px; text-align:center;">' +
-      '<div style="font-size:8px; letter-spacing:.22em; color:rgba(0,229,255,.6);">' + nm + '</div>' +
-      '<div style="display:flex; justify-content:center; margin:4px 0;">' + wxGlyph(c2[1], acc, 34) + '</div>' +
-      '<div style="font-size:12px; color:#dff6ff;">' + Math.round(day.temperature_2m_max[i]) + '<span style="color:rgba(150,215,235,.5);">/' + Math.round(day.temperature_2m_min[i]) + '</span></div>' +
-      '<div style="font-size:8px; color:rgba(10,132,255,.9); margin-top:2px;">' + (day.precipitation_probability_max ? day.precipitation_probability_max[i] + '%' : '') + '</div>' +
+    return '<div style="flex:1 1 0; min-width:104px; border:1px solid rgba(0,229,255,.16); background:rgba(0,229,255,.03); padding:12px 8px; text-align:center;">' +
+      '<div style="font-size:9px; letter-spacing:.22em; color:rgba(0,229,255,.6); white-space:nowrap;">' + nm + '</div>' +
+      '<div style="display:flex; justify-content:center; margin:7px 0;">' + wxGlyph(c2[1], acc, 42) + '</div>' +
+      '<div style="font-size:16px; color:#dff6ff; white-space:nowrap; font-variant-numeric:tabular-nums;">' + Math.round(day.temperature_2m_max[i]) + '<span style="color:rgba(150,215,235,.5);">/' + Math.round(day.temperature_2m_min[i]) + '</span></div>' +
+      '<div style="font-size:10px; color:rgba(10,132,255,.9); margin-top:4px;">' + (day.precipitation_probability_max ? day.precipitation_probability_max[i] + '%' : '') + '</div>' +
       '</div>';
   }).join('');
 
@@ -3575,12 +3584,12 @@ async function showWeather(a) {
       '<div style="display:flex; align-items:center; gap:18px;">' +
         '<div style="filter:drop-shadow(0 0 14px ' + acc + '66);">' + wxGlyph(code[1], acc, 92) + '</div>' +
         '<div>' +
-          '<div style="font-size:54px; line-height:1; color:#eafcff; font-variant-numeric:tabular-nums;">' + Math.round(cur.temperature_2m) + '<span style="font-size:22px; color:rgba(150,215,235,.7);">' + units.sym + '</span></div>' +
-          '<div style="font-size:11px; letter-spacing:.26em; color:' + acc + '; margin-top:6px;">' + code[0] + '</div>' +
-          '<div style="font-size:10px; letter-spacing:.14em; color:rgba(150,215,235,.7); margin-top:4px;">FEELS ' + Math.round(cur.apparent_temperature) + units.sym + '</div>' +
+          '<div style="font-size:66px; line-height:1; color:#eafcff; font-variant-numeric:tabular-nums; white-space:nowrap;">' + Math.round(cur.temperature_2m) + '<span style="font-size:26px; color:rgba(150,215,235,.7);">' + units.sym + '</span></div>' +
+          '<div style="font-size:12px; letter-spacing:.26em; color:' + acc + '; margin-top:9px; white-space:nowrap;">' + code[0] + '</div>' +
+          '<div style="font-size:11px; letter-spacing:.14em; color:rgba(150,215,235,.7); margin-top:5px; white-space:nowrap;">FEELS ' + Math.round(cur.apparent_temperature) + units.sym + '</div>' +
         '</div>' +
       '</div>' +
-      '<div style="flex:1; min-width:260px; display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr)); gap:8px;">' +
+      '<div style="flex:1; min-width:330px; display:grid; grid-template-columns:repeat(auto-fit,minmax(158px,1fr)); gap:10px;">' +
         stat('WIND', Math.round(cur.wind_speed_10m) + ' <span style="font-size:10px;color:rgba(150,215,235,.6)">' + units.wsym + ' ' + wdir + '</span>') +
         stat('HUMIDITY', cur.relative_humidity_2m + ' <span style="font-size:10px;color:rgba(150,215,235,.6)">%</span>') +
         stat('PRESSURE', Math.round(cur.surface_pressure) + ' <span style="font-size:10px;color:rgba(150,215,235,.6)">hPa</span>') +
@@ -3594,7 +3603,7 @@ async function showWeather(a) {
     '</div>' +
     '<div style="margin-top:16px;">' +
       '<div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.55); margin-bottom:6px;">SEVEN DAY OUTLOOK</div>' +
-      '<div style="display:flex; gap:6px;">' + days + '</div>' +
+      '<div style="display:flex; gap:8px; overflow-x:auto; padding-bottom:4px;">' + days + '</div>' +
     '</div>';
 
   E.ovlSub.textContent = label + '  ·  ' + lat.toFixed(3) + ', ' + lon.toFixed(3);
