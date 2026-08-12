@@ -81,9 +81,7 @@
 <div id="deck" style="position:fixed; inset:0; background:#03060a; color:#bfe6f4; overflow:hidden; display:grid; grid-template-rows:58px minmax(0,1fr) auto;">
 
   <canvas id="orb" style="position:absolute; left:0; top:0; width:100%; height:100%; display:block; z-index:0;
-       transition:width .7s cubic-bezier(.16,1,.3,1), height .7s cubic-bezier(.16,1,.3,1),
-                  right .7s cubic-bezier(.16,1,.3,1), bottom .7s cubic-bezier(.16,1,.3,1),
-                  border-radius .7s ease, box-shadow .7s ease;"></canvas>
+       transition:transform .55s cubic-bezier(.16,1,.3,1), opacity .35s ease, box-shadow .5s ease;"></canvas>
   <div id="moodVeil" style="position:absolute; inset:0; z-index:1; pointer-events:none; background:#000; opacity:0; transition:opacity .8s ease;"></div>
 
   <!-- ================================================================ TOP BAR -->
@@ -312,7 +310,7 @@
   <div id="panel" style="position:absolute; inset:0; z-index:44; display:flex; flex-direction:column;
        opacity:0; pointer-events:none; transform:scale(1.015);
        transition:opacity .55s ease, transform .7s cubic-bezier(.16,1,.3,1);
-       background:linear-gradient(150deg, rgba(7,10,14,.985), rgba(2,4,7,.975)); backdrop-filter:blur(3px);">
+       background:linear-gradient(150deg, rgba(7,10,14,.995), rgba(2,4,7,.99));">
     <div class="br tl-h"></div><div class="br tl-v"></div><div class="br br-h"></div><div class="br br-v"></div>
     <div class="swp" style="animation-duration:13s;"></div>
 
@@ -1675,7 +1673,12 @@ function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, (now - (app.last || now)) / 1000); app.last = now;
   tick(dt, now - app.t0);
-  drawVitals(); drawNet(dt); drawCore(dt); drawNeural(dt); drawRadar(dt); drawWave();
+
+  // The six gauge canvases sit behind the workspace and the control panel. When
+  // something covers them there is no reason to keep redrawing them at 60fps.
+  const hidden = PANEL.on || !!OVL.mode;
+  if (!hidden) { drawVitals(); drawNet(dt); drawCore(dt); drawNeural(dt); drawRadar(dt); }
+  if (!PANEL.on) drawWave();
 }
 
 /* ================================================================ NEURAL LINK = */
@@ -1900,6 +1903,10 @@ function telemetry() {
     render: eng ? { fps: Math.round(eng.fps), particles: Math.round(eng.count * eng.quality), pipeline: eng.fallback ? 'CANVAS-2D FALLBACK' : 'WEBGL + BLOOM + CA' } : { fps: 0, particles: 0, pipeline: 'booting' },
     audio: { source: eng && eng.audio.live ? 'MIC LIVE (FFT 2048)' : 'SYNTHETIC OSCILLATOR', level: eng ? +eng.audio.level.toFixed(3) : 0 },
     interface_mode: app.mode,
+    user_position: ME.lat != null
+      ? { latitude: +ME.lat.toFixed(4), longitude: +ME.lon.toFixed(4), place: ME.label || null,
+          accuracy_m: Math.round(ME.acc), method: ME.source === 'gps' ? 'device' : 'network' }
+      : 'unknown — call locate_me',
     persona: PERSONAS[persona.id].name,
     temper: { humor: persona.humor, depth: persona.depth },
     voice: EL.on ? 'ELEVENLABS · ' + EL.model : 'BROWSER SPEECH'
@@ -2040,8 +2047,10 @@ const TOOLS = [
       mode: { type: 'string', enum: ['tab', 'embed'], description: 'embed shows it inside the deck. Default tab.' }
     }, required: [] } },
 
-  { name: 'locate_me', description: 'Find where the user physically is, via the browser, and pin it on the tactical map. Also becomes the default centre for weather and the threat map. Ask before using it if the request was ambiguous.',
-    params: { type: 'object', properties: { zoom: { type: 'number' } }, required: [] } },
+  { name: 'locate_me', description: 'Find where the user physically is and pin it on the tactical map. Tries the device first, then falls back to a network lookup that is city-accurate and needs no permission. Their approximate position is already in the telemetry each turn; call this when they want it shown, refined, or explicitly ask where they are.',
+    params: { type: 'object', properties: {
+      zoom: { type: 'number' }, timeout: { type: 'number', description: 'Milliseconds to wait for a device fix before falling back. Default 9000.' }
+    }, required: [] } },
 
   { name: 'show_threat_map', description: 'Open the tactical map as a threat matrix — hostile contacts in red, allied contacts in blue, scattered around the centre with callsigns, bearings and ranges. Also drives the deck radar panel. Use when asked for the threat matrix, tactical picture, or who is around.',
     params: { type: 'object', properties: {
@@ -3013,7 +3022,7 @@ function setPanel(on) {
   if (on) {
     if (!PANEL.rows.length) plog('SYS', 'Control panel engaged — full instrumentation.', 'sys');
     clearInterval(PANEL.tick);
-    PANEL.tick = setInterval(paintPanelSide, 1000);
+    PANEL.tick = setInterval(paintPanelSide, 2000);
     paintPanelSide();
     setTimeout(() => E.panelInput && E.panelInput.focus(), 400);
   } else {
@@ -3093,13 +3102,15 @@ function dockOrb(on) {
   app.orbDocked = on;
   const set = (c) => {
     if (!c) return;
+    // Size is snapped, never transitioned — animating a canvas's box forces the
+    // renderer to rebuild its framebuffers on every frame of the animation.
     if (on) {
       c.style.left = 'auto'; c.style.top = 'auto';
       c.style.right = '26px'; c.style.bottom = '26px';
       c.style.width = '188px'; c.style.height = '188px';
       c.style.zIndex = '46';
       c.style.borderRadius = '50%';
-      c.style.boxShadow = '0 0 40px ' + accentNow() + '3a, inset 0 0 30px rgba(0,0,0,.6)';
+      c.style.boxShadow = '0 0 34px ' + accentNow() + '33';
       c.style.border = '1px solid ' + accentNow() + '55';
     } else {
       c.style.left = '0'; c.style.top = '0';
@@ -3110,6 +3121,15 @@ function dockOrb(on) {
       c.style.boxShadow = 'none';
       c.style.border = 'none';
     }
+    // the motion comes from a transform, which the compositor handles for free
+    c.style.transition = 'none';
+    c.style.transform = on ? 'scale(.55)' : 'scale(1.06)';
+    c.style.opacity = '.35';
+    requestAnimationFrame(() => {
+      c.style.transition = 'transform .55s cubic-bezier(.16,1,.3,1), opacity .35s ease, box-shadow .5s ease';
+      c.style.transform = 'scale(1)';
+      c.style.opacity = '1';
+    });
   };
   set(E.orb);
   if (app.engine && app.engine.reserve && app.engine.canvas) set(app.engine.canvas);
@@ -3596,8 +3616,9 @@ async function showWeather(a) {
   ovlBusy(true, 'POLLING SENSORS');
   let lat = a.lat, lon = a.lon, label = a.location || '';
   if (lat == null || lon == null) {
-    const g = await geocode(a.location || 'London');
-    lat = g.lat; lon = g.lon; label = g.label;
+    if (a.location) { const g = await geocode(a.location); lat = g.lat; lon = g.lon; label = g.label; }
+    else if (ME.lat != null) { lat = ME.lat; lon = ME.lon; label = ME.label || 'your position'; }
+    else { const g = await geocode('London'); lat = g.lat; lon = g.lon; label = g.label; }
   }
   const metric = (a.units || PRESET.units || 'imperial') === 'metric';
   const units = metric ? { t: 'celsius', w: 'kmh', p: 'mm', sym: '°C', wsym: 'km/h' }
@@ -3817,42 +3838,116 @@ function openTarget(a) {
 }
 
 /* ============================================================== GEOLOCATION == */
-const ME = { lat: null, lon: null, acc: null, at: 0 };
+const ME = { lat: null, lon: null, acc: null, at: 0, label: '', source: '' };
 
-function locateMe(a) {
-  return new Promise((resolve) => {
-    if (!navigator.geolocation) {
-      resolve({ error: 'this browser exposes no geolocation' });
+/* Browser geolocation is blocked outright on file:// pages and needs a permission
+   prompt everywhere else, so fall back to a network lookup. Coarser — city level,
+   a few km — but it always resolves and needs no permission. */
+async function ipLocate() {
+  const endpoints = ['https://ipwho.is/', 'https://ipapi.co/json/'];
+  for (const url of endpoints) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const j = await r.json();
+      const lat = typeof j.latitude === 'number' ? j.latitude : j.lat;
+      const lon = typeof j.longitude === 'number' ? j.longitude : j.lon;
+      if (typeof lat !== 'number' || typeof lon !== 'number') continue;
+      return {
+        lat: lat, lon: lon, acc: 25000, source: 'network',
+        label: [j.city, j.region || j.region_name, j.country || j.country_name].filter(Boolean).join(', ')
+      };
+    } catch (e) { /* try the next provider */ }
+  }
+  throw new Error('no network location provider answered');
+}
+
+function browserLocate(timeout) {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation || location.protocol === 'file:') {
+      reject(new Error(location.protocol === 'file:'
+        ? 'browsers block precise location on file:// pages'
+        : 'this browser exposes no geolocation'));
       return;
     }
-    ovlOpen('map', 'TACTICAL MAP', 'fixing position…');
-    ovlBusy(true, 'ACQUIRING FIX');
     navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        ME.lat = pos.coords.latitude; ME.lon = pos.coords.longitude;
-        ME.acc = pos.coords.accuracy; ME.at = Date.now();
-        try {
-          const r = await showMap({ lat: ME.lat, lon: ME.lon, zoom: a && a.zoom ? a.zoom : 14,
-            pins: [{ lat: ME.lat, lon: ME.lon, label: 'YOU', kind: 'self' }] });
-          resolve({ ok: true, latitude: +ME.lat.toFixed(5), longitude: +ME.lon.toFixed(5),
-            accuracy_m: Math.round(ME.acc), map: r.ok === true });
-        } catch (e) {
-          resolve({ ok: true, latitude: +ME.lat.toFixed(5), longitude: +ME.lon.toFixed(5),
-            accuracy_m: Math.round(ME.acc), map: 'could not draw: ' + String(e.message || e) });
-        }
-      },
-      (err) => {
-        ovlBusy(false);
-        const why = err.code === 1 ? 'permission denied — allow location for this page'
-          : err.code === 2 ? 'position unavailable'
-          : err.code === 3 ? 'timed out' : String(err.message || err);
-        ovlFail(why);
-        resolve({ error: 'location failed: ' + why +
-          (location.protocol === 'file:' ? '. Note: browsers block geolocation on file:// pages — serve the deck over http://localhost instead.' : '') });
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+      (pos) => resolve({
+        lat: pos.coords.latitude, lon: pos.coords.longitude,
+        acc: pos.coords.accuracy, source: 'gps', label: ''
+      }),
+      (err) => reject(new Error(
+        err.code === 1 ? 'permission denied' :
+        err.code === 2 ? 'position unavailable' :
+        err.code === 3 ? 'timed out' : String(err.message || err))),
+      { enableHighAccuracy: true, timeout: timeout || 9000, maximumAge: 120000 }
     );
   });
+}
+
+/* Silent, no prompt, no UI. Runs once at startup so weather and the threat map
+   already know roughly where you are. */
+async function primeLocation() {
+  if (ME.lat != null) return;
+  try {
+    const p = await ipLocate();
+    Object.assign(ME, p, { at: Date.now() });
+    streamRow('GEO', 'position fixed · ' + (p.label || p.lat.toFixed(2) + ', ' + p.lon.toFixed(2)) + ' · network', CY);
+  } catch (e) { /* stays unknown until asked */ }
+}
+
+async function locateMe(a) {
+  a = a || {};
+  ovlOpen('map', 'TACTICAL MAP', 'fixing position…');
+  ovlBusy(true, 'ACQUIRING FIX');
+
+  let fix = null, note = '';
+  try {
+    fix = await browserLocate(a.timeout);
+  } catch (e) {
+    note = String(e.message || e);
+    try {
+      fix = await ipLocate();
+      note = 'precise fix unavailable (' + note + ') — fell back to a network lookup';
+    } catch (e2) {
+      ovlBusy(false);
+      ovlFail(note + ' · ' + String(e2.message || e2));
+      return { error: 'could not locate you. ' + note + '. Network lookup also failed: ' + String(e2.message || e2) };
+    }
+  }
+
+  Object.assign(ME, fix, { at: Date.now() });
+  if (!ME.label) {
+    try {
+      const r = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&zoom=12&lat=' + ME.lat + '&lon=' + ME.lon,
+        { headers: { accept: 'application/json' } });
+      if (r.ok) { const j = await r.json(); ME.label = j.display_name || ''; }
+    } catch (e) { /* label is optional */ }
+  }
+
+  const readout = (ME.label || ME.lat.toFixed(4) + ', ' + ME.lon.toFixed(4)) +
+    '  ·  ±' + (ME.acc > 1000 ? Math.round(ME.acc / 1000) + 'km' : Math.round(ME.acc) + 'm') +
+    '  ·  ' + (fix.source === 'gps' ? 'DEVICE' : 'NETWORK');
+  streamRow('GEO', readout.replace(/\s+·\s+/g, ' · '), CY);
+
+  const zoom = a.zoom || (fix.source === 'gps' ? 15 : 11);
+  const drawing = showMap({ lat: ME.lat, lon: ME.lon, zoom: zoom,
+    pins: [{ lat: ME.lat, lon: ME.lon, label: 'YOU', kind: 'self' }] });
+
+  // showMap re-opens the overlay with its own header, so stamp ours on straight
+  // after it starts. The fix is reported whether or not the tiles ever arrive.
+  const stamp = () => { E.ovlTitle.textContent = 'POSITION FIX'; E.ovlSub.textContent = readout; };
+  stamp();
+  try { await drawing; stamp(); }
+  catch (e) { ovlFail('located you, but the map could not draw: ' + String(e.message || e)); stamp(); }
+
+  return {
+    ok: true,
+    latitude: +ME.lat.toFixed(5), longitude: +ME.lon.toFixed(5),
+    place: ME.label || null,
+    accuracy_m: Math.round(ME.acc),
+    method: fix.source === 'gps' ? 'device GPS' : 'network / IP lookup (city level)',
+    note: note || undefined
+  };
 }
 
 /* ============================================================= THREAT MAP === */
@@ -4382,6 +4477,7 @@ function startSession(fast) {
   app._started = true;
   applyMode();
   const who = PERSONAS[persona.id];
+  primeLocation();                      // silent, no prompt, no UI
   const t1 = fast ? 400 : 3400, t2 = fast ? 1000 : 4000;
   setTimeout(() => printRow(who.name + ' core initialized. All subsystems nominal.', who.accent), t1);
   setTimeout(() => {
