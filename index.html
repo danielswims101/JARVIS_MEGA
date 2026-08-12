@@ -1019,6 +1019,7 @@ const PRESET = {
 
   requireAccessCode: true,             // gate the session behind the code
   units:           'imperial',         // 'imperial' = degrees F / mph, 'metric' = C / km/h
+  speechHold:      3000,               // ms of silence before a spoken sentence is sent
   codeHeader:      'x-access-code',    // header carrying the code. Your function must
                                        // allow it in access-control-allow-headers, or
                                        // set this to '' to send no custom header.
@@ -2699,12 +2700,13 @@ function setVoiceUI(mode) {
 
 function toggleVoice() {
   if (app.mode !== 'auto') return setMode('auto');
-  if (app.rec && app.recActive) { app.autoLoop = false; try { app.rec.stop(); } catch (e) { } return; }
+  if (app.rec && app.recActive) { app.autoLoop = false; cancelHold(); try { app.rec.stop(); } catch (e) { } return; }
   app.autoLoop = true; startVoice();
 }
 
 function startVoice() {
   if (app.recActive || app.busy) return;
+  if (app.holding && app.rec) { try { app.rec.start(); } catch (e) { } return; }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
     setOrb('listening', 2400);
@@ -2713,47 +2715,105 @@ function startVoice() {
   }
   if (!app.rec) {
     const rec = app.rec = new SR();
-    rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
-    rec.onstart = () => { app.recActive = true; setVoiceUI('listening'); autoOrb('listening'); };
+    // continuous, so a breath mid-sentence doesn't end the utterance
+    rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 1;
+
+    rec.onstart = () => { app.recActive = true; if (!app.holding) setVoiceUI('listening'); autoOrb('listening'); };
+
     rec.onerror = (e) => {
-      app.recActive = false; setVoiceUI('idle'); autoOrb('idle');
+      app.recActive = false;
       const fatal = e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'audio-capture';
-      if (fatal) app.autoLoop = false;
+      if (fatal) { app.autoLoop = false; cancelHold(); }
+      if (!app.holding) { setVoiceUI('idle'); autoOrb('idle'); }
       if (e.error === 'no-speech' || e.error === 'aborted') return;
       if (fatal && E.transcript) E.transcript.textContent = 'Voice channel unavailable — microphone blocked. Switch to DICTATE to type.';
       if (app._voiceErr === e.error) return;
       app._voiceErr = e.error;
       toast('VOICE', fatal ? 'Microphone blocked — hands-free disabled' : 'Voice channel error: ' + e.error, AM);
     };
+
     rec.onend = () => {
       app.recActive = false;
-      if (!app.busy) setVoiceUI('idle');
-      if (app.engine && app.engine.state === 'listening') autoOrb('idle');
-      if (app.mode === 'auto' && app.autoLoop && !app.busy) setTimeout(startVoice, 500);
+      // Chrome ends a continuous session on its own. If we're still holding an
+      // unfinished sentence, pick straight back up rather than losing the tail.
+      if (app.holding && app.autoLoop !== false && !app.busy) {
+        try { rec.start(); } catch (e) { }
+        return;
+      }
+      if (!app.busy && !app.holding) setVoiceUI('idle');
+      if (app.engine && app.engine.state === 'listening' && !app.holding) autoOrb('idle');
+      if (app.mode === 'auto' && app.autoLoop && !app.busy && !app.holding) setTimeout(startVoice, 500);
     };
+
     rec.onresult = (ev) => {
       let final = '', interim = '';
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const r = ev.results[i];
         if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript;
       }
-      if (interim && E.transcript) E.transcript.textContent = '“' + interim.trim() + '”';
-      if (final.trim()) {
-        const said = final.trim();
-        if (E.transcript) E.transcript.textContent = '“' + said + '”';
-        setVoiceUI('thinking');
-        printRow('🎙 ' + said, '#ffd280');
-        submit(said, true);
-      }
+      if (final.trim()) app.vBuf = ((app.vBuf || '') + ' ' + final.trim()).trim();
+      if (final.trim() || interim.trim()) armHold(interim.trim());
     };
   }
   try { app.rec.start(); } catch (e) { }
 }
 
+/* ---- the pause buffer -----------------------------------------------------
+   Speech recognition calls a result "final" the moment you stop for breath.
+   Rather than send on that, hold the line open and only submit once you have
+   genuinely stopped for PRESET.speechHold milliseconds. -------------------- */
+function holdMs() { return Math.max(500, PRESET.speechHold || 3000); }
+
+function armHold(interim) {
+  app.holding = true;
+  app.holdUntil = Date.now() + holdMs();
+  clearTimeout(app.vTimer);
+  app.vTimer = setTimeout(flushVoice, holdMs());
+
+  const shown = ((app.vBuf || '') + ' ' + (interim || '')).trim();
+  if (E.transcript && shown) E.transcript.textContent = '“' + shown + '”';
+
+  if (!app.holdTick) {
+    app.holdTick = setInterval(() => {
+      if (!app.holding) { clearInterval(app.holdTick); app.holdTick = 0; return; }
+      const left = Math.max(0, Math.ceil((app.holdUntil - Date.now()) / 1000));
+      if (E.voiceLabel) {
+        E.voiceLabel.textContent = left > 0 ? 'HOLD ' + left : 'SENDING';
+        E.voiceLabel.style.color = 'rgba(255,179,0,.95)';
+      }
+    }, 200);
+  }
+}
+
+function cancelHold() {
+  app.holding = false;
+  app.vBuf = '';
+  clearTimeout(app.vTimer);
+  clearInterval(app.holdTick); app.holdTick = 0;
+}
+
+function flushVoice() {
+  const said = String(app.vBuf || '').trim();
+  app.holding = false;
+  clearTimeout(app.vTimer);
+  clearInterval(app.holdTick); app.holdTick = 0;
+  app.vBuf = '';
+
+  if (!said) { setVoiceUI('idle'); return; }
+
+  // stop capturing while it thinks and speaks, so it can't hear itself
+  if (app.rec && app.recActive) { try { app.rec.stop(); } catch (e) { } }
+
+  if (E.transcript) E.transcript.textContent = '“' + said + '”';
+  setVoiceUI('thinking');
+  printRow('🎙 ' + said, '#ffd280');
+  submit(said, true);
+}
+
 /* ==================================================================== MODE === */
 function setMode(mode) {
   if (mode === app.mode) return;
-  if (app.rec && app.recActive) { app.autoLoop = false; try { app.rec.stop(); } catch (e) { } }
+  if (app.rec && app.recActive) { app.autoLoop = false; cancelHold(); try { app.rec.stop(); } catch (e) { } }
   if (mode === 'manual') stopSpeech();
   app.mode = mode;
   applyMode();
