@@ -3189,7 +3189,21 @@ const SB = {
       body: opts.body ? JSON.stringify(opts.body) : undefined
     });
     const txt = await res.text();
-    if (!res.ok) throw new Error('vault ' + res.status + ' · ' + txt.slice(0, 220));
+    if (!res.ok) {
+      let j = null; try { j = JSON.parse(txt); } catch (e) { }
+      // PGRST205 — the table simply isn't there. Say so plainly and print the SQL.
+      if (j && j.code === 'PGRST205') {
+        const m = /table '(?:public\.)?([A-Za-z0-9_]+)'/.exec(j.message || '');
+        const table = m ? m[1] : String(path).split('?')[0];
+        showTableSql(table);
+        throw new Error('the table "' + table + '" does not exist in your Supabase project yet. ' +
+          'The SQL to create it has been printed in the console — run it in the Supabase SQL editor, then try again.');
+      }
+      if (j && j.code === '42501') {
+        throw new Error('row-level security is blocking this. Add a policy for the anon role on that table.');
+      }
+      throw new Error('vault ' + res.status + ' · ' + txt.slice(0, 220));
+    }
     return txt ? JSON.parse(txt) : null;
   },
   async tables() {
@@ -3200,6 +3214,59 @@ const SB = {
     return Object.keys(defs);
   }
 };
+/* The two tables the deck can create for itself, printed on demand so a missing
+   one is a copy-paste away from fixed rather than a dead end. */
+const TABLE_SQL = {
+  jarvis_calendar: [
+    'create table jarvis_calendar (',
+    '  id         bigint generated always as identity primary key,',
+    '  title      text not null,',
+    '  starts_at  timestamptz not null,',
+    '  ends_at    timestamptz,',
+    '  notes      text,',
+    '  created_at timestamptz default now()',
+    ');',
+    'alter table jarvis_calendar enable row level security;',
+    'create policy "deck calendar" on jarvis_calendar',
+    '  for all to anon using (true) with check (true);'
+  ],
+  jarvis_memory: [
+    'create table jarvis_memory (',
+    '  key        text primary key,',
+    '  value      text,',
+    '  updated_at timestamptz default now()',
+    ');',
+    'alter table jarvis_memory enable row level security;',
+    'create policy "deck memory" on jarvis_memory',
+    '  for all to anon using (true) with check (true);'
+  ]
+};
+
+function showTableSql(table) {
+  const sql = TABLE_SQL[table];
+  if (!sql) return;
+  if (!app._sqlShown) app._sqlShown = {};
+  if (app._sqlShown[table]) return;
+  app._sqlShown[table] = true;
+
+  printRow('MISSING TABLE — "' + table + '" is not in your Supabase project.', AM);
+  printRow('Run this in the Supabase SQL editor, then ask me again:', DIM);
+  sql.forEach(line => printRow('  ' + line, 'rgba(120,220,170,.9)'));
+  plog('✕ MISSING TABLE · ' + table, sql.join('\n'), 'error');
+
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(sql.join('\n'))
+        .then(() => toast('VAULT', 'CREATE TABLE for ' + table + ' copied to your clipboard', AM))
+        .catch(() => toast('VAULT', 'Table "' + table + '" missing — SQL is in the console', AM));
+    } else {
+      toast('VAULT', 'Table "' + table + '" missing — SQL is in the console', AM);
+    }
+  } catch (e) {
+    toast('VAULT', 'Table "' + table + '" missing — SQL is in the console', AM);
+  }
+}
+
 function paintVault() {
   if (!E.vaultStat) return;
   E.vaultStat.textContent = SB.on ? 'LINKED' : 'NO VAULT';
