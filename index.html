@@ -309,24 +309,50 @@
   </div>
 
   <!-- =========================================================== CONTROL PANEL -->
-  <div id="panel" style="position:absolute; left:0; top:0; bottom:0; width:min(430px,38vw); z-index:50;
-       display:flex; flex-direction:column; transform:translateX(-102%); opacity:0;
-       transition:transform .6s cubic-bezier(.16,1,.3,1), opacity .5s ease;
-       background:linear-gradient(120deg, rgba(6,14,20,.97), rgba(2,6,10,.95));
-       border-right:1px solid rgba(0,229,255,.30); box-shadow:26px 0 70px rgba(0,0,0,.6);">
-    <div class="br tr-h"></div><div class="br tr-v"></div>
-    <div class="phead" style="padding:11px 14px 9px;">
-      <div class="ptitle" style="font-size:10px;">CONTROL PANEL · FULL TRACE</div>
-      <div style="display:flex; gap:12px;">
+  <div id="panel" style="position:absolute; inset:0; z-index:44; display:flex; flex-direction:column;
+       opacity:0; pointer-events:none; transform:scale(1.015);
+       transition:opacity .55s ease, transform .7s cubic-bezier(.16,1,.3,1);
+       background:linear-gradient(150deg, rgba(7,10,14,.985), rgba(2,4,7,.975)); backdrop-filter:blur(3px);">
+    <div class="br tl-h"></div><div class="br tl-v"></div><div class="br br-h"></div><div class="br br-v"></div>
+    <div class="swp" style="animation-duration:13s;"></div>
+
+    <div class="phead" style="padding:13px 20px 11px;">
+      <div style="display:flex; align-items:baseline; gap:16px;">
+        <div class="ptitle" id="panelTitle" style="font-size:12px;">CONTROL PANEL</div>
+        <div class="pstat" id="panelSub">FULL TRACE · SERIOUS · HEAVY</div>
+      </div>
+      <div style="display:flex; gap:18px; align-items:center;">
+        <div class="pstat" id="panelCount">0 ENTRIES</div>
         <div id="panelDump" style="font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.6); cursor:pointer;">DUMP</div>
         <div id="panelClear" style="font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.6); cursor:pointer;">CLEAR</div>
-        <div id="panelClose" style="font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.5); cursor:pointer;">✕</div>
+        <div id="panelClose" style="font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.5); cursor:pointer;">✕ ESC</div>
       </div>
     </div>
-    <div id="panelBody" style="flex:1; overflow-y:auto; padding:12px 14px; font-size:10.5px;
-         font-family:'JetBrains Mono', monospace; color:rgba(190,230,244,.9);"></div>
-    <div style="padding:8px 14px 10px; border-top:1px solid rgba(0,229,255,.14);
-         font-size:8px; letter-spacing:.22em; color:rgba(0,229,255,.4);">SERIOUS · HEAVY — EVERYTHING LOGGED</div>
+
+    <div style="flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 330px;">
+      <div id="panelBody" style="overflow-y:auto; padding:16px 22px; font-size:11.5px;
+           font-family:'JetBrains Mono', monospace; color:rgba(190,230,244,.9);"></div>
+      <div style="border-left:1px solid rgba(0,229,255,.14); padding:16px 18px; overflow-y:auto;
+           display:flex; flex-direction:column; gap:14px;">
+        <div>
+          <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5); margin-bottom:7px;">LIVE TELEMETRY</div>
+          <div id="panelTel" style="font-size:10.5px; line-height:1.75; color:rgba(190,230,244,.82);"></div>
+        </div>
+        <div>
+          <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5); margin-bottom:7px;">TOOL INDEX</div>
+          <div id="panelTools" style="font-size:10px; line-height:1.7; color:rgba(160,107,255,.85);"></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:12px; padding:11px 20px 13px; padding-right:250px;
+         border-top:1px solid rgba(0,229,255,.16);">
+      <div style="color:#00e5ff; font-size:12px;">&gt;</div>
+      <input id="panelInput" placeholder="COMMAND — THE DECK IS STILL LISTENING" spellcheck="false" autocomplete="off"
+             style="flex:1; background:transparent; border:none; outline:none; color:#eafcff; font-size:13px;
+                    letter-spacing:.08em; caret-color:#00e5ff; font-family:'JetBrains Mono', monospace;">
+      <div style="font-size:8px; letter-spacing:.22em; color:rgba(0,229,255,.4);">SERIOUS · HEAVY</div>
+    </div>
   </div>
 
   <!-- ========================================================= NEURAL LINK CFG -->
@@ -449,6 +475,8 @@
       </div>
     </div>
   </div>
+
+  <canvas id="ignite" style="position:absolute; inset:0; width:100%; height:100%; z-index:85; display:none; pointer-events:none;"></canvas>
 
   <div id="boot" style="position:absolute; inset:0; z-index:60; background:#03060a; pointer-events:none; animation:bootVeil 1.9s cubic-bezier(.7,0,.2,1) both; display:flex; align-items:center; justify-content:center;">
     <div style="width:180px; height:180px; border-radius:50%; background:radial-gradient(circle, rgba(255,255,255,.95) 0%, rgba(0,229,255,.55) 28%, rgba(10,132,255,0) 68%); animation:bootSpark 1.9s cubic-bezier(.5,0,.15,1) both;"></div>
@@ -1031,7 +1059,8 @@ const E = {};
  'vaultStat','ovl','ovlPanel','ovlTitle','ovlSub','ovlMap','ovlBlue','ovlWx','ovlBusy',
  'ovlBusyMsg','ovlClose','ovlExport','gate','gateCode','gateMsg','gateGo','gateCfg',
  'moodVeil','moodStat','panel','panelBody','panelDump','panelClear','panelClose',
- 'ovlCal','ovlEmbed','ovlIcs'].forEach(k => E[k] = $(k));
+ 'ovlCal','ovlEmbed','ovlIcs','panelTitle','panelSub','panelCount','panelTel','panelTools',
+ 'panelInput','ignite'].forEach(k => E[k] = $(k));
 
 /* ============================================================== SIMULATION === */
 const sim = (function build() {
@@ -2855,7 +2884,13 @@ function bindUI() {
   E.ovlExport.onclick = exportSvg;
   E.ovlIcs.onclick = () => calList().then(icsExport).catch(e => toast('EXPORT', String(e.message || e), AM));
   E.panelDump.onclick = panelDump;
-  E.panelClear.onclick = () => { PANEL.rows.length = 0; E.panelBody.innerHTML = ''; };
+  E.panelInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.currentTarget.value = ''; return; }
+    if (e.key !== 'Enter') return;
+    const v = e.currentTarget.value; e.currentTarget.value = '';
+    submit(v, false);
+  });
+  E.panelClear.onclick = () => { PANEL.rows.length = 0; E.panelBody.innerHTML = ''; paintPanelSide(); };
   E.panelClose.onclick = () => setPanel(false);
   E.cfgVeil.onclick = (e) => { if (e.target === E.cfgVeil) closeCfg(); };
 
@@ -2944,6 +2979,7 @@ function bindUI() {
     if (e.key === 'Escape') {
       if (E.cfgVeil.style.display === 'flex') closeCfg();
       else if (E.ovl.style.display === 'flex') ovlClose();
+      else if (PANEL.on) setPanel(false);
       else if (E.input) { E.input.value = ''; E.input.blur(); }
       return;
     }
@@ -2968,15 +3004,55 @@ function setPanel(on) {
   if (PANEL.on === on) return;
   PANEL.on = on;
   if (!E.panel) return;
-  E.panel.style.transform = on ? 'translateX(0)' : 'translateX(-102%)';
   E.panel.style.opacity = on ? '1' : '0';
-  if (on && !PANEL.rows.length) plog('SYS', 'Control panel engaged — full instrumentation.', 'sys');
+  E.panel.style.transform = on ? 'scale(1)' : 'scale(1.015)';
+  E.panel.style.pointerEvents = on ? 'auto' : 'none';
+  if (E.panelSub) E.panelSub.textContent = 'FULL TRACE · ' + mood().name;
+  if (E.panelTitle) E.panelTitle.style.color = accentNow();
+  refreshDock();                       // the orb rides on top of it
+  if (on) {
+    if (!PANEL.rows.length) plog('SYS', 'Control panel engaged — full instrumentation.', 'sys');
+    clearInterval(PANEL.tick);
+    PANEL.tick = setInterval(paintPanelSide, 1000);
+    paintPanelSide();
+    setTimeout(() => E.panelInput && E.panelInput.focus(), 400);
+  } else {
+    clearInterval(PANEL.tick);
+    if (app.mode !== 'auto' && E.input) E.input.focus();
+  }
+}
+
+/* The right-hand column: live readings and a running index of what was called. */
+function paintPanelSide() {
+  if (!PANEL.on || !E.panelTel) return;
+  const t = telemetry(), acc = accentNow();
+  const row = (k, v) => '<div style="display:flex; justify-content:space-between; gap:10px;">' +
+    '<span style="color:rgba(0,229,255,.45);">' + k + '</span><span>' + esc(String(v)) + '</span></div>';
+  E.panelTel.innerHTML =
+    row('UPTIME', t.uptime_s + 's') + row('ORB', t.orb_state.toUpperCase()) +
+    row('COGNITIVE', t.cognitive_load_pct + '%') +
+    row('CPU / GPU', t.vitals.cpu_pct + '% / ' + t.vitals.gpu_pct + '%') +
+    row('MEMORY', t.vitals.mem_pct + '%') + row('THERMAL', t.vitals.thermal_c + '°C') +
+    row('ARC', t.power.arc_output_gw + ' GW') + row('CONTACTS', t.threat.contacts + ' / ' + t.threat.hostile + ' hostile') +
+    row('RENDER', t.render.fps + ' fps · ' + Math.round(t.render.particles / 1000) + 'K') +
+    row('MODEL', link.model) + row('VOICE', t.voice.split(' · ')[0]);
+
+  const counts = {};
+  PANEL.rows.filter(r => r.tag.indexOf('⟐ TOOL') === 0)
+    .forEach(r => { const n = r.tag.split('· ')[1] || '?'; counts[n] = (counts[n] || 0) + 1; });
+  const keys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  E.panelTools.innerHTML = keys.length
+    ? keys.map(k => '<div style="display:flex; justify-content:space-between;"><span>' + esc(k) +
+        '</span><span style="color:' + acc + ';">×' + counts[k] + '</span></div>').join('')
+    : '<div style="color:rgba(150,215,235,.4);">nothing called yet</div>';
+  if (E.panelCount) E.panelCount.textContent = PANEL.rows.length + ' ENTRIES';
 }
 
 function plog(tag, text, kind) {
   const row = { t: new Date(), tag: tag, text: String(text), kind: kind || 'sys' };
   PANEL.rows.push(row);
   while (PANEL.rows.length > 800) PANEL.rows.shift();
+  if (E.panelCount) E.panelCount.textContent = PANEL.rows.length + ' ENTRIES';
   if (!E.panelBody) return;
   const acc = accentNow();
   const col = kind === 'user' ? acc
@@ -3039,6 +3115,8 @@ function dockOrb(on) {
   if (app.engine && app.engine.reserve && app.engine.canvas) set(app.engine.canvas);
 }
 
+function refreshDock() { dockOrb(!!OVL.mode || PANEL.on); }
+
 function ovlOpen(mode, title, sub) {
   OVL.mode = mode;
   dockOrb(true);
@@ -3059,7 +3137,7 @@ function ovlClose() {
   E.ovl.style.display = 'none';
   OVL.mode = null;
   if (E.ovlEmbed) { E.ovlEmbed.src = 'about:blank'; E.ovlEmbed.style.display = 'none'; }
-  dockOrb(false);
+  refreshDock();
 }
 function ovlBusy(on, msg) {
   E.ovlBusy.style.display = on ? 'flex' : 'none';
@@ -4089,9 +4167,213 @@ async function submitCode() {
   }
 }
 
+/* =============================================================== IGNITION === */
+/* Runs once, the moment the code is accepted. A reticle spins up, the system
+   checks itself off, and an iris opens onto the deck. Click or ESC to skip. */
+function runIgnition() {
+  const c = E.ignite;
+  if (!c) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const acc = accentNow();
+    const ar = parseInt(acc.slice(1, 3), 16), ag = parseInt(acc.slice(3, 5), 16), ab = parseInt(acc.slice(5, 7), 16);
+    const A = (o) => 'rgba(' + ar + ',' + ag + ',' + ab + ',' + o + ')';
+
+    c.style.display = 'block';
+    const ctx = c.getContext('2d');
+    const dpr = Math.min(devicePixelRatio, 2);
+    let W = 0, H = 0;
+    const fit = () => {
+      W = c.clientWidth; H = c.clientHeight;
+      c.width = W * dpr | 0; c.height = H * dpr | 0;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    fit();
+
+    const CHECKS = [
+      ['REACTOR', 'ONLINE'],
+      ['PARTICLE FIELD', '132,000 PTS'],
+      ['NEURAL LINK', PROVIDERS[link.provider].label + ' · ' + link.model],
+      ['VOICE CHANNEL', EL.on ? 'ELEVENLABS' : 'BROWSER'],
+      ['VAULT', SB.on ? 'LINKED' : 'LOCAL'],
+      ['IDENTITY', GATE.label || 'OPERATOR']
+    ];
+
+    // motes that rush inward and collapse into the core
+    const MOTES = Array.from({ length: 190 }, () => ({
+      a: Math.random() * Math.PI * 2,
+      r: 0.55 + Math.random() * 0.85,
+      sp: 0.45 + Math.random() * 0.9,
+      s: 0.6 + Math.random() * 1.8
+    }));
+
+    const DUR = 3400;
+    const t0 = performance.now();
+    let raf = 0, done = false;
+    const ease = (x) => 1 - Math.pow(1 - x, 3);
+    const seg = (t, a, b) => Math.max(0, Math.min(1, (t - a) / (b - a)));
+
+    let shocked = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      cancelAnimationFrame(raf);
+      removeEventListener('keydown', skip); removeEventListener('pointerdown', skip);
+      c.style.transition = 'opacity .4s ease';
+      c.style.opacity = '0';
+      setTimeout(() => { c.style.display = 'none'; c.style.opacity = '1'; c.style.transition = ''; resolve(); }, 400);
+    };
+    const skip = (e) => { if (!e || !e.key || e.key === 'Escape' || e.key === 'Enter') finish(); };
+    addEventListener('keydown', skip); addEventListener('pointerdown', skip);
+
+    function frame(now) {
+      if (done) return;
+      raf = requestAnimationFrame(frame);
+      const t = now - t0;
+      if (t > DUR) { finish(); return; }
+      if (c.clientWidth !== W || c.clientHeight !== H) fit();
+
+      const cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.5;
+      ctx.clearRect(0, 0, W, H);
+
+      // ── the veil, with an iris that opens onto the deck ──────────────────
+      const iris = ease(seg(t, 1500, 3050));
+      ctx.save();
+      ctx.fillStyle = 'rgba(2,5,9,' + (0.985 - iris * 0.15) + ')';
+      ctx.fillRect(0, 0, W, H);
+      if (iris > 0) {
+        ctx.globalCompositeOperation = 'destination-out';
+        const ir = iris * Math.hypot(W, H) * 0.62;
+        const g = ctx.createRadialGradient(cx, cy, ir * 0.82, cx, cy, ir);
+        g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, ir, 0, 7); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = A(0.85 * (1 - iris)); ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(cx, cy, ir, 0, 7); ctx.stroke();
+      }
+      ctx.restore();
+
+      // ── opening flash ────────────────────────────────────────────────────
+      const flash = 1 - seg(t, 0, 340);
+      if (flash > 0) { ctx.fillStyle = A(flash * 0.5); ctx.fillRect(0, 0, W, H); }
+
+      // ── inbound motes ────────────────────────────────────────────────────
+      const mp = seg(t, 150, 2100);
+      if (mp > 0 && mp < 1) {
+        MOTES.forEach((m) => {
+          const rr = m.r * (1 - ease(mp) * m.sp);
+          if (rr <= 0.02) return;
+          const x = cx + Math.cos(m.a) * rr * R, y = cy + Math.sin(m.a) * rr * R;
+          ctx.fillStyle = A(0.5 * (1 - mp));
+          ctx.fillRect(x, y, m.s, m.s);
+          ctx.strokeStyle = A(0.16 * (1 - mp)); ctx.lineWidth = 0.6;
+          ctx.beginPath(); ctx.moveTo(x, y);
+          ctx.lineTo(cx + Math.cos(m.a) * (rr + 0.07) * R, cy + Math.sin(m.a) * (rr + 0.07) * R); ctx.stroke();
+        });
+      }
+
+      // ── reticle: three rings spinning up, ticks drawing on ───────────────
+      const spin = seg(t, 120, 1500);
+      [[0.30, 1.0, 46], [0.42, -0.62, 30], [0.55, 0.38, 72]].forEach(([rf, dir, ticks], i) => {
+        const rr = R * rf * (0.35 + 0.65 * ease(seg(t, 100 + i * 90, 1150 + i * 90)));
+        const fade = (1 - seg(t, 2300 + i * 90, 3200)) * Math.min(1, spin * 2.2);
+        if (fade <= 0) return;
+        const rot = (t / 1000) * dir * 0.9;
+        ctx.strokeStyle = A(0.30 * fade); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(cx, cy, rr, 0, 7); ctx.stroke();
+        const drawn = Math.floor(ticks * ease(seg(t, 200 + i * 110, 1400 + i * 110)));
+        for (let k = 0; k < drawn; k++) {
+          const a = rot + (k / ticks) * Math.PI * 2, maj = k % 6 === 0;
+          ctx.strokeStyle = A((maj ? 0.85 : 0.34) * fade);
+          ctx.lineWidth = maj ? 1.8 : 1;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+          ctx.lineTo(cx + Math.cos(a) * (rr + (maj ? 13 : 6)), cy + Math.sin(a) * (rr + (maj ? 13 : 6)));
+          ctx.stroke();
+        }
+        // sweeping arc
+        ctx.strokeStyle = A(0.9 * fade); ctx.lineWidth = 2.4;
+        ctx.beginPath(); ctx.arc(cx, cy, rr, rot * 2.4, rot * 2.4 + 0.5); ctx.stroke();
+      });
+
+      // ── core bloom ───────────────────────────────────────────────────────
+      const coreP = seg(t, 60, 1500), coreFade = 1 - seg(t, 2500, 3300);
+      if (coreFade > 0) {
+        const cr = 4 + ease(coreP) * 34 + Math.sin(t / 90) * 2;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr * 3.4);
+        g.addColorStop(0, 'rgba(255,255,255,' + (0.95 * coreFade) + ')');
+        g.addColorStop(0.25, A(0.65 * coreFade));
+        g.addColorStop(1, A(0));
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, cr * 3.4, 0, 7); ctx.fill();
+      }
+
+      // ── crosshair rails ──────────────────────────────────────────────────
+      const rail = ease(seg(t, 340, 1250)) * (1 - seg(t, 2400, 3150));
+      if (rail > 0) {
+        ctx.strokeStyle = A(0.42 * rail); ctx.lineWidth = 1;
+        const gap = R * 0.20, len = R * 0.95 * rail;
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => {
+          ctx.beginPath();
+          ctx.moveTo(cx + dx * gap, cy + dy * gap);
+          ctx.lineTo(cx + dx * (gap + len), cy + dy * (gap + len));
+          ctx.stroke();
+        });
+      }
+
+      // ── system checks stamping in ────────────────────────────────────────
+      const bx = cx - R * 0.62, by = cy - CHECKS.length * 13 + R * 0.30;
+      CHECKS.forEach((row, i) => {
+        const p = seg(t, 620 + i * 135, 900 + i * 135);
+        if (p <= 0) return;
+        const out = 1 - seg(t, 2450 + i * 40, 3150);
+        const al = p * out;
+        if (al <= 0) return;
+        const y = by + i * 26;
+        ctx.font = '400 11px "JetBrains Mono", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = A(0.55 * al);
+        ctx.fillText(row[0], bx + (1 - p) * 12, y);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(234,252,255,' + (0.92 * al) + ')';
+        ctx.fillText(row[1], bx + R * 1.24, y);
+        ctx.strokeStyle = A(0.16 * al); ctx.lineWidth = 0.6;
+        ctx.beginPath(); ctx.moveTo(bx, y + 4.5); ctx.lineTo(bx + R * 1.24, y + 4.5); ctx.stroke();
+        if (p >= 1) {
+          ctx.fillStyle = A(0.95 * out);
+          ctx.textAlign = 'left';
+          ctx.fillText('✓', bx - 16, y);
+        }
+      });
+
+      // ── the word ─────────────────────────────────────────────────────────
+      const wp = seg(t, 240, 760), wOut = 1 - seg(t, 2350, 3050);
+      if (wp > 0 && wOut > 0) {
+        ctx.textAlign = 'center';
+        ctx.font = '700 26px "JetBrains Mono", monospace';
+        const label = 'ACCESS GRANTED';
+        const n = Math.floor(label.length * ease(wp));
+        ctx.fillStyle = 'rgba(234,252,255,' + wOut + ')';
+        ctx.shadowBlur = 22; ctx.shadowColor = A(0.8);
+        ctx.fillText(label.slice(0, n), cx, cy - R * 0.44);
+        ctx.shadowBlur = 0;
+        ctx.font = '400 10px "JetBrains Mono", monospace';
+        ctx.fillStyle = A(0.6 * wOut);
+        ctx.fillText(PERSONAS[persona.id].name + ' · MK IX · ' + (GATE.label || 'OPERATOR'), cx, cy - R * 0.44 + 20);
+      }
+
+      // hand the shockwave to the real orb as the iris starts to open
+      if (!shocked && t > 1480) {
+        shocked = true;
+        if (app.engine) { app.engine.shock(0, 0); setOrb('thinking', 1500); }
+      }
+    }
+    raf = requestAnimationFrame(frame);
+  });
+}
+
 function openDeck() {
   E.gate.style.display = 'none';
-  startSession(true);
+  runIgnition().then(() => startSession(true));
 }
 
 /* fast = the operator already sat through the lock screen, so don't stage it again */
