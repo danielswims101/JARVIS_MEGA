@@ -2988,6 +2988,77 @@ function browserSpeak(text) {
 }
 
 
+
+/* ================================================================ DIAGNOSE ===
+   When something does not appear, the browser usually knows exactly why and
+   tells nobody. These two handlers put every uncaught error and every rejected
+   promise straight into the deck's own console, with the line number, so a
+   fault is visible where you are already looking.
+--------------------------------------------------------------------------- */
+addEventListener('error', (e) => {
+  const where = e.filename ? ' (' + String(e.filename).split('/').pop() + ':' + e.lineno + ')' : '';
+  try { printRow('✖ FAULT — ' + (e.message || 'script error') + where, RD); } catch (x) { }
+});
+addEventListener('unhandledrejection', (e) => {
+  const r = e && e.reason;
+  try { printRow('✖ FAULT — ' + String((r && r.message) || r), RD); } catch (x) { }
+});
+
+/* ---- selftest -------------------------------------------------------------
+   Type "selftest" or press T. Exercises every visible subsystem in turn and
+   reports each one, so one run says what is broken instead of ten messages.
+--------------------------------------------------------------------------- */
+async function selftest() {
+  const pass = (l, v, note) => printRow((v ? '  ✓ ' : '  ✗ ') + l + (note ? '  ·  ' + note : ''),
+    v ? 'rgba(120,235,180,.9)' : RD);
+  printRow('▸ SELF TEST', accentNow());
+
+  // 1. the page itself
+  pass('served over http, not a file', location.protocol !== 'file:', location.protocol);
+  pass('orb engine running', !!(app.engine && !app.engine.fallback),
+    app.engine ? (app.engine.fallback ? 'RESERVE ORB — three.js did not load' : 'ok') : 'MISSING');
+
+  // 2. the pane system
+  let paneOk = false, paneWhy = '';
+  try {
+    const p = ovlOpen('weather', 'SELF TEST', 'pane check');
+    const el = p && p.el;
+    paneOk = !!(el && document.body.contains(el) && el.offsetWidth > 40);
+    paneWhy = el ? (el.offsetWidth + '×' + el.offsetHeight + ' at ' + Math.round(p.x) + ',' + Math.round(p.y)) : 'no element';
+    if (E.ovlWx) E.ovlWx.innerHTML = '<div style="padding:30px; font-size:12px; color:' + accentNow() +
+      ';">SELF TEST — if you can read this, panes render correctly.</div>';
+  } catch (e) { paneWhy = String(e.message || e); }
+  pass('a pane opens and has a size', paneOk, paneWhy);
+  pass('pane layer is showing', E.ovl && E.ovl.style.display === 'block', E.ovl ? E.ovl.style.display : 'no #ovl');
+  pass('pane is above the deck', !!(E.ovl && +getComputedStyle(E.ovl).zIndex >= 40),
+    E.ovl ? getComputedStyle(E.ovl).zIndex : '—');
+
+  // 3. the effects layer
+  let fxOk = false, fxWhy = '';
+  try {
+    fireEffect({ effect: 'blast', direction: 'up' });
+    fxOk = !!(E.fx && E.fx.style.display === 'block' && FX.items.length > 0);
+    fxWhy = E.fx ? (FX.items.length + ' in flight, canvas ' + E.fx.width + '×' + E.fx.height) : 'no #fx canvas';
+  } catch (e) { fxWhy = String(e.message || e); }
+  pass('repulsors draw', fxOk, fxWhy);
+
+  // 4. the link
+  pass('vault configured', SB.on, SB.url || 'none');
+  pass('cognition configured', !!(link.base || link.key), link.provider + ' · ' + link.model);
+  pass('voice configured', EL.on || !!window.speechSynthesis, EL.on ? 'ElevenLabs' : 'browser speech');
+  pass('microphone available', location.protocol !== 'file:' &&
+    !!(window.SpeechRecognition || window.webkitSpeechRecognition), app.mode);
+
+  // 5. does he actually reach for tools
+  printRow('  … asking him to open the weather, watch for a ⟐ line', DIM);
+  try {
+    await submit('Use the show_weather tool for London right now. Say nothing else.', false);
+  } catch (e) { pass('tool round trip', false, String(e.message || e)); }
+
+  printRow('▸ SELF TEST COMPLETE — a ⟐ show_weather line above means tools work; ' +
+    'no ⟐ line means he replied without calling one.', accentNow());
+}
+
 /* ================================================================ GAUNTLET ===
    Repulsors. One additive 2D canvas over the whole deck, a handful of
    projectiles, and a small synthesiser — no assets, nothing to load.
@@ -3127,17 +3198,34 @@ function fxBoom(x, y, scale, far) {
 
 /* ---- drawing ------------------------------------------------------------- */
 function fxGlow(ctx, x, y, r, col, a) {
+  if (!(a > 0.004) || !isFinite(x) || !isFinite(y) || !isFinite(r)) return;
   const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(1, r));
-  g.addColorStop(0, 'rgba(255,255,255,' + a + ')');
+  g.addColorStop(0, white(a));
   g.addColorStop(0.35, hexRgba(col, a * 0.75));
   g.addColorStop(1, hexRgba(col, 0));
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(x, y, Math.max(1, r), 0, 6.2832); ctx.fill();
 }
+/* hexRgb returns an ARRAY of 0..1 floats — [r, g, b]. Reading it as {r,g,b}
+   produced "rgba(undefined,undefined,undefined,0.9)", and addColorStop throws
+   on a colour it cannot parse. So the first gradient of the first frame threw,
+   the draw aborted, and it threw again every frame after: the effects layer
+   never painted a single pixel. */
+/* Alpha, formatted so it is always a plain decimal.
+
+   A fading explosion multiplies its alpha down toward zero, and once a number
+   gets small enough JavaScript prints it as "6.1e-17". Concatenate that into an
+   rgba() string and you have a colour some parsers refuse — which is how a
+   single fading spark could kill the whole layer. Clamp it and fix the
+   precision instead of trusting string conversion. */
+const A = (x) => (Math.max(0, Math.min(1, Number(x) || 0))).toFixed(3);
+
 function hexRgba(hex, a) {
-  const c = hexRgb(hex);
-  return 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + a + ')';
+  const c = hexRgb(String(hex || '#00e5ff'));
+  const r = Math.round((c[0] || 0) * 255), g = Math.round((c[1] || 0) * 255), b = Math.round((c[2] || 0) * 255);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + A(a == null ? 1 : a) + ')';
 }
+const white = (a) => 'rgba(255,255,255,' + A(a) + ')';
 const fxEase = (p) => 1 - Math.pow(1 - p, 2.4);
 
 function fxLoop(now) {
@@ -3148,6 +3236,8 @@ function fxLoop(now) {
 
   ctx.clearRect(0, 0, FX.w, FX.h);
   ctx.globalCompositeOperation = 'lighter';
+
+  try {
 
   for (let i = FX.items.length - 1; i >= 0; i--) {
     const it = FX.items[i];
@@ -3168,7 +3258,7 @@ function fxLoop(now) {
       ctx.strokeStyle = hexRgba(it.col, 0.9 * fade);
       ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.2832); ctx.stroke();
       ctx.lineWidth = Math.max(1, 3 * shrink);
-      ctx.strokeStyle = 'rgba(255,255,255,' + (0.85 * fade) + ')';
+      ctx.strokeStyle = white(0.85 * fade);
       ctx.beginPath(); ctx.arc(0, 0, r * 0.82, 0, 6.2832); ctx.stroke();
       ctx.restore();
       fxGlow(ctx, x, y, r * 1.5, it.col, 0.20 * fade);
@@ -3201,7 +3291,7 @@ function fxLoop(now) {
       ctx.strokeStyle = hexRgba(it.col, 0.42 * fade);
       ctx.lineWidth = 26 * fade;
       ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(ex, ey); ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,255,255,' + (0.95 * fade) + ')';
+      ctx.strokeStyle = white(0.95 * fade);
       ctx.lineWidth = 7 * fade;
       ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(ex, ey); ctx.stroke();
       fxGlow(ctx, hx, hy, 90 * fade, it.col, 0.55 * fade);       // muzzle
@@ -3218,7 +3308,7 @@ function fxLoop(now) {
       ctx.strokeStyle = hexRgba(it.col, 0.85 * f);
       ctx.lineWidth = Math.max(1, 7 * f);
       ctx.beginPath(); ctx.arc(it.x, it.y, R, 0, 6.2832); ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,255,255,' + (0.9 * f * f) + ')';
+      ctx.strokeStyle = white(0.9 * f * f);
       ctx.lineWidth = Math.max(1, 3 * f);
       ctx.beginPath(); ctx.arc(it.x, it.y, R * 0.72, 0, 6.2832); ctx.stroke();
       ctx.lineWidth = 2;
@@ -3236,6 +3326,12 @@ function fxLoop(now) {
     }
 
     FX.items.splice(i, 1);
+  }
+
+  } catch (err) {
+    // One bad frame must not silently stop the whole layer for the session.
+    FX.items.length = 0;
+    if (!FX.blamed) { FX.blamed = true; printRow('✖ FX FAULT — ' + String(err && err.message || err), RD); }
   }
 
   ctx.globalCompositeOperation = 'source-over';
@@ -3678,6 +3774,7 @@ function submit(raw, fromVoice) {
 
   const low = text.toLowerCase();
   if (low === 'clear') { if (E.console) E.console.innerHTML = ''; return; }
+  if (low === 'selftest' || low === 'diagnose') return selftest();
   if (low === 'help' || low === '?') {
     return typeLines([
       [PERSONAS[persona.id].name + ' is conversational — speak or type plainly. She controls the deck herself.'
@@ -3903,6 +4000,7 @@ function bindUI() {
     else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fireEffect({ effect: 'blast' }); }
     else if (e.key === 'g' || e.key === 'G') { e.preventDefault(); fireEffect({ effect: 'disk', direction: Math.random() < 0.5 ? 'left' : 'right' }); }
     else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); fireEffect({ effect: 'beam' }); }
+    else if (e.key === 't' || e.key === 'T') { e.preventDefault(); selftest(); }
     else if (e.key === 'p' || e.key === 'P') {
       e.preventDefault();
       const order = ['jarvis', 'friday', 'edith'];
