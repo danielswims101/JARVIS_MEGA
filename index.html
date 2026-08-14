@@ -83,8 +83,13 @@
   #deck.presence > #reticle, #deck.presence > #toasts, #deck.presence > #cfgVeil,
   #deck.presence > #gate { opacity:1; filter:none; transform:none; pointer-events:auto; }
   #deck.presence > #toasts, #deck.presence > #reticle { pointer-events:none; }
-  #deck.presence > #ovl { opacity:1; filter:none; transform:none; pointer-events:none; }
-  #deck.presence > #fx  { opacity:1; filter:none; transform:none; pointer-events:none; }
+  /* PRESENCE puts a near-opaque backdrop at z 54. Anything that should still be
+     visible in there has to sit above it — otherwise a pane opens perfectly
+     well and you never see it, which looks exactly like nothing happened. */
+  #deck.presence > #ovl { opacity:1; filter:none; transform:none; pointer-events:none; z-index:58; }
+  #deck.presence > #fx  { opacity:1; filter:none; transform:none; pointer-events:none; z-index:59; }
+  #deck.presence > #reticle { z-index:60; }
+  #deck.presence > #toasts  { z-index:61; }
 
   /* floating panes */
   .pane { position:absolute; display:flex; flex-direction:column; pointer-events:auto; overflow:hidden;
@@ -501,6 +506,13 @@
       <div id="camFps" style="font-size:7px; letter-spacing:.1em; color:rgba(0,229,255,.35); flex:none;">—</div>
       <div id="camFold" title="Collapse" style="font-size:9px; color:rgba(0,229,255,.55); cursor:pointer; flex:none; padding:0 2px;">▾</div>
       <div id="camShut" title="Close the bench" style="font-size:9px; color:rgba(0,229,255,.45); cursor:pointer; flex:none;">✕</div>
+    </div>
+    <!-- live gesture meters, so the thresholds can be seen rather than guessed -->
+    <div id="camMeter" style="display:flex; gap:8px; padding:3px 6px; font-size:7px; letter-spacing:.12em;
+         color:rgba(0,229,255,.4); border-bottom:1px solid rgba(0,229,255,.10); white-space:nowrap;">
+      <div style="flex:1;">SWEEP <span id="mSweep" style="color:rgba(0,229,255,.75);">0.00</span></div>
+      <div style="flex:1;">PUSH <span id="mPush" style="color:rgba(0,229,255,.75);">0.00</span></div>
+      <div id="mFire" style="flex:none; color:rgba(0,229,255,.3);">—</div>
     </div>
     <div id="camBody" style="position:relative; width:100%; aspect-ratio:4/3; overflow:hidden;">
       <video id="camVideo" playsinline muted style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); opacity:.42;"></video>
@@ -1219,6 +1231,7 @@ const PRESET = {
   units:           'imperial',         // 'imperial' = degrees F / mph, 'metric' = C / km/h
   camera:          false,              // start with the optical bench live (C toggles it)
   speechHold:      2000,               // ms of silence before a spoken sentence is sent
+  gestureSensitivity: 1,               // repulsors: >1 fires more easily, <1 needs a harder move               // ms of silence before a spoken sentence is sent
   codeHeader:      'x-access-code',    // header carrying the code. Your function must
                                        // allow it in access-control-allow-headers, or
                                        // set this to '' to send no custom header.
@@ -1258,7 +1271,7 @@ const E = {};
  'moodVeil','moodStat','panel','panelBody','panelDump','panelClear','panelClose',
  'ovlCal','ovlEmbed','panelTitle','panelSub','panelCount','panelTel','panelTools',
  'panelInput','ignite','camChip','camStat','cam','camVideo','camOverlay','camFps',
- 'camGesture','reticle','reticleCore','camBar','camBody','camFold','camShut','camDot',
+ 'camGesture','camMeter','mSweep','mPush','mFire','reticle','reticleCore','camBar','camBody','camFold','camShut','camDot',
  'fx','pres','presUI','presName','presSub','presLeft','presRight','presYou','presSaid','presHint'].forEach(k => E[k] = $(k));
 
 /* ============================================================== SIMULATION === */
@@ -2666,6 +2679,8 @@ const history = [];
 
 function setBusy(on) {
   app.busy = on;
+  // While he is thinking, and for a moment after, he is not listening.
+  if (on) deafen(2500);
   if (E.thinkBar) E.thinkBar.style.opacity = on ? '1' : '0';
   if (E.input) E.input.disabled = on;
   if (E.inputWrap) E.inputWrap.style.borderColor = on ? 'rgba(160,107,255,.5)' : 'rgba(0,229,255,.24)';
@@ -2894,6 +2909,9 @@ async function elSpeak(text) {
   } catch (e) { /* routing failed — still play it plainly */ }
 
   autoOrb('speaking');
+  app.speaking = true;
+  app.lastSpoken = String(text || '');
+  deafen(1200);
   await new Promise((resolve) => {
     audio.onended = resolve;
     audio.onerror = resolve;
@@ -2903,8 +2921,12 @@ async function elSpeak(text) {
   if (EL.restore) { EL.restore(); EL.restore = null; }
   if (EL.url) { URL.revokeObjectURL(EL.url); EL.url = null; }
   EL.busy = false;
+  app.speaking = false;
+  // A short tail: the last syllable is still in the air, and through speakers
+  // it lands in the microphone about a quarter of a second later.
+  deafen(600);
   if (app.engine && app.engine.state === 'speaking') autoOrb('idle');
-  if (app.mode === 'auto' && app.autoLoop) setTimeout(startVoice, 350);
+  if (app.mode === 'auto' && app.autoLoop) setTimeout(startVoice, 700);
 }
 
 /* ================================================================== SPEECH === */
@@ -2912,6 +2934,7 @@ function speaks() { return app.mode !== 'manual'; }
 function stopSpeech() {
   try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { }
   elStop();
+  app.speaking = false;
 }
 function speak(text) {
   if (!speaks() || !text) {
@@ -2951,9 +2974,14 @@ function browserSpeak(text) {
     }
     if (pref) u.voice = pref;
     autoOrb('speaking');
-    u.onend = () => {
+    app.speaking = true;
+    app.lastSpoken = clean;
+    deafen(1200);
+    u.onend = u.onerror = () => {
+      app.speaking = false;
+      deafen(600);
       if (app.engine && app.engine.state === 'speaking') autoOrb('idle');
-      if (app.mode === 'auto' && app.autoLoop) setTimeout(startVoice, 350);
+      if (app.mode === 'auto' && app.autoLoop) setTimeout(startVoice, 700);
     };
     speechSynthesis.speak(u);
   } catch (e) { }
@@ -3035,41 +3063,53 @@ function fxStart() {
   if (!FX.raf) { FX.last = performance.now(); FX.raf = requestAnimationFrame(fxLoop); }
 }
 
-/** Aim a projectile: from the hand, off in `dir`, pulled toward the horizon. */
+/** Aim a projectile: from the hand, off in `dir`, pulled toward the horizon —
+    and then dragged back INSIDE the screen.
+
+    The first version let the target land wherever the direction pointed, which
+    was usually well outside the viewport. The bolt flew off the edge and
+    detonated where nobody could see it, so the only visible trace of a shot was
+    the orb flaring. Everything now finishes somewhere you are looking. */
 function fxAim(x, y, dx, dy) {
   const v = VP();
-  const reach = Math.max(FX.w, FX.h) * 1.15;
-  const tx = x + dx * reach, ty = y + dy * reach;
-  return { tx: tx + (v.x - tx) * 0.52, ty: ty + (v.y - ty) * 0.52 };
+  const reach = Math.max(FX.w, FX.h) * 0.9;
+  let tx = x + dx * reach, ty = y + dy * reach;
+  tx += (v.x - tx) * 0.55; ty += (v.y - ty) * 0.55;
+  const mx = FX.w * 0.13, my = FX.h * 0.15;
+  return {
+    tx: Math.max(mx, Math.min(FX.w - mx, tx)),
+    ty: Math.max(my, Math.min(FX.h - my, ty))
+  };
 }
 
 function fxDisk(x, y, dx, dy) {
   fxStart();
   const a = fxAim(x, y, dx, dy);
-  FX.items.push({ kind: 'disk', x, y, ox: x, oy: y, tx: a.tx, ty: a.ty, p: 0, sp: 1.15,
+  FX.items.push({ kind: 'disk', x, y, ox: x, oy: y, tx: a.tx, ty: a.ty, p: 0, sp: 0.80,
                   spin: Math.random() * 6.28, col: accentNow() });
   FX.shake = Math.max(FX.shake, 5);
   sndCharge(0.13);
-  if (app.engine) app.engine.shock(dx, -dy);
+  if (app.engine) app.engine.shock(dx * 0.5, -dy * 0.5);
 }
 
 function fxBeam(x, y, dx, dy) {
   fxStart();
   const a = fxAim(x, y, dx, dy);
-  FX.items.push({ kind: 'beam', x, y, tx: a.tx, ty: a.ty, p: 0, sp: 2.4, col: accentNow() });
+  FX.items.push({ kind: 'beam', x, y, tx: a.tx, ty: a.ty, p: 0, sp: 1.55, col: accentNow() });
   FX.shake = Math.max(FX.shake, 13);
   sndCharge(0.22);
   setTimeout(() => sndBoom(0.17, true), 180);
-  if (app.engine) { app.engine.shock(dx * 0.5, -dy * 0.5); app.engine.pulse('alert', 700); }
+  // No orb flare. It out-shone the beam and became the only thing you noticed.
+  if (app.engine) app.engine.shock(dx * 0.35, -dy * 0.35);
 }
 
 function fxBlast(x, y, dx, dy) {
   fxStart();
   const a = fxAim(x, y, dx, dy);
-  FX.items.push({ kind: 'blast', x, y, ox: x, oy: y, tx: a.tx, ty: a.ty, p: 0, sp: 1.9, col: accentNow() });
+  FX.items.push({ kind: 'blast', x, y, ox: x, oy: y, tx: a.tx, ty: a.ty, p: 0, sp: 1.15, col: accentNow() });
   FX.shake = Math.max(FX.shake, 8);
   sndCharge(0.15);
-  if (app.engine) app.engine.shock(dx, -dy);
+  if (app.engine) app.engine.shock(dx * 0.5, -dy * 0.5);
 }
 
 function fxBoom(x, y, scale, far) {
@@ -3115,11 +3155,11 @@ function fxLoop(now) {
     const e = fxEase(Math.min(1, it.p));
     const x = it.x + (it.tx - it.x) * e;
     const y = it.y + (it.ty - it.y) * e;
-    const shrink = 1 - 0.88 * e;
+    const shrink = 1 - 0.62 * e;   // still legible when it arrives
 
     if (it.kind === 'disk') {
       // a ring seen edge-on, spinning away
-      const r = 62 * shrink, fade = 1 - e * 0.55;
+      const r = 76 * shrink, fade = 1 - e * 0.35;
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(it.spin + it.p * 5.5);
@@ -3136,18 +3176,18 @@ function fxLoop(now) {
       ctx.strokeStyle = hexRgba(it.col, 0.16 * fade);
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(it.ox, it.oy); ctx.lineTo(x, y); ctx.stroke();
-      if (it.p >= 1) { fxBoom(x, y, 1.15, true); FX.items.splice(i, 1); }
+      if (it.p >= 1) { fxBoom(x, y, 1.7, true); FX.items.splice(i, 1); }
       continue;
     }
 
     if (it.kind === 'blast') {
-      const r = 22 * shrink, fade = 1 - e * 0.4;
+      const r = 26 * shrink, fade = 1 - e * 0.25;
       fxGlow(ctx, x, y, r * 3.2, it.col, 0.55 * fade);
       fxGlow(ctx, x, y, r, '#ffffff', 0.95 * fade);
       ctx.strokeStyle = hexRgba(it.col, 0.30 * fade);
       ctx.lineWidth = Math.max(1, 5 * shrink);
       ctx.beginPath(); ctx.moveTo(it.ox, it.oy); ctx.lineTo(x, y); ctx.stroke();
-      if (it.p >= 1) { fxBoom(x, y, 0.85, true); FX.items.splice(i, 1); }
+      if (it.p >= 1) { fxBoom(x, y, 1.35, true); FX.items.splice(i, 1); }
       continue;
     }
 
@@ -3166,14 +3206,14 @@ function fxLoop(now) {
       ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(ex, ey); ctx.stroke();
       fxGlow(ctx, hx, hy, 90 * fade, it.col, 0.55 * fade);       // muzzle
       fxGlow(ctx, ex, ey, 48 * fade, '#ffffff', 0.5 * fade);     // impact
-      if (!it.hit && p > 0.55) { it.hit = true; fxBoom(ex, ey, 1.5, true); }
+      if (!it.hit && p > 0.55) { it.hit = true; fxBoom(ex, ey, 2.1, true); }
       if (it.p >= 1) FX.items.splice(i, 1);
       continue;
     }
 
     if (it.kind === 'boom') {
       const p = Math.min(1, it.p), f = 1 - p;
-      const R = 26 + 150 * it.scale * fxEase(p);
+      const R = 30 + 165 * it.scale * fxEase(p);
       fxGlow(ctx, it.x, it.y, R * 1.25, it.col, 0.55 * f * f);
       ctx.strokeStyle = hexRgba(it.col, 0.85 * f);
       ctx.lineWidth = Math.max(1, 7 * f);
@@ -3224,7 +3264,17 @@ function fxLoop(now) {
    gives a whip; the rate at which it grows in frame gives a thrust toward the
    camera — a hand coming at you gets bigger, and nothing else does.
 --------------------------------------------------------------------------- */
-const GAUNT = { hist: [], lastWhip: 0, lastThrust: 0, lastPunch: 0, armed: true };
+const GAUNT = { hist: [], lastWhip: 0, lastThrust: 0, lastPunch: 0, armed: true, sweep: 0, push: 0 };
+
+/* How hard you have to move. Raising sensitivity lowers every threshold, so one
+   number covers "it never fires" and "it fires when I scratch my nose".
+   These are honest guesses at what a whip and a shove look like through a
+   webcam — the meters on the bench show the live figures against them, so they
+   can be tuned by eye rather than by argument. */
+function gauntThresholds() {
+  const k = Math.max(0.3, Math.min(3, Number(PRESET.gestureSensitivity) || 1));
+  return { whip: 1.9 / k, thrust: 1.2 / k, punch: 1.5 / k };
+}
 
 function gauntlet(h, now) {
   if (!GAUNT.armed || OVL.grab) return;                 // never while carrying a pane
@@ -3244,10 +3294,15 @@ function gauntlet(h, now) {
   const vx = (b.x - a.x) / dt, vy = (b.y - a.y) / dt;
   const grow = ((b.s - a.s) / Math.max(0.02, a.s)) / dt;   // relative growth per second
 
+  GAUNT.sweep = Math.abs(vx);
+  GAUNT.push = grow;
+  gauntMeter();
+
+  const T = gauntThresholds();
   const X = px * innerWidth, Y = py * innerHeight;
 
   // ── punch: a closed fist driven at the camera ──────────────────────────
-  if (h.fist && grow > 1.5 && now - GAUNT.lastPunch > 320) {
+  if (h.fist && grow > T.punch && now - GAUNT.lastPunch > 320) {
     GAUNT.lastPunch = now; GAUNT.lastThrust = now; GAUNT.hist.length = 0;
     fxBlast(X, Y, (px - 0.5) * 0.5, (py - 0.5) * 0.5);
     camSay('REPULSOR');
@@ -3255,7 +3310,7 @@ function gauntlet(h, now) {
   }
 
   // ── thrust: an open palm shoved forward ────────────────────────────────
-  if (h.palm && grow > 1.2 && now - GAUNT.lastThrust > 800) {
+  if (h.palm && grow > T.thrust && now - GAUNT.lastThrust > 800) {
     GAUNT.lastThrust = now; GAUNT.hist.length = 0;
     fxBeam(X, Y, (px - 0.5) * 0.7, (py - 0.5) * 0.7);
     camSay('BEAM');
@@ -3263,7 +3318,7 @@ function gauntlet(h, now) {
   }
 
   // ── whip: the hand thrown sideways ─────────────────────────────────────
-  if (!h.pinch && Math.abs(vx) > 1.9 && Math.abs(vx) > Math.abs(vy) * 1.3 && now - GAUNT.lastWhip > 620) {
+  if (!h.pinch && Math.abs(vx) > T.whip && Math.abs(vx) > Math.abs(vy) * 1.3 && now - GAUNT.lastWhip > 620) {
     GAUNT.lastWhip = now; GAUNT.hist.length = 0;
     fxDisk(X, Y, Math.sign(vx), vy * 0.18);
     camSay(vx > 0 ? 'DISK · RIGHT' : 'DISK · LEFT');
@@ -3271,6 +3326,21 @@ function gauntlet(h, now) {
   }
 }
 
+
+/** Paint the live figures beside the thresholds they have to beat. */
+function gauntMeter() {
+  if (!E.mSweep) return;
+  const T = gauntThresholds();
+  const set = (n, v, lim) => {
+    if (!n) return;
+    n.textContent = v.toFixed(2);
+    const near = Math.min(1, Math.abs(v) / lim);
+    n.style.color = near >= 1 ? '#eafcff' : near > 0.6 ? 'rgba(255,179,0,.9)' : 'rgba(0,229,255,.75)';
+  };
+  set(E.mSweep, GAUNT.sweep, T.whip);
+  set(E.mPush, GAUNT.push, T.thrust);
+  if (E.mFire) E.mFire.textContent = T.whip.toFixed(1) + '/' + T.thrust.toFixed(1);
+}
 
 /* ---- fired by name -------------------------------------------------------- */
 const FX_DIR = {
@@ -3302,6 +3372,11 @@ app.fx = {
   fire: fireEffect, hand: (h, t) => gauntlet(h, t),
   get items() { return FX.items.map(i => i.kind); },
   get shake() { return FX.shake; },
+  get meters() { return { sweep: GAUNT.sweep, push: GAUNT.push, thresholds: gauntThresholds() }; },
+  sensitivity(x) {
+    if (x != null) { PRESET.gestureSensitivity = x; gauntMeter(); }
+    return PRESET.gestureSensitivity || 1;
+  },
   mute(v) { FX.muted = v !== false; }
 };
 
@@ -3335,9 +3410,18 @@ function setVoiceUI(mode) {
    every gesture asks this rather than keeping its own opinion. */
 function voiceWants() {
   if (app.mode !== 'auto' || !app.autoLoop || app.busy) return false;
-  if (EL.busy || (window.speechSynthesis && window.speechSynthesis.speaking)) return false;
+  if (EL.busy || app.speaking) return false;
+  if (window.speechSynthesis && window.speechSynthesis.speaking) return false;
+  // A hard window with a timestamp, not just a set of flags. Between stopping
+  // the recogniser and the first syllable of the reply there is a gap of a few
+  // hundred milliseconds where every flag reads "not speaking" — the watchdog
+  // reopened the microphone in that gap, he started talking into it, and he
+  // answered himself. Forever.
+  if (Date.now() < (app.deafUntil || 0)) return false;
   return true;
 }
+/** Shut the ears for a while. Extends, never shortens. */
+function deafen(ms) { app.deafUntil = Math.max(app.deafUntil || 0, Date.now() + ms); }
 function micLive() { return !!(app.recActive || app.holding); }
 
 /* Gestures may only ever OPEN the microphone, never close it. A palm held in
@@ -3505,6 +3589,21 @@ function cancelHold() {
   clearInterval(app.holdTick); app.holdTick = 0;
 }
 
+/* Reduce a phrase to comparable words. */
+function echoKey(t) {
+  return String(t || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+}
+/** Did the microphone just hear him rather than you? Speakers leak; the deaf
+ *  window catches most of it, and this catches the rest. */
+function isEcho(said) {
+  const a = echoKey(said), b = echoKey(app.lastSpoken);
+  if (a.length < 3 || b.length < 3) return false;
+  const set = new Set(b);
+  let hit = 0;
+  a.forEach(w => { if (set.has(w)) hit++; });
+  return hit / a.length > 0.72;
+}
+
 function flushVoice() {
   const said = String(app.vBuf || '').trim();
   app.holding = false;
@@ -3513,8 +3612,18 @@ function flushVoice() {
   app.vBuf = '';
 
   if (!said) { setVoiceUI('idle'); return; }
+  if (isEcho(said)) {
+    // He heard himself through the speakers. Drop it silently rather than
+    // answering it — answering it is how a machine ends up in conversation
+    // with itself.
+    printRow('🎙 (ignored — that was my own voice coming back)', 'rgba(150,215,235,.45)');
+    deafen(500);
+    setVoiceUI('idle');
+    return;
+  }
 
   // stop capturing while it thinks and speaks, so it can't hear itself
+  deafen(2500);
   if (app.rec && app.recActive) { try { app.rec.stop(); } catch (e) { } }
 
   if (E.transcript) E.transcript.textContent = '“' + said + '”';
@@ -3871,7 +3980,7 @@ function panelDump() {
 
 /* ================================================================ WORKSPACE == */
 const OVL = { mode: null, map: null, L: null, layers: [], svg: null, name: 'schematic',
-              panes: {}, order: [], seq: 0, focus: null, aim: null, grab: null };
+              panes: {}, order: [], seq: 0, focus: null, aim: null, grab: null, openedAt: 0 };
 
 /* Shrink the particle orb into the bottom-right corner while something is on
    screen, so it stays fully visible instead of hiding behind the panel. */
@@ -4096,6 +4205,7 @@ function paneResized(p) {
 function ovlOpen(mode, title, sub) {
   const p = ensurePane(mode);
   E.ovl.style.display = 'block';
+  OVL.openedAt = performance.now();     // a grace period against stray gestures
   focusPane(p);
   refreshDock();
   p.titleEl.textContent = title || PANE_KIND[mode].label;
@@ -5751,9 +5861,26 @@ function camLoop(now) {
     // in frame would otherwise switch the microphone off and on forever.
     if (h.palm && !micLive()) { if (!VIS.palmAt) VIS.palmAt = now; else if (now - VIS.palmAt > 700) { VIS.palmAt = 0; if (voiceOnly()) camSay('PALM · LISTENING'); } }
     else VIS.palmAt = 0;
-    // and never while something is in hand, in case the grip reads oddly mid-carry
-    if (h.fist && !OVL.grab) { if (!VIS.fistAt) VIS.fistAt = now; else if (now - VIS.fistAt > 700) { VIS.fistAt = 0; if (paneCount()) ovlClose(); else if (PANEL.on) setPanel(false); camSay('FIST · DISMISS'); } }
-    else VIS.fistAt = 0;
+    // ── dismissal has to be deliberate ───────────────────────────────────
+    // A relaxed hand has no fingers extended, which is exactly what a fist
+    // looks like. So simply resting your hand in frame was closing whatever you
+    // had just asked for, within about half a second of it appearing — which
+    // reads as "it never opened anything at all".
+    //
+    // Three conditions now, all of them: the hand must have been OPEN in the
+    // last second and a half (so it is a closing motion, not a resting one), it
+    // must stay closed for the best part of a second, and the thing being
+    // closed must have been on screen long enough to have been looked at.
+    if (h.palm || h.point || h.peace) VIS.openAt = now;
+    const deliberate = h.fist && !OVL.grab && (now - (VIS.openAt || 0) < 1500);
+    if (deliberate) {
+      if (!VIS.fistAt) VIS.fistAt = now;
+      else if (now - VIS.fistAt > 850 && now - (OVL.openedAt || 0) > 1800) {
+        VIS.fistAt = 0; VIS.openAt = 0;
+        if (paneCount()) ovlClose(); else if (PANEL.on) setPanel(false);
+        camSay('FIST · DISMISS');
+      }
+    } else VIS.fistAt = 0;
   } else if (face) {
     const nose = face[1] || face[4];
     if (nose) { tx = clamp((1 - nose.x - 0.5) * 2.4 + 0.5, 0, 1); ty = clamp((nose.y - 0.5) * 2.4 + 0.5, 0, 1); }
