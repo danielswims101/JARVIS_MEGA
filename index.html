@@ -102,6 +102,7 @@
                       border-right:1px solid rgba(0,229,255,.6); border-bottom:1px solid rgba(0,229,255,.6); }
   .pane-act { font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.6); cursor:pointer; }
   .pane-act:hover { color:#eafcff; }
+  #presSaid::-webkit-scrollbar { width:0; height:0; }
 </style>
 </head>
 <body>
@@ -541,9 +542,15 @@
          display:flex; flex-direction:column; gap:16px; font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.5);"></div>
 
     <!-- captions -->
-    <div style="position:absolute; left:0; right:0; bottom:104px; display:flex; flex-direction:column; align-items:center; gap:10px; padding:0 12vw;">
-      <div id="presYou" style="font-size:12px; letter-spacing:.2em; color:rgba(255,210,128,.85); min-height:15px; text-align:center; opacity:0; transition:opacity .4s ease;"></div>
-      <div id="presSaid" style="font-size:19px; line-height:1.55; letter-spacing:.03em; color:#dff6ff; text-align:center; max-width:900px; text-wrap:pretty; min-height:30px;"></div>
+    <!-- Anchored to the bottom, so without a ceiling a long reply grows straight
+         off the top of the screen. It scrolls instead. -->
+    <div style="position:absolute; left:0; right:0; bottom:104px; max-height:42vh; display:flex; flex-direction:column;
+                align-items:center; justify-content:flex-end; gap:10px; padding:0 12vw;">
+      <div id="presYou" style="flex:none; font-size:12px; letter-spacing:.2em; color:rgba(255,210,128,.85); min-height:15px; text-align:center; opacity:0; transition:opacity .4s ease;"></div>
+      <div id="presSaid" style="font-size:19px; line-height:1.55; letter-spacing:.03em; color:#dff6ff; text-align:center;
+                                max-width:900px; text-wrap:pretty; min-height:30px; max-height:34vh;
+                                overflow-y:auto; overflow-x:hidden; pointer-events:auto;
+                                scrollbar-width:none; transition:font-size .3s ease;"></div>
     </div>
 
     <!-- footer -->
@@ -1286,7 +1293,10 @@ window.__jarvis = app;
 function printRow(text, color) {
   const box = E.console; if (!box) return null;
   const row = document.createElement('div');
-  row.style.cssText = 'color:' + (color || 'rgba(190,230,244,.9)') + '; white-space:pre-wrap; word-break:break-word;';
+  // flex:none — the console is a flex column, and without it a long reply
+  // squashes every row above it instead of scrolling.
+  row.style.cssText = 'flex:none; color:' + (color || 'rgba(190,230,244,.9)') +
+    '; white-space:pre-wrap; word-break:break-word;';
   row.textContent = text;
   box.appendChild(row);
   while (box.children.length > 120) box.removeChild(box.firstChild);
@@ -3321,6 +3331,26 @@ function setVoiceUI(mode) {
   }
 }
 
+/* Should the microphone be open right now? Every restart path, every label and
+   every gesture asks this rather than keeping its own opinion. */
+function voiceWants() {
+  if (app.mode !== 'auto' || !app.autoLoop || app.busy) return false;
+  if (EL.busy || (window.speechSynthesis && window.speechSynthesis.speaking)) return false;
+  return true;
+}
+function micLive() { return !!(app.recActive || app.holding); }
+
+/* Gestures may only ever OPEN the microphone, never close it. A palm held in
+   view and an ordinary blink are both far too easy to produce by accident, and
+   closing the mic by accident is indistinguishable from the machine being
+   broken: you talk, nothing happens, and there is nothing to see. */
+function voiceOnly() {
+  if (app.busy || micLive()) return false;
+  if (app.mode !== 'auto') { setMode('auto'); return true; }
+  app.autoLoop = true; app.recTry = 0; startVoice();
+  return true;
+}
+
 function toggleVoice() {
   if (app.mode !== 'auto') return setMode('auto');
   if (app.rec && app.recActive) { app.autoLoop = false; cancelHold(); try { app.rec.stop(); } catch (e) { } return; }
@@ -3371,7 +3401,7 @@ function startVoice() {
       app.recActive = false;
       const fatal = e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'audio-capture';
       if (fatal) { app.autoLoop = false; cancelHold(); }
-      if (!app.holding) { setVoiceUI('idle'); autoOrb('idle'); }
+      if (!app.holding && !voiceWants()) { setVoiceUI('idle'); autoOrb('idle'); }
       if (e.error === 'no-speech' || e.error === 'aborted') return;
       if (fatal && E.transcript) E.transcript.textContent = 'Voice channel unavailable — microphone blocked. Switch to DICTATE to type.';
       if (app._voiceErr === e.error) return;
@@ -3387,9 +3417,15 @@ function startVoice() {
         try { rec.start(); } catch (e) { }
         return;
       }
-      if (!app.busy && !app.holding) setVoiceUI('idle');
-      if (app.engine && app.engine.state === 'listening' && !app.holding) autoOrb('idle');
-      if (app.mode === 'auto' && app.autoLoop && !app.busy && !app.holding) setTimeout(startVoice, 500);
+      // Chrome recycles the engine every so often and we restart within a few
+      // hundred milliseconds. Flipping the readout to STANDBY in that gap made
+      // it look like it kept dropping out — so only say idle if we actually
+      // mean to stop listening.
+      if (!voiceWants()) {
+        if (!app.busy && !app.holding) setVoiceUI('idle');
+        if (app.engine && app.engine.state === 'listening' && !app.holding) autoOrb('idle');
+      }
+      if (app.mode === 'auto' && app.autoLoop && !app.busy && !app.holding) setTimeout(startVoice, 220);
     };
 
     rec.onresult = (ev) => {
@@ -3428,12 +3464,12 @@ function voiceWatchdog() {
     app.recStamp = Date.now();
     return;                                   // let onend settle, retry next tick
   }
-  if (!app.recActive && Date.now() - (app.recTry || 0) > 1300) {
+  if (!app.recActive && Date.now() - (app.recTry || 0) > 450) {
     app.recTry = Date.now();
     startVoice();
   }
 }
-setInterval(voiceWatchdog, 1200);
+setInterval(voiceWatchdog, 400);
 
 /* ---- the pause buffer -----------------------------------------------------
    Speech recognition calls a result "final" the moment you stop for breath.
@@ -5711,8 +5747,9 @@ function camLoop(now) {
     if (h.pinch && !VIS.pinch && !OVL.grab) fireClick(VIS.x * innerWidth, VIS.y * innerHeight);
     VIS.pinch = h.pinch;
 
-    // open palm held = start listening; fist held = dismiss
-    if (h.palm) { if (!VIS.palmAt) VIS.palmAt = now; else if (now - VIS.palmAt > 700) { VIS.palmAt = 0; if (!app.busy) toggleVoice(); camSay('PALM · LISTENING'); } }
+    // open palm held = start listening. It cannot stop listening: a palm sitting
+    // in frame would otherwise switch the microphone off and on forever.
+    if (h.palm && !micLive()) { if (!VIS.palmAt) VIS.palmAt = now; else if (now - VIS.palmAt > 700) { VIS.palmAt = 0; if (voiceOnly()) camSay('PALM · LISTENING'); } }
     else VIS.palmAt = 0;
     // and never while something is in hand, in case the grip reads oddly mid-carry
     if (h.fist && !OVL.grab) { if (!VIS.fistAt) VIS.fistAt = now; else if (now - VIS.fistAt > 700) { VIS.fistAt = 0; if (paneCount()) ovlClose(); else if (PANEL.on) setPanel(false); camSay('FIST · DISMISS'); } }
@@ -5723,10 +5760,12 @@ function camLoop(now) {
     g = 'gaze';
     VIS.pinch = false; VIS.palmAt = 0; VIS.fistAt = 0;
 
-    // a deliberate wink toggles the microphone
+    // A wink opens the microphone — and only opens it. An ordinary blink reads
+    // as a wink often enough that letting it close the mic meant being cut off
+    // mid-sentence by your own face. It also needs a firmer, longer wink now.
     const l = shape('eyeBlinkLeft'), r = shape('eyeBlinkRight');
-    const wink = (l > 0.55 && r < 0.2) || (r > 0.55 && l < 0.2);
-    if (wink) { if (!VIS.winkAt) VIS.winkAt = now; else if (now - VIS.winkAt > 350) { VIS.winkAt = 0; if (!app.busy) toggleVoice(); camSay('WINK · VOICE'); } }
+    const wink = (l > 0.68 && r < 0.14) || (r > 0.68 && l < 0.14);
+    if (wink && !micLive()) { if (!VIS.winkAt) VIS.winkAt = now; else if (now - VIS.winkAt > 600) { VIS.winkAt = 0; if (voiceOnly()) camSay('WINK · LISTENING'); } }
     else VIS.winkAt = 0;
   }
 
@@ -5868,7 +5907,14 @@ const idleRig = selfRig;   // old name, same body
 
 function presSay(text) {
   PRES.said = text;
-  if (E.presSaid) E.presSaid.textContent = text;
+  const n = E.presSaid;
+  if (!n) return;
+  n.textContent = text;
+  // Long replies get a smaller face rather than a taller block, and the box
+  // scrolls with the words instead of climbing off the top of the screen.
+  const len = String(text).length;
+  n.style.fontSize = len > 900 ? '13px' : len > 520 ? '15px' : len > 260 ? '17px' : '19px';
+  n.scrollTop = n.scrollHeight;
 }
 function presYou(text) {
   if (!E.presYou) return;
