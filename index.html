@@ -803,8 +803,11 @@ void main(){
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   gl_Position = projectionMatrix * mv;
 
-  float form = 1.0 - clamp(uScatter * 0.9, 0.0, 0.82);   // unformed matter is faint
-  float energy = clamp((abs(nsum)*0.62 + amp*wSpeak*1.3 + shock*0.85 + exp(-(aRad-0.30)*2.9)*1.30*(1.0-uHuman) + rim*0.62 + scanBand*0.95) * form, 0.0, 2.2);
+  float form = 1.0 - clamp(uScatter * 0.75, 0.0, 0.62);   // unformed matter is faint
+  // The body carries its own light. Without this floor the figure only glows at
+  // its edges and the mass of it disappears into the background.
+  float glow = human * 0.42;
+  float energy = clamp((abs(nsum)*0.62 + amp*wSpeak*1.3 + shock*0.85 + exp(-(aRad-0.30)*2.9)*1.30*(1.0-uHuman) + rim*0.58 + scanBand*0.70 + glow) * form, 0.0, 2.2);
 
   vec3 cyan  = vec3(0.00, 0.86, 1.00);
   vec3 blue  = vec3(0.04, 0.42, 1.00);
@@ -819,10 +822,17 @@ void main(){
   vCol = mix(vCol, uMood * lum * 1.75, uMoodAmt);
   vCol *= (1.0 - uDark);
 
-  float a = aLayer < 0.5 ? 0.52 : (aLayer < 1.5 ? 0.44 : 0.28);
-  vA = a * uBoot * (0.6 + 0.4*breath);
+  // These points blend additively, so packing the same 132,000 of them from a
+  // wide sphere into a narrow body multiplies the light per pixel — that is what
+  // read as an explosion. Thin the ALPHA only, and only enough to stop the
+  // white-out. Dimming the colour as well (as a first pass did) puts the figure
+  // out entirely: four small reductions multiply into one invisible body.
+  float pack = 1.0 - uHuman * 0.30;
 
-  float size = aSize * (1.0 + energy*0.6 + shock*1.2) * uPixel * uVH;
+  float a = aLayer < 0.5 ? 0.52 : (aLayer < 1.5 ? 0.44 : 0.28);
+  vA = a * uBoot * (0.6 + 0.4*breath) * pack;
+
+  float size = aSize * (1.0 + energy*0.6 + shock*1.2) * uPixel * uVH * (1.0 - uHuman * 0.14);
   gl_PointSize = size * (13.0 / max(0.001, -mv.z));
 }`;
 
@@ -1096,7 +1106,9 @@ function init(canvas, opts = {}) {
     rings.rotation.y += dt * 0.045; rings.rotation.z = Math.sin(t * 0.07) * 0.12;
     dust.material.uniforms.uTime.value = t;
 
-    bloom.strength = api.bloomBase + weights[1] * 0.25 + weights[4] * 0.3 + audio.level * 0.18;
+    // Bloom is a multiplier on whatever is already bright. Left alone it turns a
+    // dense figure into a white blob, so it retreats as the body forms.
+    bloom.strength = (api.bloomBase + weights[1] * 0.25 + weights[4] * 0.3 + audio.level * 0.18) * (1 - hum * 0.26);
     post.uniforms.uTime.value = t;
     post.uniforms.uAmount.value = 1 + weights[2] * 2.2 + weights[4] * 3.4;
 
@@ -2923,9 +2935,16 @@ function browserSpeak(text) {
 
 /* =================================================================== VOICE === */
 function setVoiceUI(mode) {
+  const on = mode === 'listening', think = mode === 'thinking';
+  // In PRESENCE there is no voice button to look at, so the subtitle under his
+  // name carries the state instead. Silence with no explanation is the thing
+  // that makes voice feel broken.
+  if (PRES.on && E.presSub) {
+    E.presSub.textContent = on ? 'LISTENING' : think ? 'THINKING' : 'PRESENCE · EMBODIED';
+    E.presSub.style.color = on ? 'rgba(255,179,0,.9)' : think ? 'rgba(160,107,255,.85)' : accentNow() + 'aa';
+  }
   const d = E.voiceDot, l = E.voiceLabel, r = E.voiceRing;
   if (!d || !l) return;
-  const on = mode === 'listening', think = mode === 'thinking';
   l.textContent = on ? 'LISTENING' : think ? 'THINKING' : 'SPEAK';
   l.style.color = on ? 'rgba(255,179,0,.95)' : think ? 'rgba(160,107,255,.9)' : 'rgba(0,229,255,.7)';
   const core = on ? '#fff6e0' : think ? '#f0e6ff' : '#eafcff';
@@ -2949,6 +2968,26 @@ function toggleVoice() {
 function startVoice() {
   if (app.recActive || app.busy) return;
   if (app.holding && app.rec) { try { app.rec.start(); } catch (e) { } return; }
+
+  // A file:// page has no secure origin, so Chrome refuses the microphone and
+  // the camera outright — and says so nowhere the user will look. Say it here,
+  // once, in plain terms, instead of leaving them talking to a deaf machine.
+  if (location.protocol === 'file:') {
+    app.autoLoop = false;
+    if (!app._fileWarn) {
+      app._fileWarn = true;
+      printRow('VOICE — this page was opened from a file, and browsers block the microphone on file:// pages.', AM);
+      printRow('  Serve the folder over http://localhost and voice, camera and location all come alive:', DIM);
+      printRow('  open a terminal in the folder and run:  python3 -m http.server 8000', '#eafcff');
+      printRow('  then visit:  http://localhost:8000/JARVIS%20Command%20Deck%20(configured).html', '#eafcff');
+      printRow('  Typed directives work fine either way.', DIM);
+      toast('VOICE', 'Microphone blocked on file:// — see the console', AM);
+      if (PRES.on) presSay('I cannot hear you from a file:// page. Serve the deck over localhost and I will listen.');
+    }
+    setVoiceUI('idle');
+    return;
+  }
+
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
     setOrb('listening', 2400);
@@ -2960,7 +2999,11 @@ function startVoice() {
     // continuous, so a breath mid-sentence doesn't end the utterance
     rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 1;
 
-    rec.onstart = () => { app.recActive = true; if (!app.holding) setVoiceUI('listening'); autoOrb('listening'); };
+    rec.onstart = () => {
+      app.recActive = true; app.recStamp = Date.now();
+      if (!app.holding) setVoiceUI('listening');
+      autoOrb('listening');
+    };
 
     rec.onerror = (e) => {
       app.recActive = false;
@@ -2993,12 +3036,42 @@ function startVoice() {
         const r = ev.results[i];
         if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript;
       }
+      app.recStamp = Date.now();
       if (final.trim()) app.vBuf = ((app.vBuf || '') + ' ' + final.trim()).trim();
       if (final.trim() || interim.trim()) armHold(interim.trim());
     };
   }
   try { app.rec.start(); } catch (e) { }
 }
+
+/* ---- the watchdog ---------------------------------------------------------
+   Speech recognition stops for reasons it never reports: the tab loses focus,
+   Chrome recycles the engine, the camera grabs the audio stack on its way up,
+   an error arrives with no matching onend. Every restart path in here is
+   correct and none of them is sufficient, because the failure is silent.
+
+   So rather than trust them, check the truth once a second: if hands-free is on
+   and nothing is speaking, thinking or mid-sentence, we should be listening. If
+   we are not, start. If a session claims to be open but has said nothing for
+   half a minute, it is a zombie — close it and open a fresh one.
+--------------------------------------------------------------------------- */
+function voiceWatchdog() {
+  if (app.mode !== 'auto' || !app.autoLoop) return;
+  const speaking = EL.busy || !!(window.speechSynthesis && window.speechSynthesis.speaking);
+  if (app.busy || app.holding || speaking) return;
+
+  if (app.recActive && Date.now() - (app.recStamp || 0) > 30000) {
+    app.recActive = false;
+    try { app.rec && app.rec.stop(); } catch (e) { }
+    app.recStamp = Date.now();
+    return;                                   // let onend settle, retry next tick
+  }
+  if (!app.recActive && Date.now() - (app.recTry || 0) > 1300) {
+    app.recTry = Date.now();
+    startVoice();
+  }
+}
+setInterval(voiceWatchdog, 1200);
 
 /* ---- the pause buffer -----------------------------------------------------
    Speech recognition calls a result "final" the moment you stop for breath.
@@ -5090,11 +5163,10 @@ async function camStart() {
       baseOptions: { modelAssetPath: MP_MODELS + '/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate: 'GPU' },
       outputFaceBlendshapes: true, numFaces: 1, runningMode: 'VIDEO'
     });
-    // the body, which the orb becomes
-    VIS.pose = await mp.PoseLandmarker.createFromOptions(files, {
-      baseOptions: { modelAssetPath: MP_MODELS + '/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task', delegate: 'GPU' },
-      numPoses: 1, runningMode: 'VIDEO'
-    });
+    // No body tracker. He is not a mirror, so there is nothing to copy from you
+    // — and skipping the pose model saves a model download and a third
+    // inference pass on every single frame.
+    VIS.pose = null;
   } catch (e) {
     VIS.loading = false; paintCam();
     printRow('OPTICS — could not load the vision models: ' + String(e.message || e), AM);
@@ -5146,53 +5218,8 @@ const BONE_R  = [  0.108,  0.082, 0.062, 0.150, 0.058, 0.058, 0.058, 0.058,
 const BONE_R2 = [  0.086,  0.062, 0.140, 0.104, 0.052, 0.052, 0.047, 0.047,
                    0.036,  0.036, 0.030, 0.030, 0.082, 0.082, 0.054, 0.054, 0.036, 0.036];
 
-function buildRig(w) {
-  // w: worldLandmarks in metres. Mirror x, flip y to Y-up, scale to the orb.
-  const S = 1.62;
-  const P = (i) => {
-    const p = w[i];
-    return p ? [-p.x * S, -p.y * S + 0.10, -p.z * S] : null;
-  };
-  const mid = (a, b) => a && b ? [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2] : null;
-  const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-
-  const lsh = P(11), rsh = P(12), lhip = P(23), rhip = P(24);
-  if (!lsh || !rsh || !lhip || !rhip) return null;
-
-  const neck = mid(lsh, rsh);
-  const pelvis = mid(lhip, rhip);
-  const chest = lerp3(neck, pelvis, 0.34);
-  const nose = P(0) || neck;
-  const lear = P(7), rear = P(8);
-  const head = lear && rear ? mid(lear, rear) : nose;
-  // extend past the skull centre so the head reads as a head, not a ball on a stick
-  const up = [head[0] - neck[0], head[1] - neck[1], head[2] - neck[2]];
-  const headTop = [head[0] + up[0] * 0.62, head[1] + up[1] * 0.62, head[2] + up[2] * 0.62];
-
-  const lwr = P(15), rwr = P(16);
-  const lhand = P(19) || lwr, rhand = P(20) || rwr;
-
-  const segs = [
-    [headTop, head], [head, neck], [neck, chest], [chest, pelvis],
-    [neck, lsh], [neck, rsh],
-    [lsh, P(13)], [rsh, P(14)],
-    [P(13), lwr], [P(14), rwr],
-    [lwr, lhand], [rwr, rhand],
-    [pelvis, lhip], [pelvis, rhip],
-    [lhip, P(25)], [rhip, P(26)],
-    [P(25), P(27)], [P(26), P(28)]
-  ];
-
-  const out = new Float32Array(18 * 8);
-  for (let i = 0; i < 18; i++) {
-    const a = segs[i] && segs[i][0], b = segs[i] && segs[i][1];
-    if (!a || !b) return null;
-    out[i * 8] = a[0]; out[i * 8 + 1] = a[1]; out[i * 8 + 2] = a[2];
-    out[i * 8 + 3] = b[0]; out[i * 8 + 4] = b[1]; out[i * 8 + 5] = b[2];
-    out[i * 8 + 6] = BONE_R[i]; out[i * 8 + 7] = BONE_R2[i];
-  }
-  return out;
-}
+/* buildRig — deleted. It turned your tracked skeleton into his body, which is
+   exactly the copying that had to go. Nothing reads your posture any more. */
 
 function pushRig(raw, dt) {
   if (!RIG.primed) { RIG.smooth.set(raw); RIG.primed = true; }
@@ -5222,11 +5249,16 @@ function readHand(lm) {
   const pinch = dist(lm[4], lm[8]) / span;
   const fingers = [extended(lm, 8, 6), extended(lm, 12, 10), extended(lm, 16, 14), extended(lm, 20, 18)];
   const up = fingers.filter(Boolean).length;
+  const pinching = pinch < 0.42;
   return {
-    pinch: pinch < 0.42,
+    pinch: pinching,
     point: fingers[0] && up === 1,
     palm: up === 4,
-    fist: up === 0,
+    // A pinch curls the index finger, which counts as no fingers extended —
+    // so a pinch and a fist look identical by finger count. They are not:
+    // if the thumb and fingertip are touching, you are holding something, not
+    // dismissing it. Without this a grab closed the pane it had just taken.
+    fist: up === 0 && !pinching,
     peace: fingers[0] && fingers[1] && up === 2,
     tip: lm[8], centre: lm[9]
   };
@@ -5252,16 +5284,13 @@ function camLoop(now) {
 
   const dt = Math.min(0.06, (now - (VIS.lastT || now)) / 1000); VIS.lastT = now;
 
-  let hres = null, fres = null, pres = null;
+  let hres = null, fres = null;
   try { hres = VIS.hands.detectForVideo(v, now); } catch (e) { }
   try { fres = VIS.face.detectForVideo(v, now); } catch (e) { }
-  try { if (VIS.pose) pres = VIS.pose.detectForVideo(v, now); } catch (e) { }
 
   // ── his body is his own ──────────────────────────────────────────────────
-  // Pose tracking tells him whether somebody is in frame. It does not puppet
-  // him: the figure standing there is his, not a copy of yours.
-  const world = pres && pres.worldLandmarks && pres.worldLandmarks[0];
-  VIS.body = (world && world.length >= 29) ? 1 : 0;
+  // Nothing here reads your posture. A face or a hand tells him somebody is
+  // present; that is the entire extent of it. The figure is his.
   if (!PRES.on) {
     if (!VIS.t0) VIS.t0 = now;
     pushRig(selfRig((now - VIS.t0) / 1000), dt);
@@ -5277,6 +5306,7 @@ function camLoop(now) {
   const face = (fres && fres.faceLandmarks && fres.faceLandmarks[0]) || null;
   VIS.faces = face ? 1 : 0;
   const shape = (n) => { const c = shapes.find(s => s.categoryName === n); return c ? c.score : 0; };
+  VIS.body = (face || hands.length) ? 1 : 0;     // somebody is there — that is all
 
   // ── panes in mid air ─────────────────────────────────────────────────────
   // Every pinched fingertip becomes a screen point. One point carries a pane,
@@ -5315,7 +5345,8 @@ function camLoop(now) {
     // open palm held = start listening; fist held = dismiss
     if (h.palm) { if (!VIS.palmAt) VIS.palmAt = now; else if (now - VIS.palmAt > 700) { VIS.palmAt = 0; if (!app.busy) toggleVoice(); camSay('PALM · LISTENING'); } }
     else VIS.palmAt = 0;
-    if (h.fist) { if (!VIS.fistAt) VIS.fistAt = now; else if (now - VIS.fistAt > 600) { VIS.fistAt = 0; if (paneCount()) ovlClose(); else if (PANEL.on) setPanel(false); camSay('FIST · DISMISS'); } }
+    // and never while something is in hand, in case the grip reads oddly mid-carry
+    if (h.fist && !OVL.grab) { if (!VIS.fistAt) VIS.fistAt = now; else if (now - VIS.fistAt > 700) { VIS.fistAt = 0; if (paneCount()) ovlClose(); else if (PANEL.on) setPanel(false); camSay('FIST · DISMISS'); } }
     else VIS.fistAt = 0;
   } else if (face) {
     const nose = face[1] || face[4];
@@ -5347,10 +5378,10 @@ function camLoop(now) {
     : face ? 'GAZE' : (VIS.body ? 'LOCK' : 'NO SUBJECT'));
   if (E.camGesture && !/·\s(PERSONA|LISTENING|DISMISS|VOICE)$/.test(E.camGesture.textContent)) camSay(label);
 
-  if (!VIS.folded) drawCamOverlay(hands, face, (pres && pres.landmarks && pres.landmarks[0]) || null);
+  if (!VIS.folded) drawCamOverlay(hands, face);
 }
 
-function drawCamOverlay(hands, face, pose) {
+function drawCamOverlay(hands, face) {
   const c = E.camOverlay; if (!c) return;
   const w = c.clientWidth, h = c.clientHeight;
   if (!w || !h) return;
@@ -5362,19 +5393,6 @@ function drawCamOverlay(hands, face, pose) {
   if (face) {
     ctx.fillStyle = acc + '55';
     for (let i = 0; i < face.length; i += 6) ctx.fillRect((1 - face[i].x) * w, face[i].y * h, 1, 1);
-  }
-  if (pose) {
-    const PB = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],
-                [23,25],[25,27],[24,26],[26,28],[0,11],[0,12]];
-    ctx.strokeStyle = '#eafcff'; ctx.lineWidth = 1.6; ctx.globalAlpha = .5;
-    PB.forEach(([a, b]) => {
-      if (!pose[a] || !pose[b]) return;
-      ctx.beginPath();
-      ctx.moveTo((1 - pose[a].x) * w, pose[a].y * h);
-      ctx.lineTo((1 - pose[b].x) * w, pose[b].y * h);
-      ctx.stroke();
-    });
-    ctx.globalAlpha = 1;
   }
   const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
                  [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
@@ -5567,8 +5585,16 @@ function enterPresence() {
   presYou('');
   setOrb('idle');                                // no flash — he simply arrives
 
-  camStart();                                    // eyes and hands come with it
+  // The camera permission prompt suspends the page and takes the audio stack
+  // with it, so asking for it first and listening second is the difference
+  // between hands-free working and appearing not to.
   if (app.mode !== 'auto') setMode('auto');      // it is a conversation, not a terminal
+  Promise.resolve(camStart()).catch(() => {}).then(() => {
+    if (!PRES.on || app.mode !== 'auto') return;
+    app.autoLoop = true;
+    app.recTry = 0;
+    startVoice();
+  });
 
   PRES.raf = requestAnimationFrame(presLoop);
   toast('PRESENCE', PERSONAS[persona.id].name + ' is here', accentNow());
