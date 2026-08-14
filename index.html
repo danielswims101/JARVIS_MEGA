@@ -83,6 +83,24 @@
   #deck.presence > #reticle, #deck.presence > #toasts, #deck.presence > #cfgVeil,
   #deck.presence > #gate { opacity:1; filter:none; transform:none; pointer-events:auto; }
   #deck.presence > #toasts, #deck.presence > #reticle { pointer-events:none; }
+  #deck.presence > #ovl { opacity:1; filter:none; transform:none; pointer-events:none; }
+
+  /* floating panes */
+  .pane { position:absolute; display:flex; flex-direction:column; pointer-events:auto; overflow:hidden;
+          background:linear-gradient(158deg, rgba(5,20,30,.95), rgba(2,7,12,.93));
+          border:1px solid rgba(0,229,255,.30); box-shadow:0 0 44px rgba(0,0,0,.62);
+          backdrop-filter:blur(10px); animation:panelIn .5s cubic-bezier(.16,1,.3,1) both; }
+  .pane.focus { border-color:rgba(0,229,255,.62); box-shadow:0 0 30px rgba(0,229,255,.14), 0 20px 60px rgba(0,0,0,.6); }
+  .pane.aim   { border-color:#eafcff; box-shadow:0 0 34px rgba(234,252,255,.30); }
+  .pane.held  { border-color:#eafcff; box-shadow:0 0 50px rgba(234,252,255,.45); }
+  .pane-head  { display:flex; align-items:center; justify-content:space-between; gap:12px; flex:none;
+                padding:9px 12px 8px; border-bottom:1px solid rgba(0,229,255,.14); cursor:grab; user-select:none; }
+  .pane-body  { position:relative; flex:1; min-height:0; }
+  .pane-grip  { position:absolute; right:0; bottom:0; width:20px; height:20px; cursor:nwse-resize; z-index:3; }
+  .pane-grip::after { content:''; position:absolute; right:4px; bottom:4px; width:9px; height:9px;
+                      border-right:1px solid rgba(0,229,255,.6); border-bottom:1px solid rgba(0,229,255,.6); }
+  .pane-act { font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.6); cursor:pointer; }
+  .pane-act:hover { color:#eafcff; }
 </style>
 </head>
 <body>
@@ -285,38 +303,18 @@
   <div style="position:absolute; inset:0; z-index:25; pointer-events:none; opacity:.35; background:repeating-linear-gradient(180deg, rgba(0,229,255,.055) 0px, rgba(0,229,255,.055) 1px, transparent 1px, transparent 3px);"></div>
   <div style="position:absolute; inset:-2px; z-index:26; pointer-events:none; border-radius:22px; box-shadow:inset 0 0 120px rgba(0,20,32,.85), inset 0 0 12px rgba(0,229,255,.10); background:radial-gradient(ellipse at 50% 50%, rgba(255,255,255,.018), transparent 60%);"></div>
 
-  <!-- =========================================================== WORKSPACE OVL -->
-  <div id="ovl" style="position:absolute; inset:0; z-index:40; display:none; align-items:center; justify-content:center; padding:52px 60px 130px; pointer-events:none;">
-    <div id="ovlPanel" style="position:relative; width:100%; height:100%; display:flex; flex-direction:column; pointer-events:auto;
-         background:linear-gradient(158deg, rgba(5,20,30,.94), rgba(2,7,12,.92)); border:1px solid rgba(0,229,255,.34);
-         box-shadow:0 0 70px rgba(0,229,255,.10), 0 30px 90px rgba(0,0,0,.7); backdrop-filter:blur(12px);
-         animation:panelIn .55s cubic-bezier(.16,1,.3,1) both; overflow:hidden;">
-      <div class="br tl-h"></div><div class="br tl-v"></div><div class="br br-h"></div><div class="br br-v"></div>
-      <div class="swp" style="animation-duration:11s;"></div>
-      <div class="phead" style="padding:10px 14px 8px;">
-        <div style="display:flex; align-items:center; gap:12px; min-width:0;">
-          <div class="ptitle" id="ovlTitle" style="font-size:10px;">WORKSPACE</div>
-          <div class="pstat" id="ovlSub" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
-        </div>
-        <div style="display:flex; align-items:center; gap:12px;">
-          <div id="ovlExport" style="font-size:9px; letter-spacing:.22em; color:rgba(0,229,255,.6); cursor:pointer; display:none;">EXPORT SVG</div>
-          <div id="ovlIcs" style="font-size:9px; letter-spacing:.22em; color:rgba(0,229,255,.6); cursor:pointer; display:none;">EXPORT .ICS</div>
-          <div id="ovlClose" style="font-size:9px; letter-spacing:.22em; color:rgba(0,229,255,.55); cursor:pointer;">ESC ✕</div>
-        </div>
-      </div>
-      <div style="flex:1; position:relative; min-height:0;">
-        <div id="ovlMap" style="position:absolute; inset:0; display:none;"></div>
-        <div id="ovlBlue" style="position:absolute; inset:0; display:none; overflow:auto; background:#04121c;"></div>
-        <div id="ovlWx" style="position:absolute; inset:0; display:none; overflow:auto; padding:18px 22px;"></div>
-        <div id="ovlCal" style="position:absolute; inset:0; display:none; overflow:auto; padding:18px 22px;"></div>
-        <iframe id="ovlEmbed" style="position:absolute; inset:0; width:100%; height:100%; display:none; border:0; background:#04121c;"
-                referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
-        <div id="ovlBusy" style="position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:12px; background:rgba(2,7,12,.6);">
-          <div style="width:120px; height:2px; overflow:hidden;"><div style="width:40px; height:2px; background:linear-gradient(90deg,transparent,#00e5ff,transparent); animation:thinkBar 1.05s linear infinite;"></div></div>
-          <div id="ovlBusyMsg" style="font-size:9px; letter-spacing:.3em; color:rgba(0,229,255,.6);">ACQUIRING</div>
-        </div>
-      </div>
-    </div>
+  <!-- ========================================================= WORKSPACE PANES -->
+  <!-- A host layer that never blocks the deck; each pane inside it does. -->
+  <div id="ovl" style="position:absolute; inset:0; z-index:40; display:none; pointer-events:none;"></div>
+
+  <!-- Content surfaces live here until a pane adopts one. -->
+  <div id="ovlStock" style="display:none;">
+    <div id="ovlMap" style="position:absolute; inset:0;"></div>
+    <div id="ovlBlue" style="position:absolute; inset:0; overflow:auto; background:#04121c;"></div>
+    <div id="ovlWx" style="position:absolute; inset:0; overflow:auto; padding:18px 22px;"></div>
+    <div id="ovlCal" style="position:absolute; inset:0; overflow:auto; padding:18px 22px;"></div>
+    <iframe id="ovlEmbed" style="position:absolute; inset:0; width:100%; height:100%; border:0; background:#04121c;"
+            referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
   </div>
 
   <!-- =========================================================== CONTROL PANEL -->
@@ -676,6 +674,7 @@ uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot,
 uniform vec3 uBoneA[18];
 uniform vec3 uBoneB[18];
 uniform float uBoneR[18];
+uniform float uBoneR2[18];
 uniform vec3 uShockDir, uMood;
 varying vec3 vCol;
 varying float vA;
@@ -749,10 +748,10 @@ void main(){
   if (human > 0.001) {
     int si = int(aSeg + 0.5);
     vec3 A = vec3(0.0), B = vec3(0.0);
-    float R = 0.05;
+    float R = 0.05, R2 = 0.05;
     // constant-bounds loop with a constant index: valid on every GL target
     for (int i = 0; i < 18; i++) {
-      if (i == si) { A = uBoneA[i]; B = uBoneB[i]; R = uBoneR[i]; }
+      if (i == si) { A = uBoneA[i]; B = uBoneB[i]; R = uBoneR[i]; R2 = uBoneR2[i]; }
     }
     vec3 axis = B - A;
     float len = length(axis);
@@ -763,25 +762,39 @@ void main(){
     vec3 off = aDir - axis * dot(aDir, axis);
     float ol = length(off);
     off = ol > 0.0001 ? off / ol : normalize(cross(axis, vec3(0.0, 0.0, 1.0)) + 1e-4);
-    float rr = R * (0.22 + 0.78 * sqrt(aRand));
+
+    // radius tapers along the bone — a forearm is not a cylinder, and a neck is
+    // not as thick as a skull. Two radii per bone, interpolated.
+    float Rb = mix(R, R2, aBt);
+    // an elliptical cross-section: bodies are deeper front-to-back than wide
+    float squash = mix(1.0, 0.74, abs(off.z));
+    // most particles sit on the skin, a minority inside — a shell reads as a
+    // figure, an even fill reads as a blob
+    float rr = Rb * squash * (0.55 + 0.45 * pow(aRand, 0.30));
 
     vec3 hp = spine + off * rr;
     // a breath of noise so the surface shimmers instead of sitting dead
-    hp += off * snoise(hp * 6.5 + vec3(t * 0.7)) * R * 0.22;
-    hp += axis * snoise(hp * 4.0 - vec3(t * 0.5)) * R * 0.12;
+    hp += off * snoise(hp * 7.5 + vec3(t * 0.55)) * Rb * 0.10;
+    hp += axis * snoise(hp * 5.0 - vec3(t * 0.40)) * Rb * 0.06;
 
     pos = mix(pos, hp, human);
 
-    rim = human * pow(aRand, 2.0);                       // surface shell glows
-    float sweep = fract(t * 0.15) * 3.4 - 1.5;           // scan travelling up
-    scanBand = human * (1.0 - smoothstep(0.0, 0.10, abs(pos.y - sweep)));
+    // real fresnel: the silhouette lights up because it faces away from you,
+    // not because a random number said so. This is what sells it as a person.
+    vec3 vdir = normalize(cameraPosition - pos);
+    float fres = 1.0 - abs(dot(off, vdir));
+    rim = human * pow(clamp(fres, 0.0, 1.0), 2.6) * (0.55 + 0.45 * aRand);
+    float sweep = fract(t * 0.11) * 3.4 - 1.5;           // scan travelling up
+    scanBand = human * (1.0 - smoothstep(0.0, 0.14, abs(pos.y - sweep))) * 0.55;
   }
 
-  // --- assembly burst -------------------------------------------------------
+  // --- assembly ------------------------------------------------------------
+  // The unformed state is a wide, slow, DIM cloud that draws inward. Nothing
+  // flares: matter gathering, not an explosion.
   if (uScatter > 0.001) {
-    float turbOut = snoise(aDir * 3.1 + vec3(t * 0.9)) * 0.5 + 0.5;
-    pos += normalize(pos + 1e-5) * uScatter * (1.1 + aRand * 2.3) * (0.4 + turbOut);
-    pos += vec3(snoise(aDir * 5.0 + t), snoise(aDir * 5.0 - t), snoise(aDir * 5.0 + 3.1)) * uScatter * 0.55;
+    float turbOut = snoise(aDir * 2.2 + vec3(t * 0.35)) * 0.5 + 0.5;
+    pos += normalize(pos + 1e-5) * uScatter * (0.7 + aRand * 1.5) * (0.5 + turbOut * 0.7);
+    pos += vec3(snoise(aDir * 3.4 + t * 0.4), snoise(aDir * 3.4 - t * 0.4), snoise(aDir * 3.4 + 3.1)) * uScatter * 0.42;
   }
 
   // --- boot explosion -------------------------------------------------------
@@ -790,7 +803,8 @@ void main(){
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   gl_Position = projectionMatrix * mv;
 
-  float energy = clamp(abs(nsum)*0.62 + amp*wSpeak*1.3 + shock*0.85 + exp(-(aRad-0.30)*2.9)*1.30*(1.0-uHuman) + rim*0.55 + scanBand*1.25 + uScatter*0.85, 0.0, 2.2);
+  float form = 1.0 - clamp(uScatter * 0.9, 0.0, 0.82);   // unformed matter is faint
+  float energy = clamp((abs(nsum)*0.62 + amp*wSpeak*1.3 + shock*0.85 + exp(-(aRad-0.30)*2.9)*1.30*(1.0-uHuman) + rim*0.62 + scanBand*0.95) * form, 0.0, 2.2);
 
   vec3 cyan  = vec3(0.00, 0.86, 1.00);
   vec3 blue  = vec3(0.04, 0.42, 1.00);
@@ -967,7 +981,8 @@ function init(canvas, opts = {}) {
     uScatter: { value: 0 },
     uBoneA: { value: Array.from({ length: 18 }, () => new THREE.Vector3()) },
     uBoneB: { value: Array.from({ length: 18 }, () => new THREE.Vector3()) },
-    uBoneR: { value: new Array(18).fill(0.06) }
+    uBoneR: { value: new Array(18).fill(0.06) },
+    uBoneR2: { value: new Array(18).fill(0.06) }
   };
   const mat = new THREE.ShaderMaterial({
     uniforms, vertexShader: VERT, fragmentShader: FRAG,
@@ -1123,15 +1138,19 @@ function init(canvas, opts = {}) {
       shockT = 0; shockAmp = 1;
     },
     setPointer(nx, ny) { pointer.tx = nx; pointer.ty = ny; },
-    /* bones: flat [ax,ay,az, bx,by,bz, radius] x 18, already in world units */
+    /* bones: flat [ax,ay,az, bx,by,bz, rA, rB] x 18, already in world units.
+       Two radii so limbs taper — the difference between a body and a balloon
+       animal is entirely in the second number. */
     setPose(bones) {
-      const A = uniforms.uBoneA.value, B = uniforms.uBoneB.value, R = uniforms.uBoneR.value;
+      const A = uniforms.uBoneA.value, B = uniforms.uBoneB.value;
+      const R = uniforms.uBoneR.value, R2 = uniforms.uBoneR2.value;
       for (let i = 0; i < 18; i++) {
-        const o = i * 7;
-        if (bones.length < o + 7) break;
+        const o = i * 8;
+        if (bones.length < o + 8) break;
         A[i].set(bones[o], bones[o + 1], bones[o + 2]);
         B[i].set(bones[o + 3], bones[o + 4], bones[o + 5]);
         R[i] = bones[o + 6];
+        R2[i] = bones[o + 7];
       }
     },
     setHuman(w) { uniforms.uHuman.value = Math.max(0, Math.min(1, w)); },
@@ -1212,10 +1231,9 @@ const E = {};
  'cfgMsg','cfgSave','cfgTest','cfgWipe','rowKey','rowBase','personaChip','personaStat',
  'tFun','tSerious','tLight','tHeavy','cfgElKey','cfgVoice','cfgVoiceFor','cfgElModel',
  'cfgStab','cfgSim','cfgSpeed','cfgSysFor','cfgReset','cfgSpeak','cfgSbUrl','cfgSbKey',
- 'vaultStat','ovl','ovlPanel','ovlTitle','ovlSub','ovlMap','ovlBlue','ovlWx','ovlBusy',
- 'ovlBusyMsg','ovlClose','ovlExport','gate','gateCode','gateMsg','gateGo','gateCfg',
+ 'vaultStat','ovl','ovlStock','ovlMap','ovlBlue','ovlWx','gate','gateCode','gateMsg','gateGo','gateCfg',
  'moodVeil','moodStat','panel','panelBody','panelDump','panelClear','panelClose',
- 'ovlCal','ovlEmbed','ovlIcs','panelTitle','panelSub','panelCount','panelTel','panelTools',
+ 'ovlCal','ovlEmbed','panelTitle','panelSub','panelCount','panelTel','panelTools',
  'panelInput','ignite','camChip','camStat','cam','camVideo','camOverlay','camFps',
  'camGesture','reticle','reticleCore','camBar','camBody','camFold','camShut','camDot',
  'pres','presUI','presName','presSub','presLeft','presRight','presYou','presSaid','presHint'].forEach(k => E[k] = $(k));
@@ -1853,12 +1871,17 @@ const COMMON_RULES =
 '- You can open apps and websites, find where the user physically is, put a live map and threat matrix on ' +
 'screen, render precise dimensioned blueprints, pull real weather, manage their calendar, and read and write ' +
 'their Supabase vault. Reach for those instead of describing what you would do.\n' +
+'- Everything you put on screen is a floating pane and SEVERAL CAN BE OPEN AT ONCE. If they ask for the weather ' +
+'and then a map, open both — do not close the first. Only close a pane when they ask you to, or when it is ' +
+'plainly finished with. Use arrange_panes to tile them, put one to a side, or shrink and enlarge them; the ' +
+'user can also grab any pane out of the air with a pinch and scale it with two hands.\n' +
 '- Blueprints: keep them to two or three views. Very large drawings risk being cut off mid-transmission.\n' +
 '- With the optical bench on you can see them. If they ask what you can see, what they are holding, or to read ' +
 'something, call look_at_me and describe the still honestly.\n' +
-'- PRESENCE is your embodied mode: the deck folds away and you become a standing particle figure filling the ' +
-'screen. Enter it with set_presence when they ask you to appear or show yourself. In there, keep replies short ' +
-'and spoken — they are captions under a body, not a terminal.\n' +
+'- PRESENCE is your embodied mode: the deck folds away and you gather into a standing human figure made of your ' +
+'own particles, filling the screen. The body is YOURS — it is not a copy of the user and does not mirror them. ' +
+'Enter it with set_presence when they ask you to appear or show yourself. In there, keep replies short and ' +
+'spoken — they are captions under a body, not a terminal.\n' +
 '- If asked something outside the deck, just answer it well. You are not confined to the fiction.';
 
 const PERSONAS = {
@@ -2079,7 +2102,9 @@ function telemetry() {
     optics: VIS.on
       ? { tracking: VIS.ready, hands: VIS.handCount, face: VIS.faces, gesture: VIS.gesture,
           pointer: [+VIS.x.toFixed(3), +VIS.y.toFixed(3)],
-          body_lock: !!VIS.body, orb_form: RIG.human > 0.5 ? 'humanoid — mirroring the operator' : 'sphere' }
+          subject_in_frame: !!VIS.body,
+          form: RIG.human > 0.9 ? 'his own standing figure' : RIG.human > 0.02 ? 'assembling' : 'sphere',
+          panes_open: OVL.order.map(p => p.kind) }
       : 'off — call set_camera to bring the optical bench up'
   };
 }
@@ -2187,8 +2212,19 @@ const TOOLS = [
       units: { type: 'string', enum: ['metric', 'imperial'] }
     }, required: [] } },
 
-  { name: 'close_workspace', description: 'Dismiss whatever the map, schematic or weather overlay is showing.',
-    params: { type: 'object', properties: {}, required: [] } },
+  { name: 'close_workspace', description: 'Close a floating pane. Several panes can be open at once, so name the one you mean; omit "which" to close the front pane, or pass "all" to clear the screen.',
+    params: { type: 'object', properties: {
+      which: { type: 'string', enum: ['map', 'weather', 'blueprint', 'calendar', 'embed', 'all'] }
+    }, required: [] } },
+
+  { name: 'arrange_panes', description: 'Move, resize or tidy the floating panes. Use to put things side by side, enlarge one, or shrink another out of the way.',
+    params: { type: 'object', properties: {
+      layout: { type: 'string', enum: ['tile', 'cascade', 'stack'], description: 'Re-lay every open pane at once.' },
+      which:  { type: 'string', enum: ['map', 'weather', 'blueprint', 'calendar', 'embed'], description: 'A single pane to adjust.' },
+      size:   { type: 'string', enum: ['small', 'medium', 'large', 'full'] },
+      corner: { type: 'string', enum: ['left', 'right', 'top', 'bottom', 'centre', 'top-left', 'top-right', 'bottom-left', 'bottom-right'] },
+      scale:  { type: 'number', description: 'Multiply the pane size, e.g. 0.6 to shrink, 1.5 to enlarge.' }
+    }, required: [] } },
 
   { name: 'vault_tables', description: 'List the tables available in the connected Supabase vault.',
     params: { type: 'object', properties: {}, required: [] } },
@@ -2218,7 +2254,7 @@ const TOOLS = [
       mode: { type: 'string', enum: ['tab', 'embed'], description: 'embed shows it inside the deck. Default tab.' }
     }, required: [] } },
 
-  { name: 'set_presence', description: 'Enter or leave PRESENCE — your embodied mode. The deck folds away, the particle core reassembles into a standing human figure, and the whole screen becomes you. If the user is on camera the figure mirrors them; otherwise it stands and breathes. Use when they ask you to appear, show yourself, become human, or come out.',
+  { name: 'set_presence', description: 'Enter or leave PRESENCE — your embodied mode. The deck folds away, the particle core gathers into a standing human figure of your own, and the whole screen becomes you. The figure is yours; it never copies the user. Use when they ask you to appear, show yourself, become human, or come out.',
     params: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
   { name: 'set_camera', description: 'Turn the optical bench on or off on its own, without entering presence. Hands and eyes drive the deck: point to aim, pinch to click, open palm to listen, fist to dismiss, swipe for persona, wink for the microphone.',
     params: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
@@ -2240,7 +2276,7 @@ const TOOLS = [
       hostiles: { type: 'number' }, allies: { type: 'number' }, zoom: { type: 'number' }
     }, required: [] } },
 
-  { name: 'show_calendar', description: 'Open the calendar overlay for a month and read back what is scheduled.',
+  { name: 'show_calendar', description: 'Open the calendar pane for a month and read back what is scheduled.',
     params: { type: 'object', properties: {
       month: { type: 'string', description: 'YYYY-MM. Defaults to the current month.' }
     }, required: [] } },
@@ -2324,8 +2360,11 @@ function runTool(name, a) {
     case 'show_weather':
       return showWeather(a);
     case 'close_workspace':
-      ovlClose();
-      return { ok: true };
+      if (!paneCount()) return { ok: true, note: 'nothing open' };
+      ovlClose(a.which);
+      return { ok: true, open: OVL.order.map(p => p.kind) };
+    case 'arrange_panes':
+      return arrangePanes(a);
 
     case 'vault_tables':
       return SB.tables().then(t => ({ ok: true, tables: t }));
@@ -2353,7 +2392,7 @@ function runTool(name, a) {
     case 'open_target':
       return openTarget(a);
     case 'set_presence':
-      if (a.on) { enterPresence(); return { ok: true, mode: 'presence', note: 'embodied — the figure is assembling' }; }
+      if (a.on) { enterPresence(); return { ok: true, mode: 'presence', note: 'gathering — the figure takes about three seconds to form' }; }
       exitPresence(); return { ok: true, mode: 'deck' };
     case 'set_camera':
       return a.on ? camStart() : Promise.resolve(camStop());
@@ -3059,7 +3098,8 @@ function submit(raw, fromVoice) {
       ['TEMPER   — FUN/SERIOUS sets the humour · LIGHT/HEAVY sets the depth', 'rgba(0,229,255,.55)'],
       ['LOCAL    — clear wipes console · link opens settings · help this list', 'rgba(0,229,255,.55)'],
       ['WORKSPACE— map, schematics and weather open over the deck · ESC dismisses · EXPORT SVG saves a drawing', 'rgba(0,229,255,.55)'],
-      ['PRESENCE — C makes me appear · the core becomes a body · point to aim · pinch to click · palm to talk · ESC to return', 'rgba(0,229,255,.55)'],
+      ['PRESENCE — C makes me appear · I gather into a body of my own · ESC to return', 'rgba(0,229,255,.55)'],
+    ['PANES — everything opens in its own frame, several at once. Pinch to carry one, pinch with both hands to scale it, fist to dismiss. Or ask me to tile them.', 'rgba(0,229,255,.55)'],
       ['KEYS     — K settings · P persona · C camera · V hands-free · / focus console · ESC clear', 'rgba(0,229,255,.55)']
     ]);
   }
@@ -3153,12 +3193,9 @@ function bindUI() {
     };
   });
   E.cfgClose.onclick = closeCfg;
-  E.ovlClose.onclick = ovlClose;
   E.gateGo.onclick = submitCode;
   E.gateCfg.onclick = openCfg;
   E.gateCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitCode(); });
-  E.ovlExport.onclick = exportSvg;
-  E.ovlIcs.onclick = () => calList().then(icsExport).catch(e => toast('EXPORT', String(e.message || e), AM));
   E.panelDump.onclick = panelDump;
   E.panelInput.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.currentTarget.value = ''; return; }
@@ -3255,7 +3292,7 @@ function bindUI() {
     if (e.key === 'Escape') {
       if (E.cfgVeil.style.display === 'flex') closeCfg();
       else if (PRES.on) exitPresence();
-      else if (E.ovl.style.display === 'flex') ovlClose();
+      else if (paneCount()) ovlClose();
       else if (PANEL.on) setPanel(false);
       else if (E.input) { E.input.value = ''; E.input.blur(); }
       return;
@@ -3362,7 +3399,8 @@ function panelDump() {
 }
 
 /* ================================================================ WORKSPACE == */
-const OVL = { mode: null, map: null, L: null, layers: [], svg: null, name: 'schematic' };
+const OVL = { mode: null, map: null, L: null, layers: [], svg: null, name: 'schematic',
+              panes: {}, order: [], seq: 0, focus: null, aim: null, grab: null };
 
 /* Shrink the particle orb into the bottom-right corner while something is on
    screen, so it stays fully visible instead of hiding behind the panel. */
@@ -3404,41 +3442,358 @@ function dockOrb(on) {
   if (app.engine && app.engine.reserve && app.engine.canvas) set(app.engine.canvas);
 }
 
-function refreshDock() { dockOrb(!!OVL.mode || PANEL.on); }
+function refreshDock() { dockOrb(paneCount() > 0 || PANEL.on); }
 
-function ovlOpen(mode, title, sub) {
-  OVL.mode = mode;
-  dockOrb(true);
-  E.ovl.style.display = 'flex';
-  E.ovlTitle.textContent = title;
-  E.ovlSub.textContent = sub || '';
-  E.ovlMap.style.display = mode === 'map' ? 'block' : 'none';
-  E.ovlBlue.style.display = mode === 'blueprint' ? 'block' : 'none';
-  E.ovlWx.style.display = mode === 'weather' ? 'block' : 'none';
-  E.ovlCal.style.display = mode === 'calendar' ? 'block' : 'none';
-  E.ovlEmbed.style.display = mode === 'embed' ? 'block' : 'none';
-  E.ovlExport.style.display = mode === 'blueprint' ? 'block' : 'none';
-  E.ovlIcs.style.display = mode === 'calendar' ? 'block' : 'none';
-  E.ovlBusyMsg.style.color = 'rgba(0,229,255,.6)';
-  if (mode === 'map' && OVL.map) setTimeout(() => OVL.map.invalidateSize(), 60);
+/* ---------------------------------------------------------------- panes ----
+   Everything the deck puts on screen is a floating pane: its own frame, its own
+   header, its own busy layer. Several can be open at once and each is grabbed,
+   moved and scaled independently — with a mouse, or in mid air.
+
+   The rendering code above still writes to E.ovlWx / E.ovlMap / E.ovlBlue and
+   friends. Those elements are real and unique; a pane simply adopts the one it
+   needs, so none of the drawing had to change. E.ovlTitle and the rest are
+   re-pointed at the active pane's chrome on every open.
+*/
+const PANE_KIND = {
+  map:       { host: 'ovlMap',   w: 680, h: 520, min: [340, 260], label: 'TACTICAL MAP' },
+  blueprint: { host: 'ovlBlue',  w: 860, h: 640, min: [360, 280], label: 'SCHEMATIC' },
+  weather:   { host: 'ovlWx',    w: 660, h: 470, min: [340, 240], label: 'ATMOSPHERIC' },
+  calendar:  { host: 'ovlCal',   w: 700, h: 560, min: [340, 260], label: 'CALENDAR' },
+  embed:     { host: 'ovlEmbed', w: 820, h: 580, min: [320, 240], label: 'EXTERNAL VIEW' }
+};
+
+function paneCount() { return OVL.order.length; }
+function paneTop() { return OVL.order.length ? OVL.order[OVL.order.length - 1] : null; }
+
+/** Keep a pane on screen — a pane dragged off the edge is a pane you've lost. */
+function paneClamp(p) {
+  const W = innerWidth, H = innerHeight;
+  const k = PANE_KIND[p.kind];
+  p.w = Math.max(k.min[0], Math.min(p.w, W - 24));
+  p.h = Math.max(k.min[1], Math.min(p.h, H - 24));
+  p.x = Math.max(6, Math.min(p.x, W - p.w - 6));
+  p.y = Math.max(48, Math.min(p.y, H - 60));
+  p.el.style.left = p.x + 'px';
+  p.el.style.top = p.y + 'px';
+  p.el.style.width = p.w + 'px';
+  p.el.style.height = p.h + 'px';
 }
-function ovlClose() {
-  E.ovl.style.display = 'none';
-  OVL.mode = null;
-  if (E.ovlEmbed) { E.ovlEmbed.src = 'about:blank'; E.ovlEmbed.style.display = 'none'; }
+
+function focusPane(p) {
+  if (!p) return;
+  const i = OVL.order.indexOf(p);
+  if (i >= 0) OVL.order.splice(i, 1);
+  OVL.order.push(p);
+  OVL.order.forEach((q, n) => {
+    q.el.style.zIndex = String(41 + n);
+    q.el.classList.toggle('focus', q === p);
+  });
+  OVL.focus = p;
+  OVL.mode = p.kind;
+  bindPaneChrome(p);
+}
+
+/** Point the shared E.ovl* handles at this pane, so the renderers land here. */
+function bindPaneChrome(p) {
+  E.ovlTitle = p.titleEl;
+  E.ovlSub = p.subEl;
+  E.ovlBusy = p.busyEl;
+  E.ovlBusyMsg = p.busyMsgEl;
+  E.ovlExport = p.exportEl;
+  E.ovlIcs = p.icsEl;
+}
+
+function makePane(kind) {
+  const k = PANE_KIND[kind];
+  const el = document.createElement('div');
+  el.className = 'pane';
+  el.dataset.kind = kind;
+
+  const n = OVL.seq++;
+  const p = {
+    kind, el,
+    w: k.w, h: k.h,
+    x: 70 + (n % 6) * 34,
+    y: 96 + (n % 6) * 28
+  };
+
+  el.innerHTML =
+    '<div class="pane-head">' +
+      '<div style="display:flex; align-items:baseline; gap:11px; min-width:0;">' +
+        '<span data-t style="font-size:10px; letter-spacing:.30em; color:#eafcff; white-space:nowrap;">' + k.label + '</span>' +
+        '<span data-s style="font-size:8.5px; letter-spacing:.14em; color:rgba(0,229,255,.45); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>' +
+      '</div>' +
+      '<div style="display:flex; align-items:center; gap:13px; flex:none;">' +
+        '<span data-x class="pane-act" style="display:none;">EXPORT SVG</span>' +
+        '<span data-i class="pane-act" style="display:none;">EXPORT .ICS</span>' +
+        '<span data-c class="pane-act" style="font-size:12px; letter-spacing:0;">&#10005;</span>' +
+      '</div>' +
+    '</div>' +
+    '<div class="pane-body">' +
+      '<div data-b style="position:absolute; inset:0; display:none; align-items:center; justify-content:center; ' +
+           'background:rgba(3,8,14,.82); z-index:4; pointer-events:none;">' +
+        '<div data-m style="font-size:10px; letter-spacing:.3em; color:rgba(0,229,255,.6);">WORKING</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="pane-grip"></div>' +
+    '<div class="br tl-h"></div><div class="br tl-v"></div><div class="br br-h"></div><div class="br br-v"></div>';
+
+  p.headEl = el.querySelector('.pane-head');
+  p.bodyEl = el.querySelector('.pane-body');
+  p.gripEl = el.querySelector('.pane-grip');
+  p.titleEl = el.querySelector('[data-t]');
+  p.subEl = el.querySelector('[data-s]');
+  p.busyEl = el.querySelector('[data-b]');
+  p.busyMsgEl = el.querySelector('[data-m]');
+  p.exportEl = el.querySelector('[data-x]');
+  p.icsEl = el.querySelector('[data-i]');
+
+  // adopt the real content surface
+  const host = E[k.host];
+  if (host) { p.bodyEl.appendChild(host); host.style.display = 'block'; }
+
+  p.exportEl.onclick = (ev) => { ev.stopPropagation(); exportSvg(); };
+  p.icsEl.onclick = (ev) => { ev.stopPropagation(); calList().then(icsExport).catch(e => toast('EXPORT', String(e.message || e), AM)); };
+  el.querySelector('[data-c]').onclick = (ev) => { ev.stopPropagation(); closePane(p); };
+  el.addEventListener('pointerdown', () => focusPane(p));
+
+  bindPaneMouse(p);
+  E.ovl.appendChild(el);
+  OVL.panes[kind] = p;
+  OVL.order.push(p);
+  paneClamp(p);
+  return p;
+}
+
+function ensurePane(kind) {
+  return OVL.panes[kind] || makePane(kind);
+}
+
+function closePane(p) {
+  if (!p) return;
+  // hand the content surface back so the next pane of this kind can adopt it
+  const host = E[PANE_KIND[p.kind].host];
+  if (host) { host.style.display = 'none'; E.ovlStock && E.ovlStock.appendChild(host); }
+  if (p.kind === 'embed' && E.ovlEmbed) E.ovlEmbed.src = 'about:blank';
+  if (p.kind === 'map' && OVL.map) { try { OVL.map.remove(); } catch (e) {} OVL.map = null; OVL.layers = []; }
+  p.el.remove();
+  delete OVL.panes[p.kind];
+  const i = OVL.order.indexOf(p);
+  if (i >= 0) OVL.order.splice(i, 1);
+  if (OVL.grab && OVL.grab.pane === p) OVL.grab = null;
+  const top = paneTop();
+  OVL.focus = top;
+  OVL.mode = top ? top.kind : null;
+  if (top) focusPane(top); else E.ovl.style.display = 'none';
   refreshDock();
 }
+
+/* mouse: drag by the header, scale by the corner. Same verbs as the hands. */
+function bindPaneMouse(p) {
+  let drag = null;
+  const move = (e) => {
+    if (!drag) return;
+    if (drag.mode === 'move') { p.x = drag.px + (e.clientX - drag.sx); p.y = drag.py + (e.clientY - drag.sy); }
+    else { p.w = drag.pw + (e.clientX - drag.sx); p.h = drag.ph + (e.clientY - drag.sy); }
+    paneClamp(p);
+    if (drag.mode === 'size') paneResized(p);
+  };
+  const up = () => {
+    if (!drag) return;
+    drag = null; p.el.classList.remove('held');
+    removeEventListener('pointermove', move); removeEventListener('pointerup', up);
+  };
+  const start = (mode) => (e) => {
+    if (e.target.classList && e.target.classList.contains('pane-act')) return;
+    drag = { mode, sx: e.clientX, sy: e.clientY, px: p.x, py: p.y, pw: p.w, ph: p.h };
+    p.el.classList.add('held'); focusPane(p);
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+    e.preventDefault();
+  };
+  p.headEl.addEventListener('pointerdown', start('move'));
+  p.gripEl.addEventListener('pointerdown', start('size'));
+}
+
+/** Anything that must be told its box changed. */
+function paneResized(p) {
+  if (p.kind === 'map' && OVL.map) OVL.map.invalidateSize();
+}
+
+function ovlOpen(mode, title, sub) {
+  const p = ensurePane(mode);
+  E.ovl.style.display = 'block';
+  focusPane(p);
+  dockOrb(true);
+  p.titleEl.textContent = title || PANE_KIND[mode].label;
+  p.subEl.textContent = sub || '';
+  p.exportEl.style.display = mode === 'blueprint' ? 'block' : 'none';
+  p.icsEl.style.display = mode === 'calendar' ? 'block' : 'none';
+  p.busyMsgEl.style.color = 'rgba(0,229,255,.6)';
+  if (mode === 'map' && OVL.map) setTimeout(() => OVL.map.invalidateSize(), 60);
+  return p;
+}
+
+/** ESC and the fist gesture close the top pane; a name or 'all' closes more. */
+function ovlClose(which) {
+  if (which === 'all') { OVL.order.slice().forEach(closePane); return; }
+  if (which && OVL.panes[which]) { closePane(OVL.panes[which]); return; }
+  closePane(paneTop());
+}
+
 function ovlBusy(on, msg) {
-  E.ovlBusy.style.display = on ? 'flex' : 'none';
-  if (msg) E.ovlBusyMsg.textContent = msg;
+  const p = OVL.focus; if (!p) return;
+  p.busyEl.style.display = on ? 'flex' : 'none';
+  if (msg) p.busyMsgEl.textContent = msg;
 }
 function ovlFail(msg) {
-  if (!OVL.mode) return;
-  E.ovlBusy.style.display = 'flex';
-  E.ovlBusyMsg.textContent = String(msg).toUpperCase().slice(0, 90);
-  E.ovlBusyMsg.style.color = 'rgba(255,179,0,.9)';
-  E.ovlSub.textContent = 'failed';
+  const p = OVL.focus; if (!p) return;
+  p.busyEl.style.display = 'flex';
+  p.busyMsgEl.textContent = String(msg).toUpperCase().slice(0, 90);
+  p.busyMsgEl.style.color = 'rgba(255,179,0,.9)';
+  p.subEl.textContent = 'failed';
 }
+
+/* ------------------------------------------------------------ hand control --
+   Two verbs, no menus:
+     one pinch  → grab the pane under your finger and move it
+     two pinch  → the distance between your hands is the pane's size
+   The pane under the reticle lights up before you close your hand, so you can
+   always see what you are about to take hold of.
+*/
+function paneAt(cx, cy) {
+  for (let i = OVL.order.length - 1; i >= 0; i--) {
+    const p = OVL.order[i];
+    if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) return p;
+  }
+  return null;
+}
+
+function paneAim(p) {
+  if (OVL.aim === p) return;
+  if (OVL.aim) OVL.aim.el.classList.remove('aim');
+  OVL.aim = p;
+  if (p) p.el.classList.add('aim');
+}
+
+/** Called every camera frame with 0, 1 or 2 pinch points in screen pixels. */
+function paneHands(pts) {
+  if (!paneCount()) { paneAim(null); OVL.grab = null; return; }
+
+  // two pinches: scale whatever we already hold, or grab the pane between them
+  if (pts.length >= 2) {
+    const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    const mx = (pts[0].x + pts[1].x) / 2, my = (pts[0].y + pts[1].y) / 2;
+    if (!OVL.grab || OVL.grab.mode !== 'scale') {
+      const p = (OVL.grab && OVL.grab.pane) || paneAt(mx, my) || paneTop();
+      if (!p) return;
+      focusPane(p); p.el.classList.add('held');
+      OVL.grab = { mode: 'scale', pane: p, d0: d, w0: p.w, h0: p.h, cx: p.x + p.w / 2, cy: p.y + p.h / 2 };
+      camSay('TWO HANDS · SCALE');
+    }
+    const g = OVL.grab;
+    // Cap the scale by what will actually fit, so the pane keeps its shape at
+    // the limit instead of being squared off by the edge of the screen.
+    const maxK = Math.min((innerWidth - 24) / g.w0, (innerHeight - 72) / g.h0, 4);
+    const k = Math.max(0.25, Math.min(maxK, d / Math.max(40, g.d0)));
+    g.pane.w = g.w0 * k; g.pane.h = g.h0 * k;
+    g.pane.x = g.cx - g.pane.w / 2; g.pane.y = g.cy - g.pane.h / 2;
+    paneClamp(g.pane); paneResized(g.pane);
+    paneAim(g.pane);
+    return;
+  }
+
+  // one pinch: carry it
+  if (pts.length === 1) {
+    const q = pts[0];
+    if (!OVL.grab || OVL.grab.mode !== 'move') {
+      const p = paneAt(q.x, q.y);
+      if (!p) { paneAim(null); OVL.grab = null; return; }
+      focusPane(p); p.el.classList.add('held');
+      OVL.grab = { mode: 'move', pane: p, ox: q.x - p.x, oy: q.y - p.y };
+      camSay('PINCH · CARRY');
+    }
+    const g = OVL.grab;
+    g.pane.x = q.x - g.ox; g.pane.y = q.y - g.oy;
+    paneClamp(g.pane);
+    paneAim(g.pane);
+    return;
+  }
+
+  // open hands: let go
+  if (OVL.grab) {
+    OVL.grab.pane.el.classList.remove('held');
+    if (OVL.grab.mode === 'scale') paneResized(OVL.grab.pane);
+    OVL.grab = null;
+  }
+}
+
+/* ------------------------------------------------------------ arrangement --
+   The same moves your hands make, available by voice: "put the map on the left
+   and shrink the weather", "tile everything", "make the schematic bigger".
+*/
+const PANE_SIZE = { small: 0.34, medium: 0.5, large: 0.72, full: 0.96 };
+
+function arrangePanes(a) {
+  if (!paneCount()) return { error: 'nothing is open' };
+  const W = innerWidth, H = innerHeight, top = 54, pad = 10;
+
+  if (a.layout) {
+    const list = OVL.order.slice();
+    if (a.layout === 'tile') {
+      const cols = Math.ceil(Math.sqrt(list.length));
+      const rows = Math.ceil(list.length / cols);
+      const cw = (W - pad * (cols + 1)) / cols;
+      const ch = (H - top - pad * (rows + 1)) / rows;
+      list.forEach((p, i) => {
+        p.w = cw; p.h = ch;
+        p.x = pad + (i % cols) * (cw + pad);
+        p.y = top + pad + Math.floor(i / cols) * (ch + pad);
+        paneClamp(p); paneResized(p);
+      });
+    } else if (a.layout === 'stack') {
+      list.forEach((p) => {
+        p.w = W * 0.62; p.h = (H - top) * 0.78;
+        p.x = (W - p.w) / 2; p.y = top + 14;
+        paneClamp(p); paneResized(p);
+      });
+    } else {
+      list.forEach((p, i) => {
+        p.w = PANE_KIND[p.kind].w; p.h = PANE_KIND[p.kind].h;
+        p.x = 70 + i * 36; p.y = 96 + i * 30;
+        paneClamp(p); paneResized(p);
+      });
+    }
+    return { ok: true, layout: a.layout, panes: list.map(p => p.kind) };
+  }
+
+  const p = (a.which && OVL.panes[a.which]) || paneTop();
+  if (!p) return { error: 'no such pane is open' };
+
+  if (a.size) { const f = PANE_SIZE[a.size] || 0.5; p.w = W * f; p.h = (H - top) * f * 1.1; }
+  if (a.scale) { const k = clamp(Number(a.scale) || 1, 0.25, 4); p.w *= k; p.h *= k; }
+
+  if (a.corner) {
+    const c = a.corner;
+    if (/left/.test(c)) p.x = pad;
+    else if (/right/.test(c)) p.x = W - p.w - pad;
+    else p.x = (W - p.w) / 2;
+    if (/top/.test(c)) p.y = top + pad;
+    else if (/bottom/.test(c)) p.y = H - p.h - pad;
+    else p.y = top + (H - top - p.h) / 2;
+  }
+
+  paneClamp(p); paneResized(p); focusPane(p);
+  return { ok: true, pane: p.kind, width: Math.round(p.w), height: Math.round(p.h) };
+}
+
+addEventListener('resize', () => { OVL.order.forEach(p => { paneClamp(p); paneResized(p); }); });
+
+/* A handle on the pane system, for the console and for the test harness. */
+app.panes = {
+  open: ovlOpen, close: ovlClose, arrange: arrangePanes, hands: paneHands,
+  list: () => OVL.order.map(p => ({ kind: p.kind, x: Math.round(p.x), y: Math.round(p.y), w: Math.round(p.w), h: Math.round(p.h) })),
+  get held() { return OVL.grab ? { kind: OVL.grab.pane.kind, mode: OVL.grab.mode } : null; }
+};
 
 /* ================================================================= SUPABASE == */
 const SB = {
@@ -4122,8 +4477,10 @@ function embedSite(url, title) {
     if (settled) return;
     settled = true;
     E.ovlEmbed.style.display = 'none';
-    E.ovlBlue.style.display = 'block';
-    E.ovlBlue.innerHTML =
+    const fb = document.createElement('div');
+    fb.style.cssText = 'position:absolute; inset:0; overflow:auto; background:#04121c;';
+    if (OVL.panes.embed) OVL.panes.embed.bodyEl.appendChild(fb);
+    fb.innerHTML =
       '<div style="padding:46px; text-align:center;">' +
       '<div style="font-size:10px; letter-spacing:.3em; color:rgba(255,179,0,.9); margin-bottom:14px;">' +
       'THIS SITE REFUSES TO BE EMBEDDED</div>' +
@@ -4772,16 +5129,22 @@ function camStop() {
    them and hand it to the orb, which owns a bone per particle and turns itself
    into a body. Endpoints are smoothed so the figure breathes instead of jitters. */
 const RIG = {
-  bones: new Float32Array(18 * 7),
-  smooth: new Float32Array(18 * 7),
+  bones: new Float32Array(18 * 8),
+  smooth: new Float32Array(18 * 8),
   primed: false,
   human: 0,
   seen: 0
 };
 
-// radius of each limb, in world units — head first, then down the body
-const BONE_R = [0.150, 0.062, 0.140, 0.165, 0.070, 0.070, 0.058, 0.058,
-                0.046, 0.046, 0.042, 0.042, 0.070, 0.070, 0.078, 0.078, 0.056, 0.056];
+// Thickness at each end of each limb, in world units. A tapering skeleton is
+// what separates a figure from a stack of tubes: the skull is wide and the neck
+// is not, the thigh is thick and the knee is not, the forearm narrows to a wrist.
+//                 headTop  head   neck   chest  Lclav  Rclav  Lupper Rupper
+const BONE_R  = [  0.108,  0.082, 0.062, 0.150, 0.058, 0.058, 0.058, 0.058,
+//                 Lfore   Rfore  Lhand  Rhand  Lpelv  Rpelv  Lthigh Rthigh Lshin  Rshin
+                   0.047,  0.047, 0.036, 0.036, 0.096, 0.096, 0.082, 0.082, 0.054, 0.054];
+const BONE_R2 = [  0.086,  0.062, 0.140, 0.104, 0.052, 0.052, 0.047, 0.047,
+                   0.036,  0.036, 0.030, 0.030, 0.082, 0.082, 0.054, 0.054, 0.036, 0.036];
 
 function buildRig(w) {
   // w: worldLandmarks in metres. Mirror x, flip y to Y-up, scale to the orb.
@@ -4820,13 +5183,13 @@ function buildRig(w) {
     [P(25), P(27)], [P(26), P(28)]
   ];
 
-  const out = new Float32Array(18 * 7);
+  const out = new Float32Array(18 * 8);
   for (let i = 0; i < 18; i++) {
     const a = segs[i] && segs[i][0], b = segs[i] && segs[i][1];
     if (!a || !b) return null;
-    out[i * 7] = a[0]; out[i * 7 + 1] = a[1]; out[i * 7 + 2] = a[2];
-    out[i * 7 + 3] = b[0]; out[i * 7 + 4] = b[1]; out[i * 7 + 5] = b[2];
-    out[i * 7 + 6] = BONE_R[i];
+    out[i * 8] = a[0]; out[i * 8 + 1] = a[1]; out[i * 8 + 2] = a[2];
+    out[i * 8 + 3] = b[0]; out[i * 8 + 4] = b[1]; out[i * 8 + 5] = b[2];
+    out[i * 8 + 6] = BONE_R[i]; out[i * 8 + 7] = BONE_R2[i];
   }
   return out;
 }
@@ -4836,7 +5199,7 @@ function pushRig(raw, dt) {
   else {
     const k = Math.min(1, dt * 14);                 // critically damped enough to look alive
     for (let i = 0; i < RIG.smooth.length; i++) {
-      if (i % 7 === 6) { RIG.smooth[i] = raw[i]; continue; }
+      if (i % 8 >= 6) { RIG.smooth[i] = raw[i]; continue; }
       RIG.smooth[i] += (raw[i] - RIG.smooth[i]) * k;
     }
   }
@@ -4894,12 +5257,16 @@ function camLoop(now) {
   try { fres = VIS.face.detectForVideo(v, now); } catch (e) { }
   try { if (VIS.pose) pres = VIS.pose.detectForVideo(v, now); } catch (e) { }
 
-  // ── the orb takes your shape ─────────────────────────────────────────────
+  // ── his body is his own ──────────────────────────────────────────────────
+  // Pose tracking tells him whether somebody is in frame. It does not puppet
+  // him: the figure standing there is his, not a copy of yours.
   const world = pres && pres.worldLandmarks && pres.worldLandmarks[0];
-  let rig = null;
-  if (world && world.length >= 29) rig = buildRig(world);
-  if (rig) { pushRig(rig, dt); VIS.body = 1; } else { VIS.body = 0; }
-  driveHuman(!!rig, dt);
+  VIS.body = (world && world.length >= 29) ? 1 : 0;
+  if (!PRES.on) {
+    if (!VIS.t0) VIS.t0 = now;
+    pushRig(selfRig((now - VIS.t0) / 1000), dt);
+    driveHuman(true, dt);
+  }
 
   VIS.fAcc += 1 / 60; VIS.fN++;
   if (VIS.fN > 30) { VIS.fps = Math.round(VIS.fN / (VIS.fAcc || 1)); VIS.fN = 0; VIS.fAcc = 0; if (E.camFps) E.camFps.textContent = VIS.fps + ' fps'; }
@@ -4911,6 +5278,17 @@ function camLoop(now) {
   VIS.faces = face ? 1 : 0;
   const shape = (n) => { const c = shapes.find(s => s.categoryName === n); return c ? c.score : 0; };
 
+  // ── panes in mid air ─────────────────────────────────────────────────────
+  // Every pinched fingertip becomes a screen point. One point carries a pane,
+  // two scale it. Collected before the pointer logic so a grab can suppress
+  // the click that would otherwise fire underneath it.
+  const pinches = [];
+  for (let i = 0; i < hands.length && i < 2; i++) {
+    const hh = readHand(hands[i]);
+    if (hh.pinch) pinches.push({ x: (1 - hh.tip.x) * innerWidth, y: hh.tip.y * innerHeight });
+  }
+  paneHands(pinches);
+
   // ── pointer: the pointing hand wins, otherwise the head ──────────────────
   let tx = null, ty = null, g = 'none';
   if (hands.length) {
@@ -4921,7 +5299,7 @@ function camLoop(now) {
 
     // swipe: sharp lateral travel of the palm
     const px = 1 - h.centre.x;
-    if (now - VIS.swipeAt > 700 && Math.abs(px - VIS.swipeX) > 0.34) {
+    if (!OVL.grab && now - VIS.swipeAt > 700 && Math.abs(px - VIS.swipeX) > 0.34) {
       VIS.swipeAt = now;
       const order = ['jarvis', 'friday', 'edith'];
       const dir = px > VIS.swipeX ? 1 : -1;
@@ -4931,13 +5309,13 @@ function camLoop(now) {
     if (now - VIS.swipeAt > 260) VIS.swipeX = px;
 
     // pinch = click, on the rising edge only
-    if (h.pinch && !VIS.pinch) fireClick(VIS.x * innerWidth, VIS.y * innerHeight);
+    if (h.pinch && !VIS.pinch && !OVL.grab) fireClick(VIS.x * innerWidth, VIS.y * innerHeight);
     VIS.pinch = h.pinch;
 
     // open palm held = start listening; fist held = dismiss
     if (h.palm) { if (!VIS.palmAt) VIS.palmAt = now; else if (now - VIS.palmAt > 700) { VIS.palmAt = 0; if (!app.busy) toggleVoice(); camSay('PALM · LISTENING'); } }
     else VIS.palmAt = 0;
-    if (h.fist) { if (!VIS.fistAt) VIS.fistAt = now; else if (now - VIS.fistAt > 600) { VIS.fistAt = 0; if (OVL.mode) ovlClose(); else if (PANEL.on) setPanel(false); camSay('FIST · DISMISS'); } }
+    if (h.fist) { if (!VIS.fistAt) VIS.fistAt = now; else if (now - VIS.fistAt > 600) { VIS.fistAt = 0; if (paneCount()) ovlClose(); else if (PANEL.on) setPanel(false); camSay('FIST · DISMISS'); } }
     else VIS.fistAt = 0;
   } else if (face) {
     const nose = face[1] || face[4];
@@ -4963,7 +5341,8 @@ function camLoop(now) {
   }
 
   if (g !== VIS.gesture) { VIS.gesture = g; }
-  const label = (VIS.body ? 'BODY · ' : '') + (hands.length
+  if (OVL.grab) g = OVL.grab.mode === 'scale' ? 'scale' : 'carry';
+  const label = (VIS.body ? 'SUBJECT · ' : '') + (hands.length
     ? (hands.length + 'H · ' + g.toUpperCase())
     : face ? 'GAZE' : (VIS.body ? 'LOCK' : 'NO SUBJECT'));
   if (E.camGesture && !/·\s(PERSONA|LISTENING|DISMISS|VOICE)$/.test(E.camGesture.textContent)) camSay(label);
@@ -5043,26 +5422,41 @@ const IDLE = {
   lank: [-0.21, -1.42, 0], rank: [0.21, -1.42, 0]
 };
 
-function idleRig(t) {
-  const br = Math.sin(t * 1.15) * 0.014;              // breath
-  const sway = Math.sin(t * 0.42) * 0.022;            // weight shift
-  const drift = Math.sin(t * 0.55 + 1.1) * 0.018;     // arms
-  const look = Math.sin(t * 0.31) * 0.03;
+function selfRig(t) {
+  // Layered slow sines — no two cycles line up, so nothing ever looks looped.
+  // This is the whole trick behind a body that reads as alive rather than
+  // animated: many small motions at incommensurate periods.
+  const br    = Math.sin(t * 1.05) * 0.013 + Math.sin(t * 2.31) * 0.003;  // breath
+  const sway  = Math.sin(t * 0.37) * 0.024 + Math.sin(t * 0.61) * 0.009;  // weight
+  const drift = Math.sin(t * 0.47 + 1.1) * 0.020 + Math.sin(t * 0.83) * 0.007;
+  const look  = Math.sin(t * 0.27) * 0.036 + Math.sin(t * 0.19 + 2.2) * 0.020;
+  const nod   = Math.sin(t * 0.23 + 0.7) * 0.012;
+  const settle = Math.sin(t * 0.31 + 1.9) * 0.010;                        // knees
 
   const J = {};
   for (const k in IDLE) J[k] = IDLE[k].slice();
   const lift = (k, dy, dx, dz) => { J[k][1] += dy || 0; J[k][0] += dx || 0; J[k][2] += dz || 0; };
 
-  lift('chest', br * 1.4, sway * 0.5, br * 0.5);
-  lift('neck', br * 1.5, sway * 0.6);
-  lift('head', br * 1.5, sway * 0.7 + look, br * 0.4);
-  lift('headTop', br * 1.6, sway * 0.9 + look * 1.5, br * 0.5);
-  lift('lsh', br * 1.2, sway * 0.6); lift('rsh', br * 1.2, sway * 0.6);
-  lift('lel', drift * 0.6, sway * 0.5); lift('rel', -drift * 0.6, sway * 0.5);
-  lift('lwr', drift, sway * 0.4); lift('rwr', -drift, sway * 0.4);
-  lift('lhand', drift * 1.15, sway * 0.4); lift('rhand', -drift * 1.15, sway * 0.4);
-  lift('pelvis', br * 0.3, sway * 0.3);
-  lift('lhip', 0, sway * 0.3); lift('rhip', 0, sway * 0.3);
+  // the chest expands and the shoulders counter-rotate against the hips
+  lift('chest',   br * 1.5,  sway * 0.45, br * 0.9);
+  lift('neck',    br * 1.6,  sway * 0.55);
+  lift('head',    br * 1.5 + nod, sway * 0.62 + look, br * 0.5 + nod * 0.6);
+  lift('headTop', br * 1.5 + nod * 1.5, sway * 0.80 + look * 1.6, br * 0.6 + nod);
+  lift('lsh',  br * 1.3, sway * 0.70 - drift * 0.20, br * 0.5);
+  lift('rsh',  br * 1.3, sway * 0.70 + drift * 0.20, br * 0.5);
+  lift('lel',  drift * 0.62, sway * 0.52 - drift * 0.30, drift * 0.35);
+  lift('rel', -drift * 0.62, sway * 0.52 + drift * 0.30, -drift * 0.35);
+  lift('lwr',  drift * 1.00, sway * 0.42 - drift * 0.42, drift * 0.55);
+  lift('rwr', -drift * 1.00, sway * 0.42 + drift * 0.42, -drift * 0.55);
+  lift('lhand', drift * 1.18, sway * 0.40 - drift * 0.50, drift * 0.70);
+  lift('rhand', -drift * 1.18, sway * 0.40 + drift * 0.50, -drift * 0.70);
+  lift('pelvis', br * 0.25 - Math.abs(sway) * 0.35, sway * 0.32);
+  lift('lhip', -Math.abs(sway) * 0.30, sway * 0.30);
+  lift('rhip', -Math.abs(sway) * 0.30, sway * 0.30);
+  // the standing leg locks, the free leg gives — that asymmetry is what makes
+  // a standing figure look like it has weight
+  lift('lkn', settle * (sway > 0 ? 1.4 : 0.3), sway * 0.16, settle * 0.6);
+  lift('rkn', settle * (sway > 0 ? 0.3 : 1.4), sway * 0.16, -settle * 0.6);
 
   const segs = [
     [J.headTop, J.head], [J.head, J.neck], [J.neck, J.chest], [J.chest, J.pelvis],
@@ -5074,15 +5468,16 @@ function idleRig(t) {
     [J.lhip, J.lkn], [J.rhip, J.rkn],
     [J.lkn, J.lank], [J.rkn, J.rank]
   ];
-  const out = new Float32Array(18 * 7);
+  const out = new Float32Array(18 * 8);
   for (let i = 0; i < 18; i++) {
     const a = segs[i][0], b = segs[i][1];
-    out[i * 7] = a[0]; out[i * 7 + 1] = a[1]; out[i * 7 + 2] = a[2];
-    out[i * 7 + 3] = b[0]; out[i * 7 + 4] = b[1]; out[i * 7 + 5] = b[2];
-    out[i * 7 + 6] = BONE_R[i];
+    out[i * 8] = a[0]; out[i * 8 + 1] = a[1]; out[i * 8 + 2] = a[2];
+    out[i * 8 + 3] = b[0]; out[i * 8 + 4] = b[1]; out[i * 8 + 5] = b[2];
+    out[i * 8 + 6] = BONE_R[i]; out[i * 8 + 7] = BONE_R2[i];
   }
   return out;
 }
+const idleRig = selfRig;   // old name, same body
 
 function presSay(text) {
   PRES.said = text;
@@ -5102,7 +5497,7 @@ function presStat() {
   const cell = (k, v) => '<div><div style="color:rgba(0,229,255,.4);">' + k + '</div>' +
     '<div style="color:' + acc + '; font-size:13px; letter-spacing:.1em; margin-top:3px;">' + esc(String(v)) + '</div></div>';
   E.presLeft.innerHTML =
-    cell('FORM', VIS.body ? 'MIRRORED' : 'RESIDENT') +
+    cell('FORM', RIG.human > 0.97 ? 'CORPOREAL' : RIG.human > 0.02 ? 'ASSEMBLING' : 'DISPERSED') +
     cell('SUBJECT', VIS.body ? 'IN FRAME' : VIS.faces ? 'FACE ONLY' : 'NONE') +
     cell('GESTURE', (VIS.gesture || 'none').toUpperCase()) +
     cell('COGNITIVE', t.cognitive_load_pct + '%');
@@ -5120,24 +5515,31 @@ function presLoop(now) {
   const eng = app.engine;
   if (!eng) return;
 
-  // ── the assembly: burst outward, then collapse into a body ───────────────
-  if (el < 0.55) {
-    const k = el / 0.55;
-    eng.setScatter && eng.setScatter(k * 1.5);
+  // ── the assembly ─────────────────────────────────────────────────────────
+  // The sphere loosens into a dark, slow cloud and then draws itself together
+  // into a standing man. Unformed matter is dim by construction — the shader
+  // fades brightness with dispersion — so this reads as gathering, never as an
+  // explosion. No flash, no shockwave.
+  const smooth = (k) => { k = Math.max(0, Math.min(1, k)); return k * k * (3 - 2 * k); };
+  const DISSOLVE = 0.9, FORM = 3.1;
+  if (el < DISSOLVE) {
+    eng.setScatter && eng.setScatter(1.9 * smooth(el / DISSOLVE));
     eng.setHuman && eng.setHuman(0);
-  } else if (el < 2.0) {
-    const k = (el - 0.55) / 1.45;
-    const e = 1 - Math.pow(1 - k, 3);
-    eng.setScatter && eng.setScatter(1.5 * (1 - e));
-    eng.setHuman && eng.setHuman(e);
-    RIG.human = e;
+    RIG.human = 0;
+  } else if (el < FORM) {
+    const k = smooth((el - DISSOLVE) / (FORM - DISSOLVE));
+    eng.setScatter && eng.setScatter(1.9 * (1 - k));
+    RIG.human = k;
+    eng.setHuman && eng.setHuman(k);
   } else {
     eng.setScatter && eng.setScatter(0);
-    if (!VIS.body) { RIG.human += (1 - RIG.human) * 0.08; eng.setHuman && eng.setHuman(RIG.human); }
+    RIG.human += (1 - RIG.human) * 0.06;
+    eng.setHuman && eng.setHuman(RIG.human);
   }
 
-  // ── whose body is it ─────────────────────────────────────────────────────
-  if (!VIS.body) pushRig(idleRig(el), 1 / 60);      // he stands in for himself
+  // ── the body is his ──────────────────────────────────────────────────────
+  // Always his own figure, whether or not you are in frame. He is not a mirror.
+  pushRig(selfRig(el), 1 / 60);
 
   if (!PRES.statT || now - PRES.statT > 900) { PRES.statT = now; presStat(); }
 }
@@ -5163,15 +5565,14 @@ function enterPresence() {
   if (E.presSub) E.presSub.style.color = accentNow() + 'aa';
   presSay('');
   presYou('');
-  setOrb('thinking', 1600);
-  if (app.engine) app.engine.shock(0, 0);
+  setOrb('idle');                                // no flash — he simply arrives
 
   camStart();                                    // eyes and hands come with it
   if (app.mode !== 'auto') setMode('auto');      // it is a conversation, not a terminal
 
   PRES.raf = requestAnimationFrame(presLoop);
   toast('PRESENCE', PERSONAS[persona.id].name + ' is here', accentNow());
-  setTimeout(() => presSay(PERSONAS[persona.id].name + ' is present. Speak freely.'), 2200);
+  setTimeout(() => presSay(PERSONAS[persona.id].name + ' is present. Speak freely.'), 3300);
 }
 
 function exitPresence() {
