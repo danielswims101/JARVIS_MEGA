@@ -1231,7 +1231,11 @@ const PRESET = {
   units:           'imperial',         // 'imperial' = degrees F / mph, 'metric' = C / km/h
   camera:          false,              // start with the optical bench live (C toggles it)
   speechHold:      2000,               // ms of silence before a spoken sentence is sent
-  gestureSensitivity: 1,               // repulsors: >1 fires more easily, <1 needs a harder move               // ms of silence before a spoken sentence is sent
+
+  repulsors:       false,              // hand-fired effects. OFF — they fired on ordinary
+                                       // hand movement and buried the deck. F, G and B
+                                       // still fire from the keyboard either way.
+  gestureSensitivity: 1,               // if you turn repulsors on: >1 fires more easily
   codeHeader:      'x-access-code',    // header carrying the code. Your function must
                                        // allow it in access-control-allow-headers, or
                                        // set this to '' to send no custom header.
@@ -3130,6 +3134,8 @@ const VP = () => ({ x: FX.w * 0.5, y: FX.h * 0.42 });   // where the world reced
 
 function fxStart() {
   if (!E.fx) return;
+  // Nothing may ever flood the frame again.
+  while (FX.items.length > 14) FX.items.shift();
   E.fx.style.display = 'block';
   if (!FX.raf) { FX.last = performance.now(); FX.raf = requestAnimationFrame(fxLoop); }
 }
@@ -3336,16 +3342,15 @@ function fxLoop(now) {
 
   ctx.globalCompositeOperation = 'source-over';
 
-  // recoil — the deck itself takes the hit
-  if (FX.shake > 0.2) {
-    FX.shake *= Math.pow(0.02, dt);
-    const d = document.getElementById('deck');
-    if (d) d.style.transform = 'translate(' + (Math.random() - 0.5) * FX.shake +
-      'px,' + (Math.random() - 0.5) * FX.shake + 'px)';
-  } else if (FX.shake) {
+  // Recoil used to write a transform onto #deck itself. With effects firing
+  // continuously that left the entire interface permanently jittering, and a
+  // transformed root changes how fixed children position themselves. The value
+  // is still tracked for the tests, but nothing on the page is moved by it.
+  if (FX.shake > 0.2) FX.shake *= Math.pow(0.02, dt);
+  else if (FX.shake) {
     FX.shake = 0;
     const d = document.getElementById('deck');
-    if (d) d.style.transform = '';
+    if (d && d.style.transform) d.style.transform = '';   // clear any left over
   }
 
   if (!FX.items.length && !FX.shake) {
@@ -3373,6 +3378,10 @@ function gauntThresholds() {
 }
 
 function gauntlet(h, now) {
+  // Gesture firing is opt-in. It fired on ordinary hand movement, buried the
+  // deck under effects and shook the whole interface continuously, which made
+  // everything else look broken. Off unless PRESET.repulsors is true.
+  if (!PRESET.repulsors) return;
   if (!GAUNT.armed || OVL.grab) return;                 // never while carrying a pane
 
   const span = dist(h.centre, h.tip) + 0.0001;
@@ -3483,6 +3492,8 @@ app.fx = {
   get items() { return FX.items.map(i => i.kind); },
   get shake() { return FX.shake; },
   get meters() { return { sweep: GAUNT.sweep, push: GAUNT.push, thresholds: gauntThresholds() }; },
+  arm(on) { PRESET.repulsors = on !== false; return PRESET.repulsors; },
+  get armed() { return !!PRESET.repulsors; },
   sensitivity(x) {
     if (x != null) { PRESET.gestureSensitivity = x; gauntMeter(); }
     return PRESET.gestureSensitivity || 1;
