@@ -74,6 +74,15 @@
   .btn:hover { background:rgba(0,229,255,.22); border-color:rgba(0,229,255,.8); box-shadow:0 0 22px rgba(0,229,255,.2); }
   .btn.ghost { background:transparent; border-color:rgba(0,229,255,.22); color:rgba(150,215,235,.7); }
   .btn.ghost:hover { border-color:rgba(0,229,255,.5); color:#cfeeff; box-shadow:none; }
+
+  /* PRESENCE takes the screen: one class folds the whole deck away and back,
+     rather than mutating a dozen inline styles and hoping each one clears. */
+  #deck > div { transition:opacity .5s ease, filter .6s ease, transform .7s cubic-bezier(.16,1,.3,1); }
+  #deck.presence > div { opacity:0; filter:blur(9px); transform:scale(1.03); pointer-events:none; }
+  #deck.presence > #pres, #deck.presence > #presUI, #deck.presence > #cam,
+  #deck.presence > #reticle, #deck.presence > #toasts, #deck.presence > #cfgVeil,
+  #deck.presence > #gate { opacity:1; filter:none; transform:none; pointer-events:auto; }
+  #deck.presence > #toasts, #deck.presence > #reticle { pointer-events:none; }
 </style>
 </head>
 <body>
@@ -109,8 +118,8 @@
         <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">VAULT</div>
         <div id="vaultStat" style="color:rgba(150,215,235,.45);">NO VAULT</div>
       </div>
-      <div id="camChip" title="Optical bench — hands and eyes (C)" style="display:flex; flex-direction:column; gap:2px; cursor:pointer; border:1px solid rgba(0,229,255,.24); padding:4px 10px; transition:all .45s cubic-bezier(.16,1,.3,1);">
-        <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">OPTICS</div>
+      <div id="camChip" title="PRESENCE — he appears (C)" style="display:flex; flex-direction:column; gap:2px; cursor:pointer; border:1px solid rgba(0,229,255,.24); padding:4px 10px; transition:all .45s cubic-bezier(.16,1,.3,1);">
+        <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">PRESENCE</div>
         <div id="camStat" style="color:rgba(150,215,235,.45);">OFF</div>
       </div>
       <div id="personaChip" title="Cycle persona (P)" style="display:flex; flex-direction:column; gap:2px; cursor:pointer; border:1px solid rgba(0,229,255,.24); padding:4px 10px; transition:all .45s cubic-bezier(.16,1,.3,1);">
@@ -479,7 +488,7 @@
   </div>
 
   <!-- ========================================================== OPTICAL BENCH -->
-  <div id="cam" style="position:absolute; right:18px; top:68px; width:178px; z-index:47; display:none;
+  <div id="cam" style="position:absolute; right:18px; bottom:18px; width:158px; z-index:58; display:none;
        border:1px solid rgba(0,229,255,.30); background:rgba(2,6,10,.92); box-shadow:0 0 26px rgba(0,0,0,.55);
        opacity:.62; transition:opacity .3s ease;"
        onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity=this.dataset.pin==='1'?'1':'.62'">
@@ -506,6 +515,41 @@
     <div style="position:absolute; left:50%; bottom:-9px; width:1px; height:7px; background:currentColor;"></div>
     <div style="position:absolute; top:50%; left:-9px; height:1px; width:7px; background:currentColor;"></div>
     <div style="position:absolute; top:50%; right:-9px; height:1px; width:7px; background:currentColor;"></div>
+  </div>
+
+  <!-- ============================================================== PRESENCE -->
+  <div id="pres" style="position:absolute; inset:0; z-index:54; display:none; opacity:0;
+       transition:opacity .8s ease; background:radial-gradient(ellipse at 50% 55%, rgba(3,7,12,.86) 0%, rgba(1,3,6,.97) 62%, #010204 100%);"></div>
+
+  <div id="presUI" style="position:absolute; inset:0; z-index:57; display:none; opacity:0; pointer-events:none;
+       transition:opacity .8s ease; font-family:'JetBrains Mono', monospace;">
+    <!-- masthead -->
+    <div style="position:absolute; left:0; right:0; top:34px; text-align:center;">
+      <div id="presName" style="font-size:30px; letter-spacing:.62em; color:#eafcff; text-indent:.62em;">JARVIS</div>
+      <div id="presSub" style="font-size:9px; letter-spacing:.44em; color:rgba(0,229,255,.55); margin-top:9px;">PRESENCE · EMBODIED</div>
+      <div style="width:210px; height:1px; margin:14px auto 0; background:linear-gradient(90deg,transparent,rgba(0,229,255,.5),transparent); animation:hairline 4s ease-in-out infinite;"></div>
+    </div>
+
+    <!-- left instrument column -->
+    <div id="presLeft" style="position:absolute; left:34px; top:50%; transform:translateY(-50%);
+         display:flex; flex-direction:column; gap:16px; font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.5);"></div>
+
+    <!-- right instrument column -->
+    <div id="presRight" style="position:absolute; right:34px; top:50%; transform:translateY(-50%); text-align:right;
+         display:flex; flex-direction:column; gap:16px; font-size:9px; letter-spacing:.2em; color:rgba(0,229,255,.5);"></div>
+
+    <!-- captions -->
+    <div style="position:absolute; left:0; right:0; bottom:104px; display:flex; flex-direction:column; align-items:center; gap:10px; padding:0 12vw;">
+      <div id="presYou" style="font-size:12px; letter-spacing:.2em; color:rgba(255,210,128,.85); min-height:15px; text-align:center; opacity:0; transition:opacity .4s ease;"></div>
+      <div id="presSaid" style="font-size:19px; line-height:1.55; letter-spacing:.03em; color:#dff6ff; text-align:center; max-width:900px; text-wrap:pretty; min-height:30px;"></div>
+    </div>
+
+    <!-- footer -->
+    <div style="position:absolute; left:0; right:0; bottom:34px; text-align:center;">
+      <div id="presHint" style="font-size:8.5px; letter-spacing:.32em; color:rgba(0,229,255,.35);">
+        POINT TO AIM · PINCH TO SELECT · PALM TO SPEAK · FIST TO DISMISS · C OR ESC TO RETURN
+      </div>
+    </div>
   </div>
 
   <canvas id="ignite" style="position:absolute; inset:0; width:100%; height:100%; z-index:85; display:none; pointer-events:none;"></canvas>
@@ -628,7 +672,7 @@ vec3 curl(vec3 p, float t){
 const VERT = NOISE + `
 attribute vec3 aDir;
 attribute float aRad, aRand, aLayer, aSize, aSeed, aSeg, aBt;
-uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark, uVH, uHuman;
+uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark, uVH, uHuman, uScatter;
 uniform vec3 uBoneA[18];
 uniform vec3 uBoneB[18];
 uniform float uBoneR[18];
@@ -733,13 +777,20 @@ void main(){
     scanBand = human * (1.0 - smoothstep(0.0, 0.10, abs(pos.y - sweep)));
   }
 
+  // --- assembly burst -------------------------------------------------------
+  if (uScatter > 0.001) {
+    float turbOut = snoise(aDir * 3.1 + vec3(t * 0.9)) * 0.5 + 0.5;
+    pos += normalize(pos + 1e-5) * uScatter * (1.1 + aRand * 2.3) * (0.4 + turbOut);
+    pos += vec3(snoise(aDir * 5.0 + t), snoise(aDir * 5.0 - t), snoise(aDir * 5.0 + 3.1)) * uScatter * 0.55;
+  }
+
   // --- boot explosion -------------------------------------------------------
   pos = mix(pos * 0.02, pos, uBoot);
 
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   gl_Position = projectionMatrix * mv;
 
-  float energy = clamp(abs(nsum)*0.62 + amp*wSpeak*1.3 + shock*0.85 + exp(-(aRad-0.30)*2.9)*1.30*(1.0-uHuman) + rim*0.55 + scanBand*1.25, 0.0, 1.9);
+  float energy = clamp(abs(nsum)*0.62 + amp*wSpeak*1.3 + shock*0.85 + exp(-(aRad-0.30)*2.9)*1.30*(1.0-uHuman) + rim*0.55 + scanBand*1.25 + uScatter*0.85, 0.0, 2.2);
 
   vec3 cyan  = vec3(0.00, 0.86, 1.00);
   vec3 blue  = vec3(0.04, 0.42, 1.00);
@@ -913,6 +964,7 @@ function init(canvas, opts = {}) {
     uDark: { value: 0 },
     uVH: { value: 1 },
     uHuman: { value: 0 },
+    uScatter: { value: 0 },
     uBoneA: { value: Array.from({ length: 18 }, () => new THREE.Vector3()) },
     uBoneB: { value: Array.from({ length: 18 }, () => new THREE.Vector3()) },
     uBoneR: { value: new Array(18).fill(0.06) }
@@ -1083,6 +1135,7 @@ function init(canvas, opts = {}) {
       }
     },
     setHuman(w) { uniforms.uHuman.value = Math.max(0, Math.min(1, w)); },
+    setScatter(w) { uniforms.uScatter.value = Math.max(0, w); },
     get human() { return uniforms.uHuman.value; },
     setMood(r, g, b, amt, dark) {
       uniforms.uMood.value.set(r, g, b);
@@ -1164,7 +1217,8 @@ const E = {};
  'moodVeil','moodStat','panel','panelBody','panelDump','panelClear','panelClose',
  'ovlCal','ovlEmbed','ovlIcs','panelTitle','panelSub','panelCount','panelTel','panelTools',
  'panelInput','ignite','camChip','camStat','cam','camVideo','camOverlay','camFps',
- 'camGesture','reticle','reticleCore','camBar','camBody','camFold','camShut','camDot'].forEach(k => E[k] = $(k));
+ 'camGesture','reticle','reticleCore','camBar','camBody','camFold','camShut','camDot',
+ 'pres','presUI','presName','presSub','presLeft','presRight','presYou','presSaid','presHint'].forEach(k => E[k] = $(k));
 
 /* ============================================================== SIMULATION === */
 const sim = (function build() {
@@ -1802,8 +1856,9 @@ const COMMON_RULES =
 '- Blueprints: keep them to two or three views. Very large drawings risk being cut off mid-transmission.\n' +
 '- With the optical bench on you can see them. If they ask what you can see, what they are holding, or to read ' +
 'something, call look_at_me and describe the still honestly.\n' +
-'- While the bench has a body lock the orb stops being a sphere and becomes a particle figure mirroring them. ' +
-'You may remark on it, briefly, the first time.\n' +
+'- PRESENCE is your embodied mode: the deck folds away and you become a standing particle figure filling the ' +
+'screen. Enter it with set_presence when they ask you to appear or show yourself. In there, keep replies short ' +
+'and spoken — they are captions under a body, not a terminal.\n' +
 '- If asked something outside the deck, just answer it well. You are not confined to the fiction.';
 
 const PERSONAS = {
@@ -2020,6 +2075,7 @@ function telemetry() {
     persona: PERSONAS[persona.id].name,
     temper: { humor: persona.humor, depth: persona.depth },
     voice: EL.on ? 'ELEVENLABS · ' + EL.model : 'BROWSER SPEECH',
+    mode: PRES.on ? 'PRESENCE — embodied, full screen' : 'deck',
     optics: VIS.on
       ? { tracking: VIS.ready, hands: VIS.handCount, face: VIS.faces, gesture: VIS.gesture,
           pointer: [+VIS.x.toFixed(3), +VIS.y.toFixed(3)],
@@ -2162,7 +2218,9 @@ const TOOLS = [
       mode: { type: 'string', enum: ['tab', 'embed'], description: 'embed shows it inside the deck. Default tab.' }
     }, required: [] } },
 
-  { name: 'set_camera', description: 'Turn the optical bench on or off. With it on, the user drives the deck with their hands and eyes: point to aim, pinch to click, open palm to start listening, fist to dismiss, swipe to change persona, wink to toggle the microphone.',
+  { name: 'set_presence', description: 'Enter or leave PRESENCE — your embodied mode. The deck folds away, the particle core reassembles into a standing human figure, and the whole screen becomes you. If the user is on camera the figure mirrors them; otherwise it stands and breathes. Use when they ask you to appear, show yourself, become human, or come out.',
+    params: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
+  { name: 'set_camera', description: 'Turn the optical bench on or off on its own, without entering presence. Hands and eyes drive the deck: point to aim, pinch to click, open palm to listen, fist to dismiss, swipe for persona, wink for the microphone.',
     params: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
   { name: 'look_at_me', description: 'Take a still from the camera and actually look at it. Use when the user asks what you can see, what they are holding, how something looks, or to read something they hold up. Turns the camera on first if it is off.',
     params: { type: 'object', properties: {
@@ -2294,6 +2352,9 @@ function runTool(name, a) {
 
     case 'open_target':
       return openTarget(a);
+    case 'set_presence':
+      if (a.on) { enterPresence(); return { ok: true, mode: 'presence', note: 'embodied — the figure is assembling' }; }
+      exitPresence(); return { ok: true, mode: 'deck' };
     case 'set_camera':
       return a.on ? camStart() : Promise.resolve(camStop());
     case 'look_at_me': {
@@ -2555,6 +2616,7 @@ async function converse(userText) {
           row = printRow('', '#cfeeff');
         }
         if (row) { row.textContent += chunk; E.console.scrollTop = E.console.scrollHeight; }
+        if (PRES.on) presSay(row ? row.textContent : chunk);
       };
 
       const t0 = performance.now();
@@ -2946,6 +3008,7 @@ function flushVoice() {
   if (app.rec && app.recActive) { try { app.rec.stop(); } catch (e) { } }
 
   if (E.transcript) E.transcript.textContent = '“' + said + '”';
+  if (PRES.on) { presYou(said); presSay(''); }
   setVoiceUI('thinking');
   printRow('🎙 ' + said, '#ffd280');
   submit(said, true);
@@ -2996,7 +3059,7 @@ function submit(raw, fromVoice) {
       ['TEMPER   — FUN/SERIOUS sets the humour · LIGHT/HEAVY sets the depth', 'rgba(0,229,255,.55)'],
       ['LOCAL    — clear wipes console · link opens settings · help this list', 'rgba(0,229,255,.55)'],
       ['WORKSPACE— map, schematics and weather open over the deck · ESC dismisses · EXPORT SVG saves a drawing', 'rgba(0,229,255,.55)'],
-      ['OPTICS   — C opens the bench · point to aim · pinch to click · palm to talk · fist to dismiss · swipe for persona · wink for mic', 'rgba(0,229,255,.55)'],
+      ['PRESENCE — C makes me appear · the core becomes a body · point to aim · pinch to click · palm to talk · ESC to return', 'rgba(0,229,255,.55)'],
       ['KEYS     — K settings · P persona · C camera · V hands-free · / focus console · ESC clear', 'rgba(0,229,255,.55)']
     ]);
   }
@@ -3070,7 +3133,7 @@ function bindUI() {
   E.mManual.onclick = () => setMode('manual');
   E.voiceBtn.onclick = toggleVoice;
   E.brainChip.onclick = openCfg;
-  E.camChip.onclick = () => { VIS.on ? camStop() : camStart(); };
+  E.camChip.onclick = togglePresence;
   bindBench();
   E.personaChip.onclick = () => {
     const order = ['jarvis', 'friday', 'edith'];
@@ -3191,6 +3254,7 @@ function bindUI() {
     const editing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
     if (e.key === 'Escape') {
       if (E.cfgVeil.style.display === 'flex') closeCfg();
+      else if (PRES.on) exitPresence();
       else if (E.ovl.style.display === 'flex') ovlClose();
       else if (PANEL.on) setPanel(false);
       else if (E.input) { E.input.value = ''; E.input.blur(); }
@@ -3200,7 +3264,7 @@ function bindUI() {
     if (e.key === '/') { e.preventDefault(); E.input && E.input.focus(); }
     else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); toggleVoice(); }
     else if (e.key === 'k' || e.key === 'K') { e.preventDefault(); openCfg(); }
-    else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); VIS.on ? camStop() : camStart(); }
+    else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); togglePresence(); }
     else if (e.key === 'p' || e.key === 'P') {
       e.preventDefault();
       const order = ['jarvis', 'friday', 'edith'];
@@ -4592,7 +4656,7 @@ function camRestore() {
 function bindBench() {
   if (!E.camBar) return;
   E.camFold.onclick = (e) => { e.stopPropagation(); camFold(!VIS.folded); };
-  E.camShut.onclick = (e) => { e.stopPropagation(); camStop(); };
+  E.camShut.onclick = (e) => { e.stopPropagation(); PRES.on ? exitPresence() : camStop(); };
 
   let dragging = false, ox = 0, oy = 0;
   E.camBar.addEventListener('pointerdown', (e) => {
@@ -4959,6 +5023,191 @@ function camSnapshot() {
   cx.drawImage(v, 0, 0, cv.width, cv.height);
   return cv.toDataURL('image/jpeg', 0.72).split(',')[1];
 }
+
+/* =============================================================== PRESENCE ===
+   C hands the whole screen over. The deck folds away, the sphere blows apart and
+   reassembles as a standing figure, and the interface becomes him. If you are in
+   frame he mirrors you; if not, he stands there and breathes. */
+const PRES = { on: false, phase: 0, t0: 0, raf: 0, said: '', caption: '' };
+
+/* A standing figure, in world units, hips at the origin. Used whenever the
+   camera has no body to copy — so he is always embodied in here, never a ball. */
+const IDLE = {
+  pelvis: [0, 0, 0], lhip: [-0.175, -0.03, 0], rhip: [0.175, -0.03, 0],
+  chest: [0, 0.57, 0.01], neck: [0, 0.84, 0], head: [0, 1.00, 0.01], headTop: [0, 1.28, 0.01],
+  lsh: [-0.30, 0.81, 0], rsh: [0.30, 0.81, 0],
+  lel: [-0.46, 0.40, 0.03], rel: [0.46, 0.40, 0.03],
+  lwr: [-0.54, 0.02, 0.07], rwr: [0.54, 0.02, 0.07],
+  lhand: [-0.57, -0.10, 0.09], rhand: [0.57, -0.10, 0.09],
+  lkn: [-0.20, -0.74, 0.02], rkn: [0.20, -0.74, 0.02],
+  lank: [-0.21, -1.42, 0], rank: [0.21, -1.42, 0]
+};
+
+function idleRig(t) {
+  const br = Math.sin(t * 1.15) * 0.014;              // breath
+  const sway = Math.sin(t * 0.42) * 0.022;            // weight shift
+  const drift = Math.sin(t * 0.55 + 1.1) * 0.018;     // arms
+  const look = Math.sin(t * 0.31) * 0.03;
+
+  const J = {};
+  for (const k in IDLE) J[k] = IDLE[k].slice();
+  const lift = (k, dy, dx, dz) => { J[k][1] += dy || 0; J[k][0] += dx || 0; J[k][2] += dz || 0; };
+
+  lift('chest', br * 1.4, sway * 0.5, br * 0.5);
+  lift('neck', br * 1.5, sway * 0.6);
+  lift('head', br * 1.5, sway * 0.7 + look, br * 0.4);
+  lift('headTop', br * 1.6, sway * 0.9 + look * 1.5, br * 0.5);
+  lift('lsh', br * 1.2, sway * 0.6); lift('rsh', br * 1.2, sway * 0.6);
+  lift('lel', drift * 0.6, sway * 0.5); lift('rel', -drift * 0.6, sway * 0.5);
+  lift('lwr', drift, sway * 0.4); lift('rwr', -drift, sway * 0.4);
+  lift('lhand', drift * 1.15, sway * 0.4); lift('rhand', -drift * 1.15, sway * 0.4);
+  lift('pelvis', br * 0.3, sway * 0.3);
+  lift('lhip', 0, sway * 0.3); lift('rhip', 0, sway * 0.3);
+
+  const segs = [
+    [J.headTop, J.head], [J.head, J.neck], [J.neck, J.chest], [J.chest, J.pelvis],
+    [J.neck, J.lsh], [J.neck, J.rsh],
+    [J.lsh, J.lel], [J.rsh, J.rel],
+    [J.lel, J.lwr], [J.rel, J.rwr],
+    [J.lwr, J.lhand], [J.rwr, J.rhand],
+    [J.pelvis, J.lhip], [J.pelvis, J.rhip],
+    [J.lhip, J.lkn], [J.rhip, J.rkn],
+    [J.lkn, J.lank], [J.rkn, J.rank]
+  ];
+  const out = new Float32Array(18 * 7);
+  for (let i = 0; i < 18; i++) {
+    const a = segs[i][0], b = segs[i][1];
+    out[i * 7] = a[0]; out[i * 7 + 1] = a[1]; out[i * 7 + 2] = a[2];
+    out[i * 7 + 3] = b[0]; out[i * 7 + 4] = b[1]; out[i * 7 + 5] = b[2];
+    out[i * 7 + 6] = BONE_R[i];
+  }
+  return out;
+}
+
+function presSay(text) {
+  PRES.said = text;
+  if (E.presSaid) E.presSaid.textContent = text;
+}
+function presYou(text) {
+  if (!E.presYou) return;
+  E.presYou.textContent = text ? '“' + text + '”' : '';
+  E.presYou.style.opacity = text ? '1' : '0';
+  clearTimeout(PRES.youT);
+  if (text) PRES.youT = setTimeout(() => { E.presYou.style.opacity = '0'; }, 6000);
+}
+
+function presStat() {
+  if (!PRES.on || !E.presLeft) return;
+  const acc = accentNow(), t = telemetry();
+  const cell = (k, v) => '<div><div style="color:rgba(0,229,255,.4);">' + k + '</div>' +
+    '<div style="color:' + acc + '; font-size:13px; letter-spacing:.1em; margin-top:3px;">' + esc(String(v)) + '</div></div>';
+  E.presLeft.innerHTML =
+    cell('FORM', VIS.body ? 'MIRRORED' : 'RESIDENT') +
+    cell('SUBJECT', VIS.body ? 'IN FRAME' : VIS.faces ? 'FACE ONLY' : 'NONE') +
+    cell('GESTURE', (VIS.gesture || 'none').toUpperCase()) +
+    cell('COGNITIVE', t.cognitive_load_pct + '%');
+  E.presRight.innerHTML =
+    cell('MODEL', link.model.replace('claude-', '')) +
+    cell('VOICE', EL.on ? 'ELEVENLABS' : 'BROWSER') +
+    cell('TEMPER', mood().name) +
+    cell('UPTIME', t.uptime_s + 's');
+}
+
+function presLoop(now) {
+  if (!PRES.on) return;
+  PRES.raf = requestAnimationFrame(presLoop);
+  const el = (now - PRES.t0) / 1000;
+  const eng = app.engine;
+  if (!eng) return;
+
+  // ── the assembly: burst outward, then collapse into a body ───────────────
+  if (el < 0.55) {
+    const k = el / 0.55;
+    eng.setScatter && eng.setScatter(k * 1.5);
+    eng.setHuman && eng.setHuman(0);
+  } else if (el < 2.0) {
+    const k = (el - 0.55) / 1.45;
+    const e = 1 - Math.pow(1 - k, 3);
+    eng.setScatter && eng.setScatter(1.5 * (1 - e));
+    eng.setHuman && eng.setHuman(e);
+    RIG.human = e;
+  } else {
+    eng.setScatter && eng.setScatter(0);
+    if (!VIS.body) { RIG.human += (1 - RIG.human) * 0.08; eng.setHuman && eng.setHuman(RIG.human); }
+  }
+
+  // ── whose body is it ─────────────────────────────────────────────────────
+  if (!VIS.body) pushRig(idleRig(el), 1 / 60);      // he stands in for himself
+
+  if (!PRES.statT || now - PRES.statT > 900) { PRES.statT = now; presStat(); }
+}
+
+function enterPresence() {
+  if (PRES.on) return;
+  PRES.on = true;
+  PRES.t0 = performance.now();
+
+  // the deck steps back — one class, nothing to unwind
+  document.getElementById('deck').classList.add('presence');
+
+  E.pres.style.display = 'block';
+  E.presUI.style.display = 'block';
+  requestAnimationFrame(() => { E.pres.style.opacity = '1'; E.presUI.style.opacity = '1'; });
+
+  // orb comes forward, full screen, above the backdrop
+  dockOrb(false);
+  E.orb.style.zIndex = '55';
+  E.orb.style.opacity = '1';
+
+  if (E.presName) { E.presName.textContent = PERSONAS[persona.id].name; E.presName.style.textShadow = '0 0 26px ' + accentNow() + '77'; }
+  if (E.presSub) E.presSub.style.color = accentNow() + 'aa';
+  presSay('');
+  presYou('');
+  setOrb('thinking', 1600);
+  if (app.engine) app.engine.shock(0, 0);
+
+  camStart();                                    // eyes and hands come with it
+  if (app.mode !== 'auto') setMode('auto');      // it is a conversation, not a terminal
+
+  PRES.raf = requestAnimationFrame(presLoop);
+  toast('PRESENCE', PERSONAS[persona.id].name + ' is here', accentNow());
+  setTimeout(() => presSay(PERSONAS[persona.id].name + ' is present. Speak freely.'), 2200);
+}
+
+function exitPresence() {
+  if (!PRES.on) return;
+  PRES.on = false;
+  cancelAnimationFrame(PRES.raf);
+
+  const eng = app.engine;
+  // scatter back out, then let the sphere reform
+  let k = 0;
+  const undo = setInterval(() => {
+    k += 0.06;
+    if (eng) {
+      eng.setScatter && eng.setScatter(Math.sin(Math.min(1, k) * Math.PI) * 1.2);
+      eng.setHuman && eng.setHuman(Math.max(0, 1 - k * 1.4));
+    }
+    if (k >= 1.1) {
+      clearInterval(undo);
+      if (eng) { eng.setScatter && eng.setScatter(0); eng.setHuman && eng.setHuman(0); }
+      RIG.human = 0; RIG.primed = false;
+    }
+  }, 16);
+
+  E.pres.style.opacity = '0';
+  E.presUI.style.opacity = '0';
+  setTimeout(() => { E.pres.style.display = 'none'; E.presUI.style.display = 'none'; }, 800);
+
+  E.orb.style.zIndex = '0';
+  document.getElementById('deck').classList.remove('presence');
+
+  camStop();
+  refreshDock();
+  toast('PRESENCE', 'Back to the deck', accentNow());
+}
+
+function togglePresence() { PRES.on ? exitPresence() : enterPresence(); }
 
 /* =============================================================== IGNITION === */
 /* Runs once, the moment the code is accepted. A reticle spins up, the system
