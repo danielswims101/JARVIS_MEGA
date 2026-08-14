@@ -3273,7 +3273,7 @@ const GAUNT = { hist: [], lastWhip: 0, lastThrust: 0, lastPunch: 0, armed: true,
    can be tuned by eye rather than by argument. */
 function gauntThresholds() {
   const k = Math.max(0.3, Math.min(3, Number(PRESET.gestureSensitivity) || 1));
-  return { whip: 1.9 / k, thrust: 1.2 / k, punch: 1.5 / k };
+  return { whip: 1.15 / k, thrust: 0.75 / k, punch: 0.95 / k };
 }
 
 function gauntlet(h, now) {
@@ -3287,12 +3287,22 @@ function gauntlet(h, now) {
   while (GAUNT.hist.length > 8) GAUNT.hist.shift();
   if (GAUNT.hist.length < 4) return;
 
-  const a = GAUNT.hist[0], b = GAUNT.hist[GAUNT.hist.length - 1];
-  const dt = (b.t - a.t) / 1000;
-  if (dt < 0.02) return;
-
-  const vx = (b.x - a.x) / dt, vy = (b.y - a.y) / dt;
-  const grow = ((b.s - a.s) / Math.max(0.02, a.s)) / dt;   // relative growth per second
+  // Peak speed between consecutive frames, not the average across the window.
+  // A flick starts slow, snaps, and stops — measuring end to end over eight
+  // frames divides the snap by all the standing still around it, which is why
+  // a real whip measured about a third of what it should have and nothing ever
+  // fired. Take the sharpest moment instead.
+  let vx = 0, vy = 0, grow = 0;
+  for (let i = 1; i < GAUNT.hist.length; i++) {
+    const q = GAUNT.hist[i - 1], r = GAUNT.hist[i];
+    const d = (r.t - q.t) / 1000;
+    if (d < 0.008) continue;
+    const ix = (r.x - q.x) / d, iy = (r.y - q.y) / d;
+    if (Math.abs(ix) > Math.abs(vx)) { vx = ix; vy = iy; }
+    const g = ((r.s - q.s) / Math.max(0.02, q.s)) / d;
+    if (g > grow) grow = g;
+  }
+  if (!vx && !grow) return;
 
   GAUNT.sweep = Math.abs(vx);
   GAUNT.push = grow;
@@ -3306,6 +3316,7 @@ function gauntlet(h, now) {
     GAUNT.lastPunch = now; GAUNT.lastThrust = now; GAUNT.hist.length = 0;
     fxBlast(X, Y, (px - 0.5) * 0.5, (py - 0.5) * 0.5);
     camSay('REPULSOR');
+    printRow('⟐ REPULSOR · push ' + grow.toFixed(2), accentNow());
     return;
   }
 
@@ -3314,6 +3325,7 @@ function gauntlet(h, now) {
     GAUNT.lastThrust = now; GAUNT.hist.length = 0;
     fxBeam(X, Y, (px - 0.5) * 0.7, (py - 0.5) * 0.7);
     camSay('BEAM');
+    printRow('⟐ BEAM · push ' + grow.toFixed(2), accentNow());
     return;
   }
 
@@ -3322,6 +3334,7 @@ function gauntlet(h, now) {
     GAUNT.lastWhip = now; GAUNT.hist.length = 0;
     fxDisk(X, Y, Math.sign(vx), vy * 0.18);
     camSay(vx > 0 ? 'DISK · RIGHT' : 'DISK · LEFT');
+    printRow('⟐ DISK away · sweep ' + Math.abs(vx).toFixed(2), accentNow());
     return;
   }
 }
@@ -3363,6 +3376,7 @@ function fireEffect(a) {
       else fxBlast(x, y, jx, jy);
     }, i * 170);
   }
+  printRow('⟐ ' + kind.toUpperCase() + ' ×' + n + ' — ' + (a.direction || 'forward'), accentNow());
   return { ok: true, effect: kind, direction: a.direction || 'forward', count: n };
 }
 
@@ -3679,6 +3693,7 @@ function submit(raw, fromVoice) {
       ['LOCAL    — clear wipes console · link opens settings · help this list', 'rgba(0,229,255,.55)'],
       ['WORKSPACE— map, schematics and weather open over the deck · ESC dismisses · EXPORT SVG saves a drawing', 'rgba(0,229,255,.55)'],
       ['PRESENCE — C makes me appear · I gather into a body of my own · ESC to return', 'rgba(0,229,255,.55)'],
+    ['REPULSORS — F fires a bolt · G throws a disk · B fires a beam. Or whip your arm, shove a palm, or punch at the camera.', 'rgba(0,229,255,.55)'],
     ['PANES — everything opens in its own frame, several at once. Pinch to carry one, pinch with both hands to scale it, fist to dismiss. Or ask me to tile them.', 'rgba(0,229,255,.55)'],
       ['KEYS     — K settings · P persona · C camera · V hands-free · / focus console · ESC clear', 'rgba(0,229,255,.55)']
     ]);
@@ -3882,6 +3897,12 @@ function bindUI() {
     else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); toggleVoice(); }
     else if (e.key === 'k' || e.key === 'K') { e.preventDefault(); openCfg(); }
     else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); togglePresence(); }
+    // F, G and B fire the repulsors from the keyboard. No camera, no gesture
+    // reading, nothing to misdetect — if these draw, the renderer is fine and
+    // any problem is in reading your hand. If they draw nothing, it is not.
+    else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fireEffect({ effect: 'blast' }); }
+    else if (e.key === 'g' || e.key === 'G') { e.preventDefault(); fireEffect({ effect: 'disk', direction: Math.random() < 0.5 ? 'left' : 'right' }); }
+    else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); fireEffect({ effect: 'beam' }); }
     else if (e.key === 'p' || e.key === 'P') {
       e.preventDefault();
       const order = ['jarvis', 'friday', 'edith'];
