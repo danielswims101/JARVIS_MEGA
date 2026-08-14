@@ -312,7 +312,9 @@
 
   <!-- ========================================================= WORKSPACE PANES -->
   <!-- A host layer that never blocks the deck; each pane inside it does. -->
-  <div id="ovl" style="position:absolute; inset:0; z-index:40; display:none; pointer-events:none;"></div>
+  <!-- Above the control panel (z 44). The panel is near-opaque and full screen,
+       so with it up a pane opened perfectly and was completely hidden behind it. -->
+  <div id="ovl" style="position:absolute; inset:0; z-index:50; display:none; pointer-events:none;"></div>
 
   <!-- Content surfaces live here until a pane adopts one. -->
   <div id="ovlStock" style="display:none;">
@@ -521,9 +523,9 @@
   </div>
 
   <!-- combat FX: one additive canvas over everything the deck draws -->
-  <canvas id="fx" style="position:absolute; inset:0; z-index:47; display:none; pointer-events:none;"></canvas>
+  <canvas id="fx" style="position:absolute; inset:0; z-index:52; display:none; pointer-events:none;"></canvas>
 
-  <div id="reticle" style="position:absolute; left:0; top:0; width:42px; height:42px; z-index:48; display:none; pointer-events:none; margin:-21px 0 0 -21px; transition:opacity .3s ease;">
+  <div id="reticle" style="position:absolute; left:0; top:0; width:42px; height:42px; z-index:53; display:none; pointer-events:none; margin:-21px 0 0 -21px; transition:opacity .3s ease;">
     <div style="position:absolute; inset:0; border:1px solid currentColor; border-radius:50%; opacity:.55;"></div>
     <div id="reticleCore" style="position:absolute; inset:15px; border-radius:50%; background:currentColor; opacity:.75;"></div>
     <div style="position:absolute; left:50%; top:-9px; width:1px; height:7px; background:currentColor;"></div>
@@ -1895,10 +1897,11 @@ function loop(now) {
   const dt = Math.min(0.05, (now - (app.last || now)) / 1000); app.last = now;
   tick(dt, now - app.t0);
 
-  // The six gauge canvases sit behind the workspace and the control panel. When
-  // something covers them there is no reason to keep redrawing them at 60fps.
-  const hidden = PANEL.on || !!OVL.mode;
-  if (!hidden) { drawVitals(); drawNet(dt); drawCore(dt); drawNeural(dt); drawRadar(dt); }
+  // The six gauge canvases only stop when something genuinely covers them — the
+  // full-screen trace panel. A floating pane covers a corner of the screen, not
+  // the deck: freezing every instrument the moment you asked for the weather is
+  // most of what "it goes dark" actually was.
+  if (!PANEL.on) { drawVitals(); drawNet(dt); drawCore(dt); drawNeural(dt); drawRadar(dt); }
   if (!PANEL.on) drawWave();
 }
 
@@ -1954,10 +1957,14 @@ const PERSONAS = {
 /* Temper drives the whole look. A multiply tint can't turn cyan red, so the orb
    recolours by luminance in the shader — see uMood / uMoodAmt / uDark. */
 const MOODS = {
+  // "dark" lays a black sheet over the whole deck. At .52 the crimson temper was
+  // covering the interface in half a layer of black — and SERIOUS is the default
+  // temper, so the deck was dimmed before anyone touched anything. The colours
+  // still shift; the lights stay on.
   'fun|light':     { accent: null,      rgb: null,            amt: 0,    dark: 0,    name: 'CLEAR' },
-  'fun|heavy':     { accent: '#ffd400', rgb: [1.0, 0.83, 0.10], amt: .88, dark: .30, name: 'AMBER' },
-  'serious|light': { accent: '#ff8a3d', rgb: [1.0, 0.54, 0.24], amt: .85, dark: .22, name: 'EMBER' },
-  'serious|heavy': { accent: '#d81b3c', rgb: [1.0, 0.11, 0.24], amt: .92, dark: .52, name: 'CRIMSON' }
+  'fun|heavy':     { accent: '#ffd400', rgb: [1.0, 0.83, 0.10], amt: .88, dark: .10, name: 'AMBER' },
+  'serious|light': { accent: '#ff8a3d', rgb: [1.0, 0.54, 0.24], amt: .85, dark: .05, name: 'EMBER' },
+  'serious|heavy': { accent: '#d81b3c', rgb: [1.0, 0.11, 0.24], amt: .92, dark: .18, name: 'CRIMSON' }
 };
 function mood() { return MOODS[persona.humor + '|' + persona.depth] || MOODS['fun|light']; }
 function accentNow() { return mood().accent || PERSONAS[persona.id].accent; }
@@ -4198,7 +4205,7 @@ function focusPane(p) {
   if (i >= 0) OVL.order.splice(i, 1);
   OVL.order.push(p);
   OVL.order.forEach((q, n) => {
-    q.el.style.zIndex = String(41 + n);
+    q.el.style.zIndex = String(51 + n);
     q.el.classList.toggle('focus', q === p);
   });
   OVL.focus = p;
