@@ -109,6 +109,10 @@
         <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">VAULT</div>
         <div id="vaultStat" style="color:rgba(150,215,235,.45);">NO VAULT</div>
       </div>
+      <div id="camChip" title="Optical bench — hands and eyes (C)" style="display:flex; flex-direction:column; gap:2px; cursor:pointer; border:1px solid rgba(0,229,255,.24); padding:4px 10px; transition:all .45s cubic-bezier(.16,1,.3,1);">
+        <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">OPTICS</div>
+        <div id="camStat" style="color:rgba(150,215,235,.45);">OFF</div>
+      </div>
       <div id="personaChip" title="Cycle persona (P)" style="display:flex; flex-direction:column; gap:2px; cursor:pointer; border:1px solid rgba(0,229,255,.24); padding:4px 10px; transition:all .45s cubic-bezier(.16,1,.3,1);">
         <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">PERSONA</div>
         <div id="personaStat" style="color:#00e5ff; letter-spacing:.16em;">JARVIS</div>
@@ -472,6 +476,30 @@
         Verified against the ACCESS_CODE secret in your Supabase project. The code is held for this browser session only.
       </div>
     </div>
+  </div>
+
+  <!-- ========================================================== OPTICAL BENCH -->
+  <div id="cam" style="position:absolute; left:22px; bottom:22px; width:240px; z-index:47; display:none;
+       border:1px solid rgba(0,229,255,.35); background:rgba(2,6,10,.85); box-shadow:0 0 30px rgba(0,0,0,.6);">
+    <div class="br tl-h"></div><div class="br tl-v"></div><div class="br br-h"></div><div class="br br-v"></div>
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 8px; border-bottom:1px solid rgba(0,229,255,.16);">
+      <div style="font-size:7.5px; letter-spacing:.28em; color:rgba(0,229,255,.75);">OPTICAL BENCH</div>
+      <div id="camFps" style="font-size:7.5px; letter-spacing:.14em; color:rgba(0,229,255,.4);">—</div>
+    </div>
+    <div style="position:relative; width:100%; aspect-ratio:4/3; overflow:hidden;">
+      <video id="camVideo" playsinline muted style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); opacity:.5;"></video>
+      <canvas id="camOverlay" style="position:absolute; inset:0; width:100%; height:100%;"></canvas>
+    </div>
+    <div id="camGesture" style="padding:5px 8px; font-size:8px; letter-spacing:.2em; color:rgba(0,229,255,.7); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">STANDING BY</div>
+  </div>
+
+  <div id="reticle" style="position:absolute; left:0; top:0; width:42px; height:42px; z-index:48; display:none; pointer-events:none; margin:-21px 0 0 -21px; transition:opacity .3s ease;">
+    <div style="position:absolute; inset:0; border:1px solid currentColor; border-radius:50%; opacity:.55;"></div>
+    <div id="reticleCore" style="position:absolute; inset:15px; border-radius:50%; background:currentColor; opacity:.75;"></div>
+    <div style="position:absolute; left:50%; top:-9px; width:1px; height:7px; background:currentColor;"></div>
+    <div style="position:absolute; left:50%; bottom:-9px; width:1px; height:7px; background:currentColor;"></div>
+    <div style="position:absolute; top:50%; left:-9px; height:1px; width:7px; background:currentColor;"></div>
+    <div style="position:absolute; top:50%; right:-9px; height:1px; width:7px; background:currentColor;"></div>
   </div>
 
   <canvas id="ignite" style="position:absolute; inset:0; width:100%; height:100%; z-index:85; display:none; pointer-events:none;"></canvas>
@@ -1019,7 +1047,8 @@ const PRESET = {
 
   requireAccessCode: true,             // gate the session behind the code
   units:           'imperial',         // 'imperial' = degrees F / mph, 'metric' = C / km/h
-  speechHold:      3000,               // ms of silence before a spoken sentence is sent
+  camera:          false,              // start with the optical bench live (C toggles it)
+  speechHold:      2000,               // ms of silence before a spoken sentence is sent
   codeHeader:      'x-access-code',    // header carrying the code. Your function must
                                        // allow it in access-control-allow-headers, or
                                        // set this to '' to send no custom header.
@@ -1059,7 +1088,8 @@ const E = {};
  'ovlBusyMsg','ovlClose','ovlExport','gate','gateCode','gateMsg','gateGo','gateCfg',
  'moodVeil','moodStat','panel','panelBody','panelDump','panelClear','panelClose',
  'ovlCal','ovlEmbed','ovlIcs','panelTitle','panelSub','panelCount','panelTel','panelTools',
- 'panelInput','ignite'].forEach(k => E[k] = $(k));
+ 'panelInput','ignite','camChip','camStat','cam','camVideo','camOverlay','camFps',
+ 'camGesture','reticle','reticleCore'].forEach(k => E[k] = $(k));
 
 /* ============================================================== SIMULATION === */
 const sim = (function build() {
@@ -1695,6 +1725,8 @@ const COMMON_RULES =
 'screen, render precise dimensioned blueprints, pull real weather, manage their calendar, and read and write ' +
 'their Supabase vault. Reach for those instead of describing what you would do.\n' +
 '- Blueprints: keep them to two or three views. Very large drawings risk being cut off mid-transmission.\n' +
+'- With the optical bench on you can see them. If they ask what you can see, what they are holding, or to read ' +
+'something, call look_at_me and describe the still honestly.\n' +
 '- If asked something outside the deck, just answer it well. You are not confined to the fiction.';
 
 const PERSONAS = {
@@ -1910,7 +1942,11 @@ function telemetry() {
       : 'unknown — call locate_me',
     persona: PERSONAS[persona.id].name,
     temper: { humor: persona.humor, depth: persona.depth },
-    voice: EL.on ? 'ELEVENLABS · ' + EL.model : 'BROWSER SPEECH'
+    voice: EL.on ? 'ELEVENLABS · ' + EL.model : 'BROWSER SPEECH',
+    optics: VIS.on
+      ? { tracking: VIS.ready, hands: VIS.handCount, face: VIS.faces, gesture: VIS.gesture,
+          pointer: [+VIS.x.toFixed(3), +VIS.y.toFixed(3)] }
+      : 'off — call set_camera to bring the optical bench up'
   };
 }
 
@@ -2048,6 +2084,13 @@ const TOOLS = [
       mode: { type: 'string', enum: ['tab', 'embed'], description: 'embed shows it inside the deck. Default tab.' }
     }, required: [] } },
 
+  { name: 'set_camera', description: 'Turn the optical bench on or off. With it on, the user drives the deck with their hands and eyes: point to aim, pinch to click, open palm to start listening, fist to dismiss, swipe to change persona, wink to toggle the microphone.',
+    params: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
+  { name: 'look_at_me', description: 'Take a still from the camera and actually look at it. Use when the user asks what you can see, what they are holding, how something looks, or to read something they hold up. Turns the camera on first if it is off.',
+    params: { type: 'object', properties: {
+      reason: { type: 'string', description: 'What you are looking for — shown to the user so they know why.' }
+    }, required: [] } },
+
   { name: 'locate_me', description: 'Find where the user physically is and pin it on the tactical map. Tries the device first, then falls back to a network lookup that is city-accurate and needs no permission. Their approximate position is already in the telemetry each turn; call this when they want it shown, refined, or explicitly ask where they are.',
     params: { type: 'object', properties: {
       zoom: { type: 'number' }, timeout: { type: 'number', description: 'Milliseconds to wait for a device fix before falling back. Default 9000.' }
@@ -2173,6 +2216,21 @@ function runTool(name, a) {
 
     case 'open_target':
       return openTarget(a);
+    case 'set_camera':
+      return a.on ? camStart() : Promise.resolve(camStop());
+    case 'look_at_me': {
+      const shoot = () => {
+        const img = camSnapshot();
+        if (!img) return { error: 'no frame available — the camera is not running' };
+        history.push({ role: 'user', text: '[camera frame' + (a.reason ? ' · ' + a.reason : '') + ']', image: img });
+        streamRow('OPT', 'frame captured' + (a.reason ? ' · ' + a.reason : ''), VI);
+        toast('OPTICS', a.reason ? 'Looking · ' + a.reason : 'Taking a look', accentNow());
+        return { ok: true, note: 'A still is attached to the next turn — describe what you see.' };
+      };
+      if (VIS.on && VIS.stream) return shoot();
+      return camStart().then(r => (r && r.error) ? r : new Promise(res => setTimeout(() => res(shoot()), 700)));
+    }
+
     case 'locate_me':
       return locateMe(a);
     case 'show_threat_map':
@@ -2230,7 +2288,12 @@ function runTool(name, a) {
 function toAnthropic(hist) {
   const out = [];
   for (const m of hist) {
-    if (m.role === 'user') out.push({ role: 'user', content: [{ type: 'text', text: m.text }] });
+    if (m.role === 'user') {
+      const c = [];
+      if (m.image) c.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: m.image } });
+      c.push({ type: 'text', text: m.text });
+      out.push({ role: 'user', content: c });
+    }
     else if (m.role === 'assistant') {
       const c = [];
       if (m.text) c.push({ type: 'text', text: m.text });
@@ -2855,7 +2918,8 @@ function submit(raw, fromVoice) {
       ['TEMPER   — FUN/SERIOUS sets the humour · LIGHT/HEAVY sets the depth', 'rgba(0,229,255,.55)'],
       ['LOCAL    — clear wipes console · link opens settings · help this list', 'rgba(0,229,255,.55)'],
       ['WORKSPACE— map, schematics and weather open over the deck · ESC dismisses · EXPORT SVG saves a drawing', 'rgba(0,229,255,.55)'],
-      ['KEYS     — K settings · P persona · V hands-free · / focus console · ESC clear', 'rgba(0,229,255,.55)']
+      ['OPTICS   — C opens the bench · point to aim · pinch to click · palm to talk · fist to dismiss · swipe for persona · wink for mic', 'rgba(0,229,255,.55)'],
+      ['KEYS     — K settings · P persona · C camera · V hands-free · / focus console · ESC clear', 'rgba(0,229,255,.55)']
     ]);
   }
   if (low === 'link' || low === 'key' || low === 'config') return openCfg();
@@ -2928,6 +2992,7 @@ function bindUI() {
   E.mManual.onclick = () => setMode('manual');
   E.voiceBtn.onclick = toggleVoice;
   E.brainChip.onclick = openCfg;
+  E.camChip.onclick = () => { VIS.on ? camStop() : camStart(); };
   E.personaChip.onclick = () => {
     const order = ['jarvis', 'friday', 'edith'];
     setPersona(order[(order.indexOf(persona.id) + 1) % order.length]);
@@ -3056,6 +3121,7 @@ function bindUI() {
     if (e.key === '/') { e.preventDefault(); E.input && E.input.focus(); }
     else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); toggleVoice(); }
     else if (e.key === 'k' || e.key === 'K') { e.preventDefault(); openCfg(); }
+    else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); VIS.on ? camStop() : camStart(); }
     else if (e.key === 'p' || e.key === 'P') {
       e.preventDefault();
       const order = ['jarvis', 'friday', 'edith'];
@@ -4389,6 +4455,247 @@ async function submitCode() {
   }
 }
 
+/* ========================================================== OPTICAL BENCH === */
+/* Hands and face, tracked in the browser with MediaPipe. Nothing leaves the
+   machine — the video never goes anywhere unless you explicitly ask it to look. */
+const VIS = {
+  on: false, ready: false, loading: false, stream: null, raf: 0,
+  hands: null, face: null,
+  x: 0.5, y: 0.5,            // smoothed pointer, 0..1
+  gesture: 'none', held: 0, lastGesture: '',
+  pinch: false, pinchAt: 0, lastClick: 0,
+  palmAt: 0, fistAt: 0, winkAt: 0,
+  swipeX: 0, swipeAt: 0,
+  faces: 0, handCount: 0,
+  fps: 0, fAcc: 0, fN: 0
+};
+
+const MP_VER = '0.10.14';
+const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@' + MP_VER;
+const MP_MODELS = 'https://storage.googleapis.com/mediapipe-models';
+
+function camSay(text) {
+  if (E.camGesture) E.camGesture.textContent = text;
+}
+function paintCam() {
+  if (!E.camStat) return;
+  const on = VIS.on && VIS.ready;
+  E.camStat.textContent = VIS.loading ? 'LOADING' : on ? 'TRACKING' : VIS.on ? 'STARTING' : 'OFF';
+  E.camStat.style.color = on ? accentNow() : VIS.on ? AM : 'rgba(150,215,235,.45)';
+  E.camChip.style.borderColor = on ? accentNow() + '55' : 'rgba(0,229,255,.24)';
+  E.cam.style.display = VIS.on ? 'block' : 'none';
+  E.reticle.style.display = on ? 'block' : 'none';
+}
+
+async function camStart() {
+  if (VIS.on) return { ok: true, note: 'already running' };
+  VIS.on = true; VIS.loading = true; paintCam();
+  camSay('REQUESTING CAMERA');
+
+  try {
+    VIS.stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }, audio: false
+    });
+  } catch (e) {
+    VIS.on = false; VIS.loading = false; paintCam();
+    const why = String(e && e.name === 'NotAllowedError' ? 'permission denied' : (e.message || e));
+    printRow('OPTICS — camera unavailable: ' + why +
+      (location.protocol === 'file:' ? '. Browsers block the camera on file:// pages — serve the deck over http://localhost.' : ''), AM);
+    return { error: 'camera unavailable: ' + why };
+  }
+
+  E.camVideo.srcObject = VIS.stream;
+  try { await E.camVideo.play(); } catch (e) { }
+
+  camSay('LOADING VISION MODELS');
+  try {
+    const mp = await import(MP_BASE);
+    const files = await mp.FilesetResolver.forVisionTasks(MP_BASE + '/wasm');
+    VIS.hands = await mp.HandLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: MP_MODELS + '/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task', delegate: 'GPU' },
+      numHands: 2, runningMode: 'VIDEO'
+    });
+    VIS.face = await mp.FaceLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: MP_MODELS + '/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate: 'GPU' },
+      outputFaceBlendshapes: true, numFaces: 1, runningMode: 'VIDEO'
+    });
+  } catch (e) {
+    VIS.loading = false; paintCam();
+    printRow('OPTICS — could not load the vision models: ' + String(e.message || e), AM);
+    printRow('  the bench needs MediaPipe from jsdelivr; the camera feed is still live.', DIM);
+    camSay('MODELS UNAVAILABLE');
+    return { error: 'vision models unavailable: ' + String(e.message || e) };
+  }
+
+  VIS.ready = true; VIS.loading = false; paintCam();
+  camSay('TRACKING');
+  toast('OPTICS', 'Hands and eyes online', accentNow());
+  printRow('Optical bench online. Point to aim, pinch to select, open palm to talk, fist to dismiss.', accentNow());
+  VIS.raf = requestAnimationFrame(camLoop);
+  return { ok: true, tracking: true };
+}
+
+function camStop() {
+  VIS.on = false; VIS.ready = false;
+  cancelAnimationFrame(VIS.raf);
+  if (VIS.stream) { VIS.stream.getTracks().forEach(t => t.stop()); VIS.stream = null; }
+  if (E.camVideo) E.camVideo.srcObject = null;
+  paintCam();
+  camSay('STANDING BY');
+  return { ok: true, tracking: false };
+}
+
+/* ---- landmark helpers ---- */
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0)); }
+function extended(lm, tip, pip) { return dist(lm[tip], lm[0]) > dist(lm[pip], lm[0]) * 1.12; }
+
+function readHand(lm) {
+  const span = dist(lm[0], lm[9]) || 0.001;                   // scale reference
+  const pinch = dist(lm[4], lm[8]) / span;
+  const fingers = [extended(lm, 8, 6), extended(lm, 12, 10), extended(lm, 16, 14), extended(lm, 20, 18)];
+  const up = fingers.filter(Boolean).length;
+  return {
+    pinch: pinch < 0.42,
+    point: fingers[0] && up === 1,
+    palm: up === 4,
+    fist: up === 0,
+    peace: fingers[0] && fingers[1] && up === 2,
+    tip: lm[8], centre: lm[9]
+  };
+}
+
+function fireClick(px, py) {
+  const now = performance.now();
+  if (now - VIS.lastClick < 550) return;
+  VIS.lastClick = now;
+  const el = document.elementFromPoint(px, py);
+  if (el && typeof el.click === 'function') {
+    el.click();
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.focus();
+  }
+  if (app.engine) app.engine.shock((px / innerWidth) * 2 - 1, -((py / innerHeight) * 2 - 1));
+}
+
+function camLoop(now) {
+  if (!VIS.on || !VIS.ready) return;
+  VIS.raf = requestAnimationFrame(camLoop);
+  const v = E.camVideo;
+  if (!v || v.readyState < 2) return;
+
+  let hres = null, fres = null;
+  try { hres = VIS.hands.detectForVideo(v, now); } catch (e) { }
+  try { fres = VIS.face.detectForVideo(v, now); } catch (e) { }
+
+  VIS.fAcc += 1 / 60; VIS.fN++;
+  if (VIS.fN > 30) { VIS.fps = Math.round(VIS.fN / (VIS.fAcc || 1)); VIS.fN = 0; VIS.fAcc = 0; if (E.camFps) E.camFps.textContent = VIS.fps + ' fps'; }
+
+  const hands = (hres && hres.landmarks) || [];
+  VIS.handCount = hands.length;
+  const shapes = (fres && fres.faceBlendshapes && fres.faceBlendshapes[0] && fres.faceBlendshapes[0].categories) || [];
+  const face = (fres && fres.faceLandmarks && fres.faceLandmarks[0]) || null;
+  VIS.faces = face ? 1 : 0;
+  const shape = (n) => { const c = shapes.find(s => s.categoryName === n); return c ? c.score : 0; };
+
+  // ── pointer: the pointing hand wins, otherwise the head ──────────────────
+  let tx = null, ty = null, g = 'none';
+  if (hands.length) {
+    const h = readHand(hands[0]);
+    const src = h.point || h.pinch ? h.tip : h.centre;
+    tx = 1 - src.x; ty = src.y;                                 // the feed is mirrored
+    g = h.pinch ? 'pinch' : h.point ? 'point' : h.palm ? 'palm' : h.fist ? 'fist' : h.peace ? 'peace' : 'hand';
+
+    // swipe: sharp lateral travel of the palm
+    const px = 1 - h.centre.x;
+    if (now - VIS.swipeAt > 700 && Math.abs(px - VIS.swipeX) > 0.34) {
+      VIS.swipeAt = now;
+      const order = ['jarvis', 'friday', 'edith'];
+      const dir = px > VIS.swipeX ? 1 : -1;
+      setPersona(order[(order.indexOf(persona.id) + (dir > 0 ? 1 : 2)) % 3]);
+      camSay('SWIPE · PERSONA');
+    }
+    if (now - VIS.swipeAt > 260) VIS.swipeX = px;
+
+    // pinch = click, on the rising edge only
+    if (h.pinch && !VIS.pinch) fireClick(VIS.x * innerWidth, VIS.y * innerHeight);
+    VIS.pinch = h.pinch;
+
+    // open palm held = start listening; fist held = dismiss
+    if (h.palm) { if (!VIS.palmAt) VIS.palmAt = now; else if (now - VIS.palmAt > 700) { VIS.palmAt = 0; if (!app.busy) toggleVoice(); camSay('PALM · LISTENING'); } }
+    else VIS.palmAt = 0;
+    if (h.fist) { if (!VIS.fistAt) VIS.fistAt = now; else if (now - VIS.fistAt > 600) { VIS.fistAt = 0; if (OVL.mode) ovlClose(); else if (PANEL.on) setPanel(false); camSay('FIST · DISMISS'); } }
+    else VIS.fistAt = 0;
+  } else if (face) {
+    const nose = face[1] || face[4];
+    if (nose) { tx = clamp((1 - nose.x - 0.5) * 2.4 + 0.5, 0, 1); ty = clamp((nose.y - 0.5) * 2.4 + 0.5, 0, 1); }
+    g = 'gaze';
+    VIS.pinch = false; VIS.palmAt = 0; VIS.fistAt = 0;
+
+    // a deliberate wink toggles the microphone
+    const l = shape('eyeBlinkLeft'), r = shape('eyeBlinkRight');
+    const wink = (l > 0.55 && r < 0.2) || (r > 0.55 && l < 0.2);
+    if (wink) { if (!VIS.winkAt) VIS.winkAt = now; else if (now - VIS.winkAt > 350) { VIS.winkAt = 0; if (!app.busy) toggleVoice(); camSay('WINK · VOICE'); } }
+    else VIS.winkAt = 0;
+  }
+
+  if (tx != null) {
+    VIS.x += (tx - VIS.x) * 0.28;                               // smoothing
+    VIS.y += (ty - VIS.y) * 0.28;
+    const px = VIS.x * innerWidth, py = VIS.y * innerHeight;
+    E.reticle.style.transform = 'translate(' + px.toFixed(1) + 'px,' + py.toFixed(1) + 'px)';
+    E.reticle.style.color = VIS.pinch ? '#eafcff' : accentNow();
+    E.reticleCore.style.transform = VIS.pinch ? 'scale(1.9)' : 'scale(1)';
+    if (app.engine) app.engine.setPointer(VIS.x * 2 - 1, VIS.y * 2 - 1);
+  }
+
+  if (g !== VIS.gesture) { VIS.gesture = g; }
+  const label = hands.length
+    ? (hands.length + ' HAND' + (hands.length > 1 ? 'S' : '') + ' · ' + g.toUpperCase())
+    : face ? 'FACE · GAZE' : 'NO SUBJECT';
+  if (E.camGesture && !/·\s(PERSONA|LISTENING|DISMISS|VOICE)$/.test(E.camGesture.textContent)) camSay(label);
+
+  drawCamOverlay(hands, face);
+}
+
+function drawCamOverlay(hands, face) {
+  const c = E.camOverlay; if (!c) return;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (!w || !h) return;
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  const acc = accentNow();
+
+  if (face) {
+    ctx.fillStyle = acc + '55';
+    for (let i = 0; i < face.length; i += 6) ctx.fillRect((1 - face[i].x) * w, face[i].y * h, 1, 1);
+  }
+  const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+                 [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+  hands.forEach((lm) => {
+    ctx.strokeStyle = acc; ctx.lineWidth = 1.4; ctx.globalAlpha = .85;
+    BONES.forEach(([a, b]) => {
+      ctx.beginPath();
+      ctx.moveTo((1 - lm[a].x) * w, lm[a].y * h);
+      ctx.lineTo((1 - lm[b].x) * w, lm[b].y * h);
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1; ctx.fillStyle = '#eafcff';
+    [4, 8, 12, 16, 20].forEach(i => { ctx.beginPath(); ctx.arc((1 - lm[i].x) * w, lm[i].y * h, 2.4, 0, 7); ctx.fill(); });
+  });
+}
+
+/* Grab a still for the model to actually look at. */
+function camSnapshot() {
+  const v = E.camVideo;
+  if (!VIS.on || !v || v.readyState < 2) return null;
+  const cv = document.createElement('canvas');
+  cv.width = 640; cv.height = Math.round(640 * (v.videoHeight || 480) / (v.videoWidth || 640));
+  const cx = cv.getContext('2d');
+  cx.translate(cv.width, 0); cx.scale(-1, 1);                  // un-mirror for the model
+  cx.drawImage(v, 0, 0, cv.width, cv.height);
+  return cv.toDataURL('image/jpeg', 0.72).split(',')[1];
+}
+
 /* =============================================================== IGNITION === */
 /* Runs once, the moment the code is accepted. A reticle spins up, the system
    checks itself off, and an iris opens onto the deck. Click or ESC to skip. */
@@ -4605,6 +4912,7 @@ function startSession(fast) {
   applyMode();
   const who = PERSONAS[persona.id];
   primeLocation();                      // silent, no prompt, no UI
+  if (PRESET.camera) setTimeout(camStart, 1200);
   const t1 = fast ? 400 : 3400, t2 = fast ? 1000 : 4000;
   setTimeout(() => printRow(who.name + ' core initialized. All subsystems nominal.', who.accent), t1);
   setTimeout(() => {
@@ -4646,6 +4954,7 @@ if (E.title) E.title.textContent = app.decode.text;
 paintBrain();
 paintPersona();
 paintVault();
+paintCam();
 bindUI();
 bindEngine();
 setTimeout(() => { if (E.boot) E.boot.style.display = 'none'; }, 2000);
