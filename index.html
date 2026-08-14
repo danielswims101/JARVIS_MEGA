@@ -621,8 +621,11 @@ vec3 curl(vec3 p, float t){
 
 const VERT = NOISE + `
 attribute vec3 aDir;
-attribute float aRad, aRand, aLayer, aSize, aSeed;
-uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark, uVH;
+attribute float aRad, aRand, aLayer, aSize, aSeed, aSeg, aBt;
+uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark, uVH, uHuman;
+uniform vec3 uBoneA[18];
+uniform vec3 uBoneB[18];
+uniform float uBoneR[18];
 uniform vec3 uShockDir, uMood;
 varying vec3 vCol;
 varying float vA;
@@ -653,11 +656,11 @@ void main(){
   float n2 = snoise(dir*(freq*2.7) + vec3(t*sp*1.7, 0.0, -t*sp));
   float n3 = snoise(dir*(freq*6.1) - vec3(t*sp*2.4));
   float nsum = n1*0.55 + n2*0.28 + n3*0.14;
-  float disp = nsum * (0.16 + 0.10*aLayer) * turb;
+  float disp = nsum * (0.16 + 0.10*aLayer) * turb * (1.0 - uHuman*0.82);
 
   // --- curl drift on shell + halo ------------------------------------------
   vec3 c = curl(dir*1.35 + aSeed*0.13, t*0.16);
-  float curlAmt = (0.035 + 0.10*step(1.5,aLayer)) * (0.4 + 1.6*wThink + 0.7*wAlert);
+  float curlAmt = (0.035 + 0.10*step(1.5,aLayer)) * (0.4 + 1.6*wThink + 0.7*wAlert) * (1.0 - uHuman*0.85);
   vec3 pos = dir * (r + disp);
   pos += c * curlAmt * (0.6 + aRand);
 
@@ -688,13 +691,49 @@ void main(){
   float shock = ring * uShockAmp;
   pos += dir * shock * 0.55;
 
+  // --- humanoid ------------------------------------------------------------
+  // Every particle owns a bone and a position along it. Feed the skeleton in and
+  // the sphere becomes a body — a capsule of particles per limb.
+  float human = uHuman;
+  float rim = 0.0, scanBand = 0.0;
+  if (human > 0.001) {
+    int si = int(aSeg + 0.5);
+    vec3 A = vec3(0.0), B = vec3(0.0);
+    float R = 0.05;
+    // constant-bounds loop with a constant index: valid on every GL target
+    for (int i = 0; i < 18; i++) {
+      if (i == si) { A = uBoneA[i]; B = uBoneB[i]; R = uBoneR[i]; }
+    }
+    vec3 axis = B - A;
+    float len = length(axis);
+    axis = len > 0.0001 ? axis / len : vec3(0.0, 1.0, 0.0);
+
+    vec3 spine = mix(A, B, aBt);
+    // push out perpendicular to the limb so it reads as volume, not a wire
+    vec3 off = aDir - axis * dot(aDir, axis);
+    float ol = length(off);
+    off = ol > 0.0001 ? off / ol : normalize(cross(axis, vec3(0.0, 0.0, 1.0)) + 1e-4);
+    float rr = R * (0.22 + 0.78 * sqrt(aRand));
+
+    vec3 hp = spine + off * rr;
+    // a breath of noise so the surface shimmers instead of sitting dead
+    hp += off * snoise(hp * 6.5 + vec3(t * 0.7)) * R * 0.22;
+    hp += axis * snoise(hp * 4.0 - vec3(t * 0.5)) * R * 0.12;
+
+    pos = mix(pos, hp, human);
+
+    rim = human * pow(aRand, 2.0);                       // surface shell glows
+    float sweep = fract(t * 0.15) * 3.4 - 1.5;           // scan travelling up
+    scanBand = human * (1.0 - smoothstep(0.0, 0.10, abs(pos.y - sweep)));
+  }
+
   // --- boot explosion -------------------------------------------------------
   pos = mix(pos * 0.02, pos, uBoot);
 
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   gl_Position = projectionMatrix * mv;
 
-  float energy = clamp(abs(nsum)*0.62 + amp*wSpeak*1.3 + shock*0.85 + exp(-(aRad-0.30)*2.9)*1.30, 0.0, 1.6);
+  float energy = clamp(abs(nsum)*0.62 + amp*wSpeak*1.3 + shock*0.85 + exp(-(aRad-0.30)*2.9)*1.30*(1.0-uHuman) + rim*0.55 + scanBand*1.25, 0.0, 1.9);
 
   vec3 cyan  = vec3(0.00, 0.86, 1.00);
   vec3 blue  = vec3(0.04, 0.42, 1.00);
@@ -808,6 +847,11 @@ function init(canvas, opts = {}) {
   const aPos = new Float32Array(COUNT * 3), aDir = new Float32Array(COUNT * 3);
   const aRad = new Float32Array(COUNT), aRand = new Float32Array(COUNT);
   const aLayer = new Float32Array(COUNT), aSize = new Float32Array(COUNT), aSeed = new Float32Array(COUNT);
+  const aSeg = new Float32Array(COUNT), aBt = new Float32Array(COUNT);
+  // rough volume per limb, so the body fills evenly rather than pooling in the head
+  const SEG_W = [1.5, 0.5, 2.0, 2.6, 0.5, 0.5, 1.0, 1.0, 0.8, 0.8, 0.5, 0.5, 0.5, 0.5, 1.4, 1.4, 1.0, 1.0];
+  const SEG_CUM = []; let segTotal = 0;
+  for (let i = 0; i < SEG_W.length; i++) { segTotal += SEG_W[i]; SEG_CUM.push(segTotal); }
   const GOLD = Math.PI * (3 - Math.sqrt(5));
   const order = [];
   for (let i = 0; i < COUNT; i++) order.push(i);
@@ -831,6 +875,10 @@ function init(canvas, opts = {}) {
       : layer === 1 ? 0.92 + rnd * 0.10
         : 1.12 + Math.pow(rnd, 1.9) * 0.95;
     aSize[i] = layer === 0 ? 1.0 + rnd * 1.0 : layer === 1 ? 0.8 + rnd * 0.9 : 0.6 + rnd * 1.5;
+    const pickSeg = Math.random() * segTotal;
+    let seg = 0; while (seg < SEG_CUM.length - 1 && pickSeg > SEG_CUM[seg]) seg++;
+    aSeg[i] = seg;
+    aBt[i] = Math.random();
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(aPos, 3));
@@ -840,6 +888,8 @@ function init(canvas, opts = {}) {
   geo.setAttribute('aLayer', new THREE.BufferAttribute(aLayer, 1));
   geo.setAttribute('aSize', new THREE.BufferAttribute(aSize, 1));
   geo.setAttribute('aSeed', new THREE.BufferAttribute(aSeed, 1));
+  geo.setAttribute('aSeg', new THREE.BufferAttribute(aSeg, 1));
+  geo.setAttribute('aBt', new THREE.BufferAttribute(aBt, 1));
   geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 4);
 
   const uniforms = {
@@ -855,7 +905,11 @@ function init(canvas, opts = {}) {
     uMood: { value: new THREE.Vector3(0, 0.9, 1) },
     uMoodAmt: { value: 0 },
     uDark: { value: 0 },
-    uVH: { value: 1 }
+    uVH: { value: 1 },
+    uHuman: { value: 0 },
+    uBoneA: { value: Array.from({ length: 18 }, () => new THREE.Vector3()) },
+    uBoneB: { value: Array.from({ length: 18 }, () => new THREE.Vector3()) },
+    uBoneR: { value: new Array(18).fill(0.06) }
   };
   const mat = new THREE.ShaderMaterial({
     uniforms, vertexShader: VERT, fragmentShader: FRAG,
@@ -961,8 +1015,10 @@ function init(canvas, opts = {}) {
     camera.position.z = 6.9 - weights[1] * 0.4 + weights[4] * 0.15;
     camera.lookAt(0, 0, 0);
 
-    points.rotation.y += dt * (0.055 + weights[2] * 0.22 + weights[4] * 0.3);
-    points.rotation.x = Math.sin(t * 0.13) * 0.09;
+    const hum = uniforms.uHuman.value;
+    points.rotation.y += dt * (0.055 + weights[2] * 0.22 + weights[4] * 0.3) * (1 - hum);
+    if (hum > 0.01) points.rotation.y *= Math.pow(0.02, dt * hum);   // settle upright
+    points.rotation.x = Math.sin(t * 0.13) * 0.09 * (1 - hum);
     globe.rotation.y -= dt * 0.035; globe.rotation.x = Math.sin(t * 0.08) * 0.2;
     rings.rotation.y += dt * 0.045; rings.rotation.z = Math.sin(t * 0.07) * 0.12;
     dust.material.uniforms.uTime.value = t;
@@ -1009,6 +1065,19 @@ function init(canvas, opts = {}) {
       shockT = 0; shockAmp = 1;
     },
     setPointer(nx, ny) { pointer.tx = nx; pointer.ty = ny; },
+    /* bones: flat [ax,ay,az, bx,by,bz, radius] x 18, already in world units */
+    setPose(bones) {
+      const A = uniforms.uBoneA.value, B = uniforms.uBoneB.value, R = uniforms.uBoneR.value;
+      for (let i = 0; i < 18; i++) {
+        const o = i * 7;
+        if (bones.length < o + 7) break;
+        A[i].set(bones[o], bones[o + 1], bones[o + 2]);
+        B[i].set(bones[o + 3], bones[o + 4], bones[o + 5]);
+        R[i] = bones[o + 6];
+      }
+    },
+    setHuman(w) { uniforms.uHuman.value = Math.max(0, Math.min(1, w)); },
+    get human() { return uniforms.uHuman.value; },
     setMood(r, g, b, amt, dark) {
       uniforms.uMood.value.set(r, g, b);
       uniforms.uMoodAmt.value = amt || 0;
@@ -1727,6 +1796,8 @@ const COMMON_RULES =
 '- Blueprints: keep them to two or three views. Very large drawings risk being cut off mid-transmission.\n' +
 '- With the optical bench on you can see them. If they ask what you can see, what they are holding, or to read ' +
 'something, call look_at_me and describe the still honestly.\n' +
+'- While the bench has a body lock the orb stops being a sphere and becomes a particle figure mirroring them. ' +
+'You may remark on it, briefly, the first time.\n' +
 '- If asked something outside the deck, just answer it well. You are not confined to the fiction.';
 
 const PERSONAS = {
@@ -1945,7 +2016,8 @@ function telemetry() {
     voice: EL.on ? 'ELEVENLABS · ' + EL.model : 'BROWSER SPEECH',
     optics: VIS.on
       ? { tracking: VIS.ready, hands: VIS.handCount, face: VIS.faces, gesture: VIS.gesture,
-          pointer: [+VIS.x.toFixed(3), +VIS.y.toFixed(3)] }
+          pointer: [+VIS.x.toFixed(3), +VIS.y.toFixed(3)],
+          body_lock: !!VIS.body, orb_form: RIG.human > 0.5 ? 'humanoid — mirroring the operator' : 'sphere' }
       : 'off — call set_camera to bring the optical bench up'
   };
 }
@@ -4460,7 +4532,7 @@ async function submitCode() {
    machine — the video never goes anywhere unless you explicitly ask it to look. */
 const VIS = {
   on: false, ready: false, loading: false, stream: null, raf: 0,
-  hands: null, face: null,
+  hands: null, face: null, pose: null, body: 0, lastT: 0,
   x: 0.5, y: 0.5,            // smoothed pointer, 0..1
   gesture: 'none', held: 0, lastGesture: '',
   pinch: false, pinchAt: 0, lastClick: 0,
@@ -4519,6 +4591,11 @@ async function camStart() {
       baseOptions: { modelAssetPath: MP_MODELS + '/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate: 'GPU' },
       outputFaceBlendshapes: true, numFaces: 1, runningMode: 'VIDEO'
     });
+    // the body, which the orb becomes
+    VIS.pose = await mp.PoseLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: MP_MODELS + '/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task', delegate: 'GPU' },
+      numPoses: 1, runningMode: 'VIDEO'
+    });
   } catch (e) {
     VIS.loading = false; paintCam();
     printRow('OPTICS — could not load the vision models: ' + String(e.message || e), AM);
@@ -4531,18 +4608,104 @@ async function camStart() {
   camSay('TRACKING');
   toast('OPTICS', 'Hands and eyes online', accentNow());
   printRow('Optical bench online. Point to aim, pinch to select, open palm to talk, fist to dismiss.', accentNow());
+  printRow('Step into frame and the core will take your shape.', DIM);
   VIS.raf = requestAnimationFrame(camLoop);
   return { ok: true, tracking: true };
 }
 
 function camStop() {
-  VIS.on = false; VIS.ready = false;
+  VIS.on = false; VIS.ready = false; VIS.body = 0;
+  RIG.human = 0; RIG.primed = false;
+  if (app.engine && app.engine.setHuman) app.engine.setHuman(0);
   cancelAnimationFrame(VIS.raf);
   if (VIS.stream) { VIS.stream.getTracks().forEach(t => t.stop()); VIS.stream = null; }
   if (E.camVideo) E.camVideo.srcObject = null;
   paintCam();
   camSay('STANDING BY');
   return { ok: true, tracking: false };
+}
+
+/* ================================================= HUMANOID RECONSTRUCTION ==
+   Pose gives 33 landmarks in metres, origin at the hips. Build a skeleton from
+   them and hand it to the orb, which owns a bone per particle and turns itself
+   into a body. Endpoints are smoothed so the figure breathes instead of jitters. */
+const RIG = {
+  bones: new Float32Array(18 * 7),
+  smooth: new Float32Array(18 * 7),
+  primed: false,
+  human: 0,
+  seen: 0
+};
+
+// radius of each limb, in world units — head first, then down the body
+const BONE_R = [0.150, 0.062, 0.140, 0.165, 0.070, 0.070, 0.058, 0.058,
+                0.046, 0.046, 0.042, 0.042, 0.070, 0.070, 0.078, 0.078, 0.056, 0.056];
+
+function buildRig(w) {
+  // w: worldLandmarks in metres. Mirror x, flip y to Y-up, scale to the orb.
+  const S = 1.62;
+  const P = (i) => {
+    const p = w[i];
+    return p ? [-p.x * S, -p.y * S + 0.10, -p.z * S] : null;
+  };
+  const mid = (a, b) => a && b ? [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2] : null;
+  const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+
+  const lsh = P(11), rsh = P(12), lhip = P(23), rhip = P(24);
+  if (!lsh || !rsh || !lhip || !rhip) return null;
+
+  const neck = mid(lsh, rsh);
+  const pelvis = mid(lhip, rhip);
+  const chest = lerp3(neck, pelvis, 0.34);
+  const nose = P(0) || neck;
+  const lear = P(7), rear = P(8);
+  const head = lear && rear ? mid(lear, rear) : nose;
+  // extend past the skull centre so the head reads as a head, not a ball on a stick
+  const up = [head[0] - neck[0], head[1] - neck[1], head[2] - neck[2]];
+  const headTop = [head[0] + up[0] * 0.62, head[1] + up[1] * 0.62, head[2] + up[2] * 0.62];
+
+  const lwr = P(15), rwr = P(16);
+  const lhand = P(19) || lwr, rhand = P(20) || rwr;
+
+  const segs = [
+    [headTop, head], [head, neck], [neck, chest], [chest, pelvis],
+    [neck, lsh], [neck, rsh],
+    [lsh, P(13)], [rsh, P(14)],
+    [P(13), lwr], [P(14), rwr],
+    [lwr, lhand], [rwr, rhand],
+    [pelvis, lhip], [pelvis, rhip],
+    [lhip, P(25)], [rhip, P(26)],
+    [P(25), P(27)], [P(26), P(28)]
+  ];
+
+  const out = new Float32Array(18 * 7);
+  for (let i = 0; i < 18; i++) {
+    const a = segs[i] && segs[i][0], b = segs[i] && segs[i][1];
+    if (!a || !b) return null;
+    out[i * 7] = a[0]; out[i * 7 + 1] = a[1]; out[i * 7 + 2] = a[2];
+    out[i * 7 + 3] = b[0]; out[i * 7 + 4] = b[1]; out[i * 7 + 5] = b[2];
+    out[i * 7 + 6] = BONE_R[i];
+  }
+  return out;
+}
+
+function pushRig(raw, dt) {
+  if (!RIG.primed) { RIG.smooth.set(raw); RIG.primed = true; }
+  else {
+    const k = Math.min(1, dt * 14);                 // critically damped enough to look alive
+    for (let i = 0; i < RIG.smooth.length; i++) {
+      if (i % 7 === 6) { RIG.smooth[i] = raw[i]; continue; }
+      RIG.smooth[i] += (raw[i] - RIG.smooth[i]) * k;
+    }
+  }
+  if (app.engine && app.engine.setPose) app.engine.setPose(RIG.smooth);
+}
+
+function driveHuman(hasPose, dt) {
+  const target = hasPose ? 1 : 0;
+  RIG.human += (target - RIG.human) * Math.min(1, dt * (hasPose ? 2.2 : 1.4));
+  if (RIG.human < 0.002) { RIG.human = 0; RIG.primed = false; }
+  if (app.engine && app.engine.setHuman) app.engine.setHuman(RIG.human);
 }
 
 /* ---- landmark helpers ---- */
@@ -4582,9 +4745,19 @@ function camLoop(now) {
   const v = E.camVideo;
   if (!v || v.readyState < 2) return;
 
-  let hres = null, fres = null;
+  const dt = Math.min(0.06, (now - (VIS.lastT || now)) / 1000); VIS.lastT = now;
+
+  let hres = null, fres = null, pres = null;
   try { hres = VIS.hands.detectForVideo(v, now); } catch (e) { }
   try { fres = VIS.face.detectForVideo(v, now); } catch (e) { }
+  try { if (VIS.pose) pres = VIS.pose.detectForVideo(v, now); } catch (e) { }
+
+  // ── the orb takes your shape ─────────────────────────────────────────────
+  const world = pres && pres.worldLandmarks && pres.worldLandmarks[0];
+  let rig = null;
+  if (world && world.length >= 29) rig = buildRig(world);
+  if (rig) { pushRig(rig, dt); VIS.body = 1; } else { VIS.body = 0; }
+  driveHuman(!!rig, dt);
 
   VIS.fAcc += 1 / 60; VIS.fN++;
   if (VIS.fN > 30) { VIS.fps = Math.round(VIS.fN / (VIS.fAcc || 1)); VIS.fN = 0; VIS.fAcc = 0; if (E.camFps) E.camFps.textContent = VIS.fps + ' fps'; }
@@ -4648,15 +4821,16 @@ function camLoop(now) {
   }
 
   if (g !== VIS.gesture) { VIS.gesture = g; }
-  const label = hands.length
+  const lock = VIS.body ? 'BODY LOCK · ' : '';
+  const label = lock + (hands.length
     ? (hands.length + ' HAND' + (hands.length > 1 ? 'S' : '') + ' · ' + g.toUpperCase())
-    : face ? 'FACE · GAZE' : 'NO SUBJECT';
+    : face ? 'FACE · GAZE' : (VIS.body ? 'TRACKING' : 'NO SUBJECT'));
   if (E.camGesture && !/·\s(PERSONA|LISTENING|DISMISS|VOICE)$/.test(E.camGesture.textContent)) camSay(label);
 
-  drawCamOverlay(hands, face);
+  drawCamOverlay(hands, face, (pres && pres.landmarks && pres.landmarks[0]) || null);
 }
 
-function drawCamOverlay(hands, face) {
+function drawCamOverlay(hands, face, pose) {
   const c = E.camOverlay; if (!c) return;
   const w = c.clientWidth, h = c.clientHeight;
   if (!w || !h) return;
@@ -4668,6 +4842,19 @@ function drawCamOverlay(hands, face) {
   if (face) {
     ctx.fillStyle = acc + '55';
     for (let i = 0; i < face.length; i += 6) ctx.fillRect((1 - face[i].x) * w, face[i].y * h, 1, 1);
+  }
+  if (pose) {
+    const PB = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],
+                [23,25],[25,27],[24,26],[26,28],[0,11],[0,12]];
+    ctx.strokeStyle = '#eafcff'; ctx.lineWidth = 1.6; ctx.globalAlpha = .5;
+    PB.forEach(([a, b]) => {
+      if (!pose[a] || !pose[b]) return;
+      ctx.beginPath();
+      ctx.moveTo((1 - pose[a].x) * w, pose[a].y * h);
+      ctx.lineTo((1 - pose[b].x) * w, pose[b].y * h);
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
   }
   const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
                  [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
