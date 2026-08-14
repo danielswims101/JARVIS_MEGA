@@ -84,6 +84,7 @@
   #deck.presence > #gate { opacity:1; filter:none; transform:none; pointer-events:auto; }
   #deck.presence > #toasts, #deck.presence > #reticle { pointer-events:none; }
   #deck.presence > #ovl { opacity:1; filter:none; transform:none; pointer-events:none; }
+  #deck.presence > #fx  { opacity:1; filter:none; transform:none; pointer-events:none; }
 
   /* floating panes */
   .pane { position:absolute; display:flex; flex-direction:column; pointer-events:auto; overflow:hidden;
@@ -505,6 +506,9 @@
       <canvas id="camOverlay" style="position:absolute; inset:0; width:100%; height:100%;"></canvas>
     </div>
   </div>
+
+  <!-- combat FX: one additive canvas over everything the deck draws -->
+  <canvas id="fx" style="position:absolute; inset:0; z-index:47; display:none; pointer-events:none;"></canvas>
 
   <div id="reticle" style="position:absolute; left:0; top:0; width:42px; height:42px; z-index:48; display:none; pointer-events:none; margin:-21px 0 0 -21px; transition:opacity .3s ease;">
     <div style="position:absolute; inset:0; border:1px solid currentColor; border-radius:50%; opacity:.55;"></div>
@@ -1248,7 +1252,7 @@ const E = {};
  'ovlCal','ovlEmbed','panelTitle','panelSub','panelCount','panelTel','panelTools',
  'panelInput','ignite','camChip','camStat','cam','camVideo','camOverlay','camFps',
  'camGesture','reticle','reticleCore','camBar','camBody','camFold','camShut','camDot',
- 'pres','presUI','presName','presSub','presLeft','presRight','presYou','presSaid','presHint'].forEach(k => E[k] = $(k));
+ 'fx','pres','presUI','presName','presSub','presLeft','presRight','presYou','presSaid','presHint'].forEach(k => E[k] = $(k));
 
 /* ============================================================== SIMULATION === */
 const sim = (function build() {
@@ -1894,6 +1898,9 @@ const COMMON_RULES =
 'own particles, filling the screen. The body is YOURS — it is not a copy of the user and does not mirror them. ' +
 'Enter it with set_presence when they ask you to appear or show yourself. In there, keep replies short and ' +
 'spoken — they are captions under a body, not a terminal.\n' +
+'- fire_effect throws repulsor light across the deck. It is decoration, not a weapon — reach for it on an alert, ' +
+'for emphasis, or when asked to fire something. The user can also throw these by hand: a whip of the arm sends a ' +
+'disk into the distance, an open palm shoved forward fires a beam, and a punch fires a bolt.\n' +
 '- If asked something outside the deck, just answer it well. You are not confined to the fiction.';
 
 const PERSONAS = {
@@ -2268,6 +2275,13 @@ const TOOLS = [
 
   { name: 'set_presence', description: 'Enter or leave PRESENCE — your embodied mode. The deck folds away, the particle core gathers into a standing human figure of your own, and the whole screen becomes you. The figure is yours; it never copies the user. Use when they ask you to appear, show yourself, become human, or come out.',
     params: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
+  { name: 'fire_effect', description: 'Fire a repulsor effect across the deck — a spinning disk of light thrown into the distance, a repulsor beam, a blast, or a detonation. Use it for emphasis, on an alert, or when the user asks you to fire something. Purely visual.',
+    params: { type: 'object', properties: {
+      effect: { type: 'string', enum: ['disk', 'beam', 'blast', 'boom'], description: 'disk = thrown and detonates far off · beam = a lance from the core · blast = a repulsor bolt · boom = a detonation on the spot' },
+      direction: { type: 'string', enum: ['left', 'right', 'up', 'down', 'forward'], description: 'Where it goes. Default forward.' },
+      count: { type: 'number', description: 'Fire a burst of up to 5.' }
+    }, required: ['effect'] } },
+
   { name: 'set_camera', description: 'Turn the optical bench on or off on its own, without entering presence. Hands and eyes drive the deck: point to aim, pinch to click, open palm to listen, fist to dismiss, swipe for persona, wink for the microphone.',
     params: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
   { name: 'look_at_me', description: 'Take a still from the camera and actually look at it. Use when the user asks what you can see, what they are holding, how something looks, or to read something they hold up. Turns the camera on first if it is off.',
@@ -2403,6 +2417,8 @@ function runTool(name, a) {
 
     case 'open_target':
       return openTarget(a);
+    case 'fire_effect':
+      return fireEffect(a);
     case 'set_presence':
       if (a.on) { enterPresence(); return { ok: true, mode: 'presence', note: 'gathering — the figure takes about three seconds to form' }; }
       exitPresence(); return { ok: true, mode: 'deck' };
@@ -2932,6 +2948,352 @@ function browserSpeak(text) {
     speechSynthesis.speak(u);
   } catch (e) { }
 }
+
+
+/* ================================================================ GAUNTLET ===
+   Repulsors. One additive 2D canvas over the whole deck, a handful of
+   projectiles, and a small synthesiser — no assets, nothing to load.
+
+   Everything travels toward a vanishing point while shrinking, so a disk thrown
+   to the left genuinely reads as leaving into the distance rather than sliding
+   off the edge. Each projectile detonates when it arrives.
+--------------------------------------------------------------------------- */
+const FX = { items: [], raf: 0, ctx: null, w: 0, h: 0, last: 0, shake: 0, ac: null, muted: false };
+
+function fxCanvas() {
+  const c = E.fx;
+  if (!c) return null;
+  const w = innerWidth, h = innerHeight;
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; FX.w = w; FX.h = h; }
+  if (!FX.ctx) FX.ctx = c.getContext('2d');
+  return FX.ctx;
+}
+
+/* ---- sound ---------------------------------------------------------------
+   A repulsor is a rising whine that snaps, and an explosion is filtered noise
+   with a body thump under it. Both are three oscillators and an envelope. */
+function fxAudio() {
+  if (FX.muted) return null;
+  try {
+    if (!FX.ac) FX.ac = new (window.AudioContext || window.webkitAudioContext)();
+    if (FX.ac.state === 'suspended') FX.ac.resume();
+    return FX.ac;
+  } catch (e) { FX.muted = true; return null; }
+}
+function fxNoise(ac, dur) {
+  const n = Math.floor(ac.sampleRate * dur);
+  const buf = ac.createBuffer(1, n, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  const src = ac.createBufferSource(); src.buffer = buf; return src;
+}
+function sndCharge(vol) {
+  const ac = fxAudio(); if (!ac) return;
+  const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(260, t);
+  o.frequency.exponentialRampToValueAtTime(1500, t + 0.13);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol || 0.16, t + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+  o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.32);
+}
+function sndBoom(vol, far) {
+  const ac = fxAudio(); if (!ac) return;
+  const t = ac.currentTime;
+  const src = fxNoise(ac, 0.5), bp = ac.createBiquadFilter(), g = ac.createGain();
+  bp.type = 'lowpass'; bp.frequency.setValueAtTime(far ? 700 : 2400, t);
+  g.gain.setValueAtTime(vol || 0.2, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+  src.connect(bp); bp.connect(g); g.connect(ac.destination); src.start(t);
+
+  const o = ac.createOscillator(), g2 = ac.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(120, t);
+  o.frequency.exponentialRampToValueAtTime(38, t + 0.34);
+  g2.gain.setValueAtTime((vol || 0.2) * 0.9, t);
+  g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+  o.connect(g2); g2.connect(ac.destination); o.start(t); o.stop(t + 0.42);
+}
+
+/* ---- spawning ------------------------------------------------------------ */
+const VP = () => ({ x: FX.w * 0.5, y: FX.h * 0.42 });   // where the world recedes to
+
+function fxStart() {
+  if (!E.fx) return;
+  E.fx.style.display = 'block';
+  if (!FX.raf) { FX.last = performance.now(); FX.raf = requestAnimationFrame(fxLoop); }
+}
+
+/** Aim a projectile: from the hand, off in `dir`, pulled toward the horizon. */
+function fxAim(x, y, dx, dy) {
+  const v = VP();
+  const reach = Math.max(FX.w, FX.h) * 1.15;
+  const tx = x + dx * reach, ty = y + dy * reach;
+  return { tx: tx + (v.x - tx) * 0.52, ty: ty + (v.y - ty) * 0.52 };
+}
+
+function fxDisk(x, y, dx, dy) {
+  fxStart();
+  const a = fxAim(x, y, dx, dy);
+  FX.items.push({ kind: 'disk', x, y, ox: x, oy: y, tx: a.tx, ty: a.ty, p: 0, sp: 1.15,
+                  spin: Math.random() * 6.28, col: accentNow() });
+  FX.shake = Math.max(FX.shake, 5);
+  sndCharge(0.13);
+  if (app.engine) app.engine.shock(dx, -dy);
+}
+
+function fxBeam(x, y, dx, dy) {
+  fxStart();
+  const a = fxAim(x, y, dx, dy);
+  FX.items.push({ kind: 'beam', x, y, tx: a.tx, ty: a.ty, p: 0, sp: 2.4, col: accentNow() });
+  FX.shake = Math.max(FX.shake, 13);
+  sndCharge(0.22);
+  setTimeout(() => sndBoom(0.17, true), 180);
+  if (app.engine) { app.engine.shock(dx * 0.5, -dy * 0.5); app.engine.pulse('alert', 700); }
+}
+
+function fxBlast(x, y, dx, dy) {
+  fxStart();
+  const a = fxAim(x, y, dx, dy);
+  FX.items.push({ kind: 'blast', x, y, ox: x, oy: y, tx: a.tx, ty: a.ty, p: 0, sp: 1.9, col: accentNow() });
+  FX.shake = Math.max(FX.shake, 8);
+  sndCharge(0.15);
+  if (app.engine) app.engine.shock(dx, -dy);
+}
+
+function fxBoom(x, y, scale, far) {
+  fxStart();
+  const n = Math.round(16 + scale * 22);
+  const sparks = [];
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * 6.2832, sp = (0.4 + Math.random()) * scale * 150;
+    sparks.push({ a, sp, len: 6 + Math.random() * 20 });
+  }
+  FX.items.push({ kind: 'boom', x, y, p: 0, sp: 1.5, scale, sparks, col: accentNow() });
+  FX.shake = Math.max(FX.shake, far ? 7 : 16);
+  sndBoom(far ? 0.16 : 0.26, far);
+}
+
+/* ---- drawing ------------------------------------------------------------- */
+function fxGlow(ctx, x, y, r, col, a) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(1, r));
+  g.addColorStop(0, 'rgba(255,255,255,' + a + ')');
+  g.addColorStop(0.35, hexRgba(col, a * 0.75));
+  g.addColorStop(1, hexRgba(col, 0));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, Math.max(1, r), 0, 6.2832); ctx.fill();
+}
+function hexRgba(hex, a) {
+  const c = hexRgb(hex);
+  return 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + a + ')';
+}
+const fxEase = (p) => 1 - Math.pow(1 - p, 2.4);
+
+function fxLoop(now) {
+  const ctx = fxCanvas();
+  if (!ctx) { FX.raf = 0; return; }
+  const dt = Math.min(0.05, (now - FX.last) / 1000); FX.last = now;
+  FX.raf = requestAnimationFrame(fxLoop);
+
+  ctx.clearRect(0, 0, FX.w, FX.h);
+  ctx.globalCompositeOperation = 'lighter';
+
+  for (let i = FX.items.length - 1; i >= 0; i--) {
+    const it = FX.items[i];
+    it.p += dt * it.sp;
+    const e = fxEase(Math.min(1, it.p));
+    const x = it.x + (it.tx - it.x) * e;
+    const y = it.y + (it.ty - it.y) * e;
+    const shrink = 1 - 0.88 * e;
+
+    if (it.kind === 'disk') {
+      // a ring seen edge-on, spinning away
+      const r = 62 * shrink, fade = 1 - e * 0.55;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(it.spin + it.p * 5.5);
+      ctx.scale(1, 0.30 + 0.22 * e);
+      ctx.lineWidth = Math.max(1, 9 * shrink);
+      ctx.strokeStyle = hexRgba(it.col, 0.9 * fade);
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.2832); ctx.stroke();
+      ctx.lineWidth = Math.max(1, 3 * shrink);
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.85 * fade) + ')';
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.82, 0, 6.2832); ctx.stroke();
+      ctx.restore();
+      fxGlow(ctx, x, y, r * 1.5, it.col, 0.20 * fade);
+      // a wake, so it reads as travelling
+      ctx.strokeStyle = hexRgba(it.col, 0.16 * fade);
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(it.ox, it.oy); ctx.lineTo(x, y); ctx.stroke();
+      if (it.p >= 1) { fxBoom(x, y, 1.15, true); FX.items.splice(i, 1); }
+      continue;
+    }
+
+    if (it.kind === 'blast') {
+      const r = 22 * shrink, fade = 1 - e * 0.4;
+      fxGlow(ctx, x, y, r * 3.2, it.col, 0.55 * fade);
+      fxGlow(ctx, x, y, r, '#ffffff', 0.95 * fade);
+      ctx.strokeStyle = hexRgba(it.col, 0.30 * fade);
+      ctx.lineWidth = Math.max(1, 5 * shrink);
+      ctx.beginPath(); ctx.moveTo(it.ox, it.oy); ctx.lineTo(x, y); ctx.stroke();
+      if (it.p >= 1) { fxBoom(x, y, 0.85, true); FX.items.splice(i, 1); }
+      continue;
+    }
+
+    if (it.kind === 'beam') {
+      // a lance that lengthens to its target, then burns out
+      const p = Math.min(1, it.p);
+      const hx = it.x, hy = it.y;
+      const ex = hx + (it.tx - hx) * fxEase(p), ey = hy + (it.ty - hy) * fxEase(p);
+      const fade = p < 0.55 ? 1 : 1 - (p - 0.55) / 0.45;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = hexRgba(it.col, 0.42 * fade);
+      ctx.lineWidth = 26 * fade;
+      ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.95 * fade) + ')';
+      ctx.lineWidth = 7 * fade;
+      ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(ex, ey); ctx.stroke();
+      fxGlow(ctx, hx, hy, 90 * fade, it.col, 0.55 * fade);       // muzzle
+      fxGlow(ctx, ex, ey, 48 * fade, '#ffffff', 0.5 * fade);     // impact
+      if (!it.hit && p > 0.55) { it.hit = true; fxBoom(ex, ey, 1.5, true); }
+      if (it.p >= 1) FX.items.splice(i, 1);
+      continue;
+    }
+
+    if (it.kind === 'boom') {
+      const p = Math.min(1, it.p), f = 1 - p;
+      const R = 26 + 150 * it.scale * fxEase(p);
+      fxGlow(ctx, it.x, it.y, R * 1.25, it.col, 0.55 * f * f);
+      ctx.strokeStyle = hexRgba(it.col, 0.85 * f);
+      ctx.lineWidth = Math.max(1, 7 * f);
+      ctx.beginPath(); ctx.arc(it.x, it.y, R, 0, 6.2832); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.9 * f * f) + ')';
+      ctx.lineWidth = Math.max(1, 3 * f);
+      ctx.beginPath(); ctx.arc(it.x, it.y, R * 0.72, 0, 6.2832); ctx.stroke();
+      ctx.lineWidth = 2;
+      it.sparks.forEach((s) => {
+        const d = s.sp * it.scale * fxEase(p) * 1.4;
+        const cx = it.x + Math.cos(s.a) * d, cy = it.y + Math.sin(s.a) * d;
+        ctx.strokeStyle = hexRgba(it.col, 0.8 * f);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(s.a) * s.len * f, cy + Math.sin(s.a) * s.len * f);
+        ctx.stroke();
+      });
+      if (it.p >= 1) FX.items.splice(i, 1);
+      continue;
+    }
+
+    FX.items.splice(i, 1);
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+
+  // recoil — the deck itself takes the hit
+  if (FX.shake > 0.2) {
+    FX.shake *= Math.pow(0.02, dt);
+    const d = document.getElementById('deck');
+    if (d) d.style.transform = 'translate(' + (Math.random() - 0.5) * FX.shake +
+      'px,' + (Math.random() - 0.5) * FX.shake + 'px)';
+  } else if (FX.shake) {
+    FX.shake = 0;
+    const d = document.getElementById('deck');
+    if (d) d.style.transform = '';
+  }
+
+  if (!FX.items.length && !FX.shake) {
+    cancelAnimationFrame(FX.raf); FX.raf = 0;
+    ctx.clearRect(0, 0, FX.w, FX.h);
+    if (E.fx) E.fx.style.display = 'none';
+  }
+}
+
+/* ---- reading the arm -----------------------------------------------------
+   No body tracker, so the hand itself is the instrument. Its lateral speed
+   gives a whip; the rate at which it grows in frame gives a thrust toward the
+   camera — a hand coming at you gets bigger, and nothing else does.
+--------------------------------------------------------------------------- */
+const GAUNT = { hist: [], lastWhip: 0, lastThrust: 0, lastPunch: 0, armed: true };
+
+function gauntlet(h, now) {
+  if (!GAUNT.armed || OVL.grab) return;                 // never while carrying a pane
+
+  const span = dist(h.centre, h.tip) + 0.0001;
+  const px = 1 - h.centre.x, py = h.centre.y;
+  const sz = h.span || span;
+
+  GAUNT.hist.push({ t: now, x: px, y: py, s: sz });
+  while (GAUNT.hist.length > 8) GAUNT.hist.shift();
+  if (GAUNT.hist.length < 4) return;
+
+  const a = GAUNT.hist[0], b = GAUNT.hist[GAUNT.hist.length - 1];
+  const dt = (b.t - a.t) / 1000;
+  if (dt < 0.02) return;
+
+  const vx = (b.x - a.x) / dt, vy = (b.y - a.y) / dt;
+  const grow = ((b.s - a.s) / Math.max(0.02, a.s)) / dt;   // relative growth per second
+
+  const X = px * innerWidth, Y = py * innerHeight;
+
+  // ── punch: a closed fist driven at the camera ──────────────────────────
+  if (h.fist && grow > 1.5 && now - GAUNT.lastPunch > 320) {
+    GAUNT.lastPunch = now; GAUNT.lastThrust = now; GAUNT.hist.length = 0;
+    fxBlast(X, Y, (px - 0.5) * 0.5, (py - 0.5) * 0.5);
+    camSay('REPULSOR');
+    return;
+  }
+
+  // ── thrust: an open palm shoved forward ────────────────────────────────
+  if (h.palm && grow > 1.2 && now - GAUNT.lastThrust > 800) {
+    GAUNT.lastThrust = now; GAUNT.hist.length = 0;
+    fxBeam(X, Y, (px - 0.5) * 0.7, (py - 0.5) * 0.7);
+    camSay('BEAM');
+    return;
+  }
+
+  // ── whip: the hand thrown sideways ─────────────────────────────────────
+  if (!h.pinch && Math.abs(vx) > 1.9 && Math.abs(vx) > Math.abs(vy) * 1.3 && now - GAUNT.lastWhip > 620) {
+    GAUNT.lastWhip = now; GAUNT.hist.length = 0;
+    fxDisk(X, Y, Math.sign(vx), vy * 0.18);
+    camSay(vx > 0 ? 'DISK · RIGHT' : 'DISK · LEFT');
+    return;
+  }
+}
+
+
+/* ---- fired by name -------------------------------------------------------- */
+const FX_DIR = {
+  left: [-1, -0.05], right: [1, -0.05], up: [0.05, -1], down: [0.05, 1], forward: [0, -0.12]
+};
+
+function fireEffect(a) {
+  fxCanvas();
+  const d = FX_DIR[String(a.direction || 'forward').toLowerCase()] || FX_DIR.forward;
+  const n = clamp(Math.round(a.count || 1), 1, 5);
+  // fired from the core, which is the middle of the screen
+  const x = innerWidth * 0.5, y = innerHeight * 0.56;
+  const kind = String(a.effect || 'blast').toLowerCase();
+  for (let i = 0; i < n; i++) {
+    setTimeout(() => {
+      const jx = d[0] + (Math.random() - 0.5) * 0.22, jy = d[1] + (Math.random() - 0.5) * 0.22;
+      if (kind === 'disk') fxDisk(x, y, jx, jy);
+      else if (kind === 'beam') fxBeam(x, y, jx, jy);
+      else if (kind === 'boom') fxBoom(x + (Math.random() - 0.5) * 260, y - 120 - Math.random() * 120, 1.3, false);
+      else fxBlast(x, y, jx, jy);
+    }, i * 170);
+  }
+  return { ok: true, effect: kind, direction: a.direction || 'forward', count: n };
+}
+
+/* A handle for the console and the test harness. */
+app.fx = {
+  disk: fxDisk, beam: fxBeam, blast: fxBlast, boom: fxBoom,
+  fire: fireEffect, hand: (h, t) => gauntlet(h, t),
+  get items() { return FX.items.map(i => i.kind); },
+  get shake() { return FX.shake; },
+  mute(v) { FX.muted = v !== false; }
+};
 
 /* =================================================================== VOICE === */
 function setVoiceUI(mode) {
@@ -3515,7 +3877,10 @@ function dockOrb(on) {
   if (app.engine && app.engine.reserve && app.engine.canvas) set(app.engine.canvas);
 }
 
-function refreshDock() { dockOrb(paneCount() > 0 || PANEL.on); }
+/* The orb lights the whole deck. Docking it to a 188px corner made sense when
+   a single overlay covered the screen — with floating panes it just turns the
+   lights off, so it only stands aside for the full-screen trace panel now. */
+function refreshDock() { dockOrb(PANEL.on); }
 
 /* ---------------------------------------------------------------- panes ----
    Everything the deck puts on screen is a floating pane: its own frame, its own
@@ -3696,7 +4061,7 @@ function ovlOpen(mode, title, sub) {
   const p = ensurePane(mode);
   E.ovl.style.display = 'block';
   focusPane(p);
-  dockOrb(true);
+  refreshDock();
   p.titleEl.textContent = title || PANE_KIND[mode].label;
   p.subEl.textContent = sub || '';
   p.exportEl.style.display = mode === 'blueprint' ? 'block' : 'none';
@@ -5260,6 +5625,7 @@ function readHand(lm) {
     // dismissing it. Without this a grab closed the pane it had just taken.
     fist: up === 0 && !pinching,
     peace: fingers[0] && fingers[1] && up === 2,
+    span,                    // apparent size — grows as the hand comes at you
     tip: lm[8], centre: lm[9]
   };
 }
@@ -5327,9 +5693,12 @@ function camLoop(now) {
     tx = 1 - src.x; ty = src.y;                                 // the feed is mirrored
     g = h.pinch ? 'pinch' : h.point ? 'point' : h.palm ? 'palm' : h.fist ? 'fist' : h.peace ? 'peace' : 'hand';
 
-    // swipe: sharp lateral travel of the palm
+    // ── the gauntlet reads this hand for combat gestures ─────────────────
+    gauntlet(h, now);
+
+    // swipe: sharp lateral travel — two fingers, so a whip cannot trigger it
     const px = 1 - h.centre.x;
-    if (!OVL.grab && now - VIS.swipeAt > 700 && Math.abs(px - VIS.swipeX) > 0.34) {
+    if (h.peace && !OVL.grab && now - VIS.swipeAt > 700 && Math.abs(px - VIS.swipeX) > 0.34) {
       VIS.swipeAt = now;
       const order = ['jarvis', 'friday', 'edith'];
       const dir = px > VIS.swipeX ? 1 : -1;
