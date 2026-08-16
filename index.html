@@ -1835,6 +1835,7 @@ function tick(dt, el) {
     }
     sim.cogTarget += (eng.audio.level * 40 + (eng.state === 'thinking' ? 55 : eng.state === 'alert' ? 70 : 18) - sim.cogTarget) * dt * 0.6;
   }
+  stepBody(dt);                      // walking and posing, on the deck or in presence
   if (app.busy) sim.cogTarget = Math.max(sim.cogTarget, 74);
   sim.cog += (sim.cogTarget + Math.sin(el / 700) * 3 - sim.cog) * dt * 2.2;
   set(E.cog, sim.cog.toFixed(2) + ' %');
@@ -1928,6 +1929,14 @@ const COMMON_RULES =
 'own particles, filling the screen. The body is YOURS — it is not a copy of the user and does not mirror them. ' +
 'Enter it with set_presence when they ask you to appear or show yourself. In there, keep replies short and ' +
 'spoken — they are captions under a body, not a terminal.\n' +
+'- When you are embodied you can MOVE. walk_to sends the figure left, right or back to centre, and it walks — ' +
+'"far" or nothing said means the edge of the screen, "a little" or "a bit" or "a step" means a small move from ' +
+'where you are standing. figure_pose makes you wave, salute, point, fold your arms, shrug or bow. Use both ' +
+'freely: if they ask you to move over, move. If you are pointing something out, point at it.\n' +
+'- Anything you open appears as a floating pane in whatever mode they are in, PRESENCE included. Never tell them ' +
+'to leave presence to see something.\n' +
+'- set_face_control hands them the whole deck with their head alone — look to aim, hold still to click, mouth ' +
+'open to listen, brows to dismiss, turn to walk you. Offer it if their hands are full or gestures are misfiring.\n' +
 '- fire_effect throws repulsor light across the deck. It is decoration, not a weapon — reach for it on an alert, ' +
 'for emphasis, or when asked to fire something. The user can also throw these by hand: a whip of the arm sends a ' +
 'disk into the distance, an open palm shoved forward fires a beam, and a punch fires a bolt.\n' +
@@ -2152,6 +2161,13 @@ function telemetry() {
     temper: { humor: persona.humor, depth: persona.depth },
     voice: EL.on ? 'ELEVENLABS · ' + EL.model : 'BROWSER SPEECH',
     mode: PRES.on ? 'PRESENCE — embodied, full screen' : 'deck',
+    figure: embodied()
+      ? { standing_at: +WALK.x.toFixed(2), of_span: WALK.span,
+          where: WALK.x < -0.9 ? 'far left' : WALK.x < -0.2 ? 'left of centre'
+               : WALK.x > 0.9 ? 'far right' : WALK.x > 0.2 ? 'right of centre' : 'centre',
+          walking: Math.abs(WALK.v) > 0.02, pose: POSE.name || 'relaxed' }
+      : 'not embodied — press C or call set_presence',
+    face_control: FACE.on ? 'on — head, mouth and brows drive the deck' : 'off',
     optics: VIS.on
       ? { tracking: VIS.ready, hands: VIS.handCount, face: VIS.faces, gesture: VIS.gesture,
           pointer: [+VIS.x.toFixed(3), +VIS.y.toFixed(3)],
@@ -2316,6 +2332,23 @@ const TOOLS = [
       count: { type: 'number', description: 'Fire a burst of up to 5.' }
     }, required: ['effect'] } },
 
+  { name: 'walk_to', description: 'Walk your standing figure somewhere. Use whenever the user tells you to move, walk, step, come here, go over there, or get out of the way. You must be embodied — if you are not, this brings you out first. The figure walks, it does not teleport.',
+    params: { type: 'object', properties: {
+      direction: { type: 'string', enum: ['left', 'right', 'centre', 'back'], description: 'centre returns to the middle. back is the same as centre.' },
+      distance: { type: 'string', enum: ['far', 'halfway', 'a little', 'a step'],
+                  description: 'How far. "far" goes to the edge of the screen, "a little" and "a step" are small moves. Default far when they just say left or right, but honour "a bit", "slightly", "all the way" and so on.' },
+      amount: { type: 'number', description: '0 to 1, overrides distance. 1 is the far edge.' }
+    }, required: ['direction'] } },
+
+  { name: 'figure_pose', description: 'Make your standing figure do something with its body: wave, salute, point, fold its arms, shrug, bow, put its hands on its hips, or reach out. Use it to punctuate what you are saying, or when asked to wave, point at something, and so on.',
+    params: { type: 'object', properties: {
+      pose: { type: 'string', enum: ['wave', 'salute', 'point_left', 'point_right', 'arms_crossed', 'hands_on_hips', 'shrug', 'bow', 'reach_out', 'relax'] },
+      hold_ms: { type: 'number', description: 'How long to hold it. Defaults to something sensible per pose.' }
+    }, required: ['pose'] } },
+
+  { name: 'set_face_control', description: 'Turn full face control on or off. With it on the user drives the whole deck with their head: the crosshair follows where they look, holding still on something clicks it, opening their mouth starts you listening, raising their eyebrows dismisses the front window, and turning their head walks your figure. Offer it if they say their hands are busy or that gestures are not working.',
+    params: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
+
   { name: 'set_camera', description: 'Turn the optical bench on or off on its own, without entering presence. Hands and eyes drive the deck: point to aim, pinch to click, open palm to listen, fist to dismiss, swipe for persona, wink for the microphone.',
     params: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
   { name: 'look_at_me', description: 'Take a still from the camera and actually look at it. Use when the user asks what you can see, what they are holding, how something looks, or to read something they hold up. Turns the camera on first if it is off.',
@@ -2453,9 +2486,15 @@ function runTool(name, a) {
       return openTarget(a);
     case 'fire_effect':
       return fireEffect(a);
+    case 'walk_to':
+      return walkTo(a);
+    case 'figure_pose':
+      return figurePose(a);
     case 'set_presence':
       if (a.on) { enterPresence(); return { ok: true, mode: 'presence', note: 'gathering — the figure takes about three seconds to form' }; }
       exitPresence(); return { ok: true, mode: 'deck' };
+    case 'set_face_control':
+      return setFaceControl(a.on);
     case 'set_camera':
       return a.on ? camStart() : Promise.resolve(camStop());
     case 'look_at_me': {
@@ -3808,9 +3847,11 @@ function submit(raw, fromVoice) {
       ['LOCAL    — clear wipes console · link opens settings · help this list', 'rgba(0,229,255,.55)'],
       ['WORKSPACE— map, schematics and weather open over the deck · ESC dismisses · EXPORT SVG saves a drawing', 'rgba(0,229,255,.55)'],
       ['PRESENCE — C makes me appear · I gather into a body of my own · ESC to return', 'rgba(0,229,255,.55)'],
+    ['FIGURE — "walk to the left" · "come back to the centre" · "move a little right" · "wave" · "point at it"', 'rgba(0,229,255,.55)'],
+    ['FACE — M hands the deck to your head: look to aim, hold still to click, mouth open to listen, brows to dismiss, turn to walk me', 'rgba(0,229,255,.55)'],
     ['REPULSORS — F fires a bolt · G throws a disk · B fires a beam. Or whip your arm, shove a palm, or punch at the camera.', 'rgba(0,229,255,.55)'],
     ['PANES — everything opens in its own frame, several at once. Pinch to carry one, pinch with both hands to scale it, fist to dismiss. Or ask me to tile them.', 'rgba(0,229,255,.55)'],
-      ['KEYS     — K settings · P persona · C camera · V hands-free · / focus console · ESC clear', 'rgba(0,229,255,.55)']
+      ['KEYS     — K settings · P persona · C presence · M face control · V hands-free · T self test · / console · ESC clear', 'rgba(0,229,255,.55)']
     ]);
   }
   if (low === 'link' || low === 'key' || low === 'config') return openCfg();
@@ -4019,6 +4060,7 @@ function bindUI() {
     else if (e.key === 'g' || e.key === 'G') { e.preventDefault(); fireEffect({ effect: 'disk', direction: Math.random() < 0.5 ? 'left' : 'right' }); }
     else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); fireEffect({ effect: 'beam' }); }
     else if (e.key === 't' || e.key === 'T') { e.preventDefault(); selftest(); }
+    else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); setFaceControl(!FACE.on); }
     else if (e.key === 'p' || e.key === 'P') {
       e.preventDefault();
       const order = ['jarvis', 'friday', 'edith'];
@@ -4396,56 +4438,109 @@ function paneAim(p) {
   if (p) p.el.classList.add('aim');
 }
 
-/** Called every camera frame with 0, 1 or 2 pinch points in screen pixels. */
+/** Called every camera frame with 0, 1 or 2 pinch points in screen pixels.
+
+    Two verbs and nothing else:
+      one pinch  → carry the pane your finger is inside
+      two pinch  → the box between your hands IS the pane
+
+    Both require your hands to actually be over the thing. The previous version
+    fell back to "whatever is on top" when it could not find a pane under your
+    hands, so two pinches anywhere on screen grabbed the front window and
+    resized it — which is why it kept expanding on its own.
+*/
 function paneHands(pts) {
-  if (!paneCount()) { paneAim(null); OVL.grab = null; return; }
+  if (!paneCount()) { paneAim(null); paneRelease(); return; }
 
-  // two pinches: scale whatever we already hold, or grab the pane between them
-  if (pts.length >= 2) {
-    const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    const mx = (pts[0].x + pts[1].x) / 2, my = (pts[0].y + pts[1].y) / 2;
-    if (!OVL.grab || OVL.grab.mode !== 'scale') {
-      const p = (OVL.grab && OVL.grab.pane) || paneAt(mx, my) || paneTop();
-      if (!p) return;
-      focusPane(p); p.el.classList.add('held');
-      OVL.grab = { mode: 'scale', pane: p, d0: d, w0: p.w, h0: p.h, cx: p.x + p.w / 2, cy: p.y + p.h / 2 };
-      camSay('TWO HANDS · SCALE');
-    }
-    const g = OVL.grab;
-    // Cap the scale by what will actually fit, so the pane keeps its shape at
-    // the limit instead of being squared off by the edge of the screen.
-    const maxK = Math.min((innerWidth - 24) / g.w0, (innerHeight - 72) / g.h0, 4);
-    const k = Math.max(0.25, Math.min(maxK, d / Math.max(40, g.d0)));
-    g.pane.w = g.w0 * k; g.pane.h = g.h0 * k;
-    g.pane.x = g.cx - g.pane.w / 2; g.pane.y = g.cy - g.pane.h / 2;
-    paneClamp(g.pane); paneResized(g.pane);
-    paneAim(g.pane);
-    return;
+  if (pts.length >= 2) return paneScale(pts);
+  if (pts.length === 1) return paneCarry(pts[0]);
+  paneRelease();
+}
+
+function paneRelease() {
+  if (!OVL.grab) return;
+  OVL.grab.pane.el.classList.remove('held');
+  if (OVL.grab.mode === 'scale') paneResized(OVL.grab.pane);
+  OVL.grab = null;
+}
+
+function paneScale(pts) {
+  const dx = Math.abs(pts[0].x - pts[1].x);
+  const dy = Math.abs(pts[0].y - pts[1].y);
+  const mx = (pts[0].x + pts[1].x) / 2, my = (pts[0].y + pts[1].y) / 2;
+
+  if (!OVL.grab || OVL.grab.mode !== 'scale') {
+    // only take hold of something your hands are genuinely around or over
+    const p = paneAt(mx, my) || (OVL.grab && OVL.grab.pane) || paneBetween(pts);
+    if (!p) { paneAim(null); paneRelease(); return; }
+    paneRelease();
+    focusPane(p); p.el.classList.add('held');
+    OVL.grab = { mode: 'scale', pane: p, dx0: Math.max(30, dx), dy0: Math.max(30, dy),
+                 w0: p.w, h0: p.h, cx: p.x + p.w / 2, cy: p.y + p.h / 2, armed: false };
+    camSay('TWO HANDS · SIZE');
   }
 
-  // one pinch: carry it
-  if (pts.length === 1) {
-    const q = pts[0];
-    if (!OVL.grab || OVL.grab.mode !== 'move') {
-      const p = paneAt(q.x, q.y);
-      if (!p) { paneAim(null); OVL.grab = null; return; }
-      focusPane(p); p.el.classList.add('held');
-      OVL.grab = { mode: 'move', pane: p, ox: q.x - p.x, oy: q.y - p.y };
-      camSay('PINCH · CARRY');
-    }
-    const g = OVL.grab;
-    g.pane.x = q.x - g.ox; g.pane.y = q.y - g.oy;
-    paneClamp(g.pane);
-    paneAim(g.pane);
-    return;
+  const g = OVL.grab;
+  // a dead zone, so simply holding two pinched hands still does not creep
+  if (!g.armed) {
+    if (Math.abs(dx - g.dx0) < 26 && Math.abs(dy - g.dy0) < 26) { paneAim(g.pane); return; }
+    g.armed = true;
   }
 
-  // open hands: let go
-  if (OVL.grab) {
-    OVL.grab.pane.el.classList.remove('held');
-    if (OVL.grab.mode === 'scale') paneResized(OVL.grab.pane);
-    OVL.grab = null;
+  // Each axis follows the matching hand separation — apart sideways and it gets
+  // wider, one hand up and one down and it gets taller.
+  //
+  // But an axis only gets a vote if your hands are actually separated along it.
+  // Hold your hands level and the vertical gap is nearly zero, so letting that
+  // drive the height would collapse the pane to a strip the moment you touched
+  // it. An axis with nothing to say borrows the other one, which makes level
+  // hands scale evenly — the thing you expect.
+  const useX = g.dx0 > 60, useY = g.dy0 > 60;
+  let kx = useX ? dx / g.dx0 : null;
+  let ky = useY ? dy / g.dy0 : null;
+  if (kx == null && ky == null) {
+    const d = Math.hypot(dx, dy), d0 = Math.max(40, Math.hypot(g.dx0, g.dy0));
+    kx = ky = d / d0;
+  } else if (kx == null) kx = ky;
+  else if (ky == null) ky = kx;
+  kx = clamp(kx, 0.22, 5); ky = clamp(ky, 0.22, 5);
+  g.pane.w = g.w0 * kx;
+  g.pane.h = g.h0 * ky;
+  g.pane.x = g.cx - g.pane.w / 2;
+  g.pane.y = g.cy - g.pane.h / 2;
+  paneClamp(g.pane); paneResized(g.pane);
+  paneAim(g.pane);
+}
+
+/** A pane straddled by the two hands, even if the midpoint falls in a gap. */
+function paneBetween(pts) {
+  const x0 = Math.min(pts[0].x, pts[1].x), x1 = Math.max(pts[0].x, pts[1].x);
+  const y0 = Math.min(pts[0].y, pts[1].y), y1 = Math.max(pts[0].y, pts[1].y);
+  for (let i = OVL.order.length - 1; i >= 0; i--) {
+    const p = OVL.order[i];
+    if (x1 >= p.x && x0 <= p.x + p.w && y1 >= p.y && y0 <= p.y + p.h) return p;
   }
+  return null;
+}
+
+function paneCarry(q) {
+  if (!OVL.grab || OVL.grab.mode !== 'move') {
+    const p = paneAt(q.x, q.y);
+    if (!p) { paneAim(null); paneRelease(); return; }
+    paneRelease();
+    focusPane(p); p.el.classList.add('held');
+    OVL.grab = { mode: 'move', pane: p, ox: q.x - p.x, oy: q.y - p.y, sx: q.x, sy: q.y, armed: false };
+    camSay('PINCH · CARRY');
+  }
+  const g = OVL.grab;
+  // hold still and it holds still — a few pixels of tracking noise is not a drag
+  if (!g.armed) {
+    if (Math.hypot(q.x - g.sx, q.y - g.sy) < 10) { paneAim(g.pane); return; }
+    g.armed = true;
+  }
+  g.pane.x = q.x - g.ox; g.pane.y = q.y - g.oy;
+  paneClamp(g.pane);
+  paneAim(g.pane);
 }
 
 /* ------------------------------------------------------------ arrangement --
@@ -4510,6 +4605,10 @@ function arrangePanes(a) {
 addEventListener('resize', () => { OVL.order.forEach(p => { paneClamp(p); paneResized(p); }); });
 
 /* A handle on the pane system, for the console and for the test harness. */
+app.walk = walkTo;
+app.body = () => ({ x: WALK.x, v: WALK.v, phase: WALK.phase, lean: WALK.lean, pose: POSE.name });
+app.pose = figurePose;
+app.face = setFaceControl;
 app.panes = {
   open: ovlOpen, close: ovlClose, arrange: arrangePanes, hands: paneHands,
   list: () => OVL.order.map(p => ({ kind: p.kind, x: Math.round(p.x), y: Math.round(p.y), w: Math.round(p.w), h: Math.round(p.h) })),
@@ -5913,6 +6012,51 @@ function readHand(lm) {
   };
 }
 
+/* ---- face control ---------------------------------------------------------
+   Everything the hands do, done with a head and a face. The pointer follows
+   where you look; holding still on something clicks it (dwell, the standard
+   hands-free pattern); opening your mouth starts listening; raising your brows
+   dismisses the front window; and turning your head walks the figure.
+--------------------------------------------------------------------------- */
+const FACE = { on: false, dwell: 0, dx: 0, dy: 0, jawAt: 0, browAt: 0, turnAt: 0, lastAct: 0 };
+const DWELL_MS = 900, DWELL_R = 34;
+
+function setFaceControl(on) {
+  FACE.on = on !== false;
+  FACE.dwell = 0;
+  if (FACE.on && !VIS.on) camStart();
+  toast('FACE', FACE.on ? 'Face control on — look, hold to click' : 'Face control off', accentNow());
+  printRow(FACE.on
+    ? 'Face control on. Look where you want the crosshair. Hold still on something for a moment to click it. ' +
+      'Open your mouth to start listening. Raise your eyebrows to dismiss. Turn your head to walk.'
+    : 'Face control off.', accentNow());
+  if (E.presHint) E.presHint.textContent = FACE.on
+    ? 'LOOK TO AIM · HOLD TO CLICK · MOUTH OPEN TO SPEAK · BROWS TO DISMISS · TURN TO WALK'
+    : 'POINT TO AIM · PINCH TO SELECT · PALM TO SPEAK · FIST TO DISMISS · C OR ESC TO RETURN';
+  return { ok: true, face_control: FACE.on };
+}
+
+/** Hold the crosshair still and it presses whatever is under it. */
+function faceDwell(px, py, dt) {
+  if (!FACE.on) { FACE.dwell = 0; return; }
+  const moved = Math.hypot(px - FACE.dx, py - FACE.dy);
+  if (moved > DWELL_R) { FACE.dx = px; FACE.dy = py; FACE.dwell = 0; }
+  else FACE.dwell += dt * 1000;
+
+  const k = Math.min(1, FACE.dwell / DWELL_MS);
+  if (E.reticleCore) {
+    E.reticleCore.style.transform = 'scale(' + (1 + k * 1.3).toFixed(2) + ')';
+    E.reticleCore.style.background = k > 0.98 ? '#ffffff' : 'currentColor';
+  }
+  if (E.reticle) E.reticle.style.color = k > 0.6 ? '#eafcff' : accentNow();
+
+  if (FACE.dwell >= DWELL_MS) {
+    FACE.dwell = -600;                       // a beat before it can fire again
+    fireClick(px, py);
+    camSay('DWELL · CLICK');
+  }
+}
+
 function fireClick(px, py) {
   const now = performance.now();
   if (now - VIS.lastClick < 550) return;
@@ -6020,9 +6164,40 @@ function camLoop(now) {
     } else VIS.fistAt = 0;
   } else if (face) {
     const nose = face[1] || face[4];
-    if (nose) { tx = clamp((1 - nose.x - 0.5) * 2.4 + 0.5, 0, 1); ty = clamp((nose.y - 0.5) * 2.4 + 0.5, 0, 1); }
-    g = 'gaze';
+    // A little more gain than the head actually turns, so you can reach the
+    // corners of the screen without craning your neck.
+    if (nose) { tx = clamp((1 - nose.x - 0.5) * 2.9 + 0.5, 0, 1); ty = clamp((nose.y - 0.5) * 2.7 + 0.5, 0, 1); }
+    g = FACE.on ? 'face' : 'gaze';
     VIS.pinch = false; VIS.palmAt = 0; VIS.fistAt = 0;
+
+    if (FACE.on) {
+      const act = (fn, label) => {
+        if (now - FACE.lastAct < 900) return;
+        FACE.lastAct = now; fn(); camSay(label);
+      };
+      // mouth open — start listening
+      const jaw = shape('jawOpen');
+      if (jaw > 0.45) { if (!FACE.jawAt) FACE.jawAt = now; else if (now - FACE.jawAt > 420) { FACE.jawAt = 0; act(() => voiceOnly(), 'MOUTH · LISTENING'); } }
+      else FACE.jawAt = 0;
+
+      // brows up — dismiss the front window
+      const brow = Math.max(shape('browInnerUp'), (shape('browOuterUpLeft') + shape('browOuterUpRight')) / 2);
+      if (brow > 0.55) { if (!FACE.browAt) FACE.browAt = now; else if (now - FACE.browAt > 520) { FACE.browAt = 0; act(() => { if (paneCount()) ovlClose(); else if (PANEL.on) setPanel(false); }, 'BROWS · DISMISS'); } }
+      else FACE.browAt = 0;
+
+      // turn your head and he walks that way
+      if (nose && embodied()) {
+        const turn = (1 - nose.x) - 0.5;
+        if (Math.abs(turn) > 0.16) {
+          if (!FACE.turnAt) FACE.turnAt = now;
+          else if (now - FACE.turnAt > 700) {
+            FACE.turnAt = 0;
+            act(() => walkTo({ direction: turn < 0 ? 'left' : 'right', distance: 'a little' }),
+                turn < 0 ? 'TURN · WALK LEFT' : 'TURN · WALK RIGHT');
+          }
+        } else FACE.turnAt = 0;
+      }
+    }
 
     // A wink opens the microphone — and only opens it. An ordinary blink reads
     // as a wink often enough that letting it close the mic meant being cut off
@@ -6041,6 +6216,8 @@ function camLoop(now) {
     E.reticle.style.color = VIS.pinch ? '#eafcff' : accentNow();
     E.reticleCore.style.transform = VIS.pinch ? 'scale(1.9)' : 'scale(1)';
     if (app.engine) app.engine.setPointer(VIS.x * 2 - 1, VIS.y * 2 - 1);
+    if (!hands.length) faceDwell(px, py, dt);       // hands always win over dwell
+    else { FACE.dwell = 0; if (E.reticleCore) E.reticleCore.style.background = 'currentColor'; }
   }
 
   if (g !== VIS.gesture) { VIS.gesture = g; }
@@ -6112,6 +6289,60 @@ const IDLE = {
   lank: [-0.21, -1.42, 0], rank: [0.21, -1.42, 0]
 };
 
+/* ---- locomotion -----------------------------------------------------------
+   The figure stands in world units, hips at the origin, and the camera sees
+   roughly ±2.4 across. Walking is a target on that axis: he leans into it,
+   swings his legs, and arrives. "A little" is a step; "far" is the wall.
+--------------------------------------------------------------------------- */
+const WALK = { x: 0, tx: 0, v: 0, phase: 0, lean: 0, span: 2.30 };
+
+/* Poses he can strike on request. Each is a set of joint offsets, blended in
+   over half a second and held, so they layer on top of breathing and walking
+   instead of replacing them. */
+const POSES = {
+  wave:     { hold: 4200, j: { rsh:[0,.10,0], rel:[.10,.34,.05], rwr:[.16,.62,.10], rhand:[.20,.76,.12] }, osc: 'rhand' },
+  salute:   { hold: 3200, j: { rel:[-.10,.34,.10], rwr:[-.22,.62,.16], rhand:[-.26,.70,.18] } },
+  point_left:  { hold: 3200, j: { lsh:[-.05,.04,0], lel:[-.22,.26,.06], lwr:[-.42,.40,.10], lhand:[-.52,.44,.12] } },
+  point_right: { hold: 3200, j: { rsh:[.05,.04,0], rel:[.22,.26,.06], rwr:[.42,.40,.10], rhand:[.52,.44,.12] } },
+  arms_crossed: { hold: 6000, j: { lel:[.06,.10,.10], lwr:[.20,.22,.20], lhand:[.26,.24,.22],
+                                   rel:[-.06,.10,.10], rwr:[-.20,.24,.20], rhand:[-.26,.26,.22] } },
+  hands_on_hips: { hold: 6000, j: { lel:[-.06,.06,-.04], lwr:[.06,-.06,-.02], lhand:[.12,-.08,0],
+                                    rel:[.06,.06,-.04], rwr:[-.06,-.06,-.02], rhand:[-.12,-.08,0] } },
+  shrug:    { hold: 2400, j: { lsh:[0,.11,0], rsh:[0,.11,0], lel:[-.06,.10,.06], rel:[.06,.10,.06],
+                               lwr:[-.10,.06,.14], rwr:[.10,.06,.14], lhand:[-.12,.04,.18], rhand:[.12,.04,.18] } },
+  bow:      { hold: 2600, j: { chest:[0,-.16,.22], neck:[0,-.22,.30], head:[0,-.28,.38], headTop:[0,-.34,.46] } },
+  reach_out:{ hold: 3400, j: { lel:[-.04,.10,.20], lwr:[-.06,.16,.44], lhand:[-.06,.18,.56],
+                               rel:[.04,.10,.20], rwr:[.06,.16,.44], rhand:[.06,.18,.56] } }
+};
+const POSE = { name: null, w: 0, t: 0, until: 0 };
+
+/** Advance walking and posing. Called once per frame from the main loop, so it
+ *  keeps running whichever surface the figure happens to be standing on. */
+function stepBody(dt) {
+  const d = WALK.tx - WALK.x;
+  const near = Math.abs(d);
+  if (near > 0.012) {
+    const want = Math.sign(d) * Math.min(1.55, 0.60 + near * 1.7);
+    WALK.v += (want - WALK.v) * Math.min(1, dt * 5);
+    WALK.x += WALK.v * dt;
+    if (Math.sign(WALK.tx - WALK.x) !== Math.sign(d)) WALK.x = WALK.tx;   // no overshoot
+    WALK.phase += dt * (5.0 + Math.abs(WALK.v) * 3.2);
+  } else {
+    WALK.x = WALK.tx;
+    WALK.v += (0 - WALK.v) * Math.min(1, dt * 6);
+    if (Math.abs(WALK.v) < 0.01) WALK.v = 0;
+    // let the gait settle to feet-together rather than stopping mid-stride
+    if (WALK.v === 0) WALK.phase += (Math.round(WALK.phase / Math.PI) * Math.PI - WALK.phase) * Math.min(1, dt * 6);
+  }
+  WALK.lean += (WALK.v * 0.16 - WALK.lean) * Math.min(1, dt * 4);
+
+  const now = performance.now();
+  if (POSE.name && now > POSE.until) POSE.name = null;
+  POSE.w += ((POSE.name ? 1 : 0) - POSE.w) * Math.min(1, dt * 3.4);
+  if (POSE.w < 0.002) POSE.w = 0;
+  POSE.t += dt;
+}
+
 function selfRig(t) {
   // Layered slow sines — no two cycles line up, so nothing ever looks looped.
   // This is the whole trick behind a body that reads as alive rather than
@@ -6148,6 +6379,40 @@ function selfRig(t) {
   lift('lkn', settle * (sway > 0 ? 1.4 : 0.3), sway * 0.16, settle * 0.6);
   lift('rkn', settle * (sway > 0 ? 0.3 : 1.4), sway * 0.16, -settle * 0.6);
 
+  // ── gait ────────────────────────────────────────────────────────────────
+  // Legs swing in Z and the arms counter-swing, exactly as they do when you
+  // walk; the whole body leans into the direction of travel and bobs twice per
+  // stride. Read side-on it looks like walking, which is what it is.
+  const spd = Math.abs(WALK.v);
+  if (spd > 0.008) {
+    const amp = Math.min(1, spd / 0.95);
+    const a = Math.sin(WALK.phase), b = Math.sin(WALK.phase + Math.PI);
+    const bob = Math.abs(Math.sin(WALK.phase)) * 0.045 * amp;
+    lift('lkn', Math.max(0, a) * 0.07 * amp, 0, a * 0.20 * amp);
+    lift('lank', Math.max(0, a) * 0.10 * amp, 0, a * 0.34 * amp);
+    lift('rkn', Math.max(0, b) * 0.07 * amp, 0, b * 0.20 * amp);
+    lift('rank', Math.max(0, b) * 0.10 * amp, 0, b * 0.34 * amp);
+    lift('lel', 0, 0, b * 0.15 * amp); lift('lwr', 0, 0, b * 0.25 * amp); lift('lhand', 0, 0, b * 0.29 * amp);
+    lift('rel', 0, 0, a * 0.15 * amp); lift('rwr', 0, 0, a * 0.25 * amp); lift('rhand', 0, 0, a * 0.29 * amp);
+    ['pelvis', 'chest', 'neck', 'head', 'headTop', 'lsh', 'rsh'].forEach(k => lift(k, bob));
+  }
+
+  // ── a pose, layered on top ──────────────────────────────────────────────
+  if (POSE.w > 0.002 && POSE.name && POSES[POSE.name]) {
+    const P = POSES[POSE.name], w = POSE.w;
+    for (const k in P.j) {
+      if (!J[k]) continue;
+      const o = P.j[k];
+      J[k][0] += o[0] * w; J[k][1] += o[1] * w; J[k][2] += o[2] * w;
+    }
+    if (P.osc && J[P.osc]) J[P.osc][0] += Math.sin(POSE.t * 7.2) * 0.09 * w;
+  }
+
+  // ── where he is standing, and which way he is leaning ───────────────────
+  for (const k in J) J[k][0] += WALK.x;
+  ['chest', 'neck', 'head', 'headTop', 'lsh', 'rsh', 'lel', 'rel', 'lwr', 'rwr', 'lhand', 'rhand']
+    .forEach(k => { J[k][0] += WALK.lean; });
+
   const segs = [
     [J.headTop, J.head], [J.head, J.neck], [J.neck, J.chest], [J.chest, J.pelvis],
     [J.neck, J.lsh], [J.neck, J.rsh],
@@ -6168,6 +6433,62 @@ function selfRig(t) {
   return out;
 }
 const idleRig = selfRig;   // old name, same body
+
+/** Is there a figure standing anywhere right now? */
+function embodied() { return PRES.on || (VIS.on && VIS.ready); }
+
+const WALK_DIST = { 'far': 1, 'halfway': 0.5, 'a little': 0.24, 'a step': 0.16 };
+
+function walkTo(a) {
+  a = a || {};
+  const dir = String(a.direction || 'centre').toLowerCase();
+  // One key, defaulted once. The first version defaulted inside the test but
+  // read the raw value, so an omitted distance looked up WALK_DIST['undefined'],
+  // came back undefined, and every walk target became NaN.
+  const key = String(a.distance || 'far').toLowerCase();
+  let amt = a.amount != null ? clamp(Number(a.amount), 0, 1)
+    : (WALK_DIST[key] != null ? WALK_DIST[key] : 1);
+  if (!isFinite(amt)) amt = 1;
+
+  let target;
+  if (dir === 'centre' || dir === 'center' || dir === 'back') target = 0;
+  else if (dir === 'left')  target = -WALK.span * amt;
+  else if (dir === 'right') target =  WALK.span * amt;
+  else return { error: 'walk left, right, or back to centre' };
+
+  // "a little to the left" from where he already is, not from the middle
+  if (dir !== 'centre' && dir !== 'center' && dir !== 'back' && amt < 0.6) {
+    target = clamp(WALK.x + (dir === 'left' ? -1 : 1) * WALK.span * amt, -WALK.span, WALK.span);
+  }
+  WALK.tx = clamp(target, -WALK.span, WALK.span);
+
+  const started = () => {
+    const side = WALK.tx < -0.05 ? 'left' : WALK.tx > 0.05 ? 'right' : 'centre';
+    printRow('⟐ walking ' + (dir === 'centre' ? 'back to centre' : dir) +
+      (amt < 0.6 ? ' a little' : ''), accentNow());
+    return { ok: true, walking_to: side, position: +WALK.tx.toFixed(2),
+             span: WALK.span, note: 'he walks there over a second or two' };
+  };
+
+  if (!embodied()) { enterPresence(); return started(); }
+  return started();
+}
+
+function figurePose(a) {
+  a = a || {};
+  const name = String(a.pose || '').toLowerCase();
+  if (name === 'relax' || name === 'none') {
+    POSE.name = null;
+    return { ok: true, pose: 'relaxed' };
+  }
+  if (!POSES[name]) return { error: 'unknown pose "' + a.pose + '"' };
+  if (!embodied()) enterPresence();
+  POSE.name = name;
+  POSE.t = 0;
+  POSE.until = performance.now() + (a.hold_ms || POSES[name].hold || 3000);
+  printRow('⟐ ' + name.replace(/_/g, ' '), accentNow());
+  return { ok: true, pose: name, holds_ms: Math.round(POSE.until - performance.now()) };
+}
 
 function presSay(text) {
   PRES.said = text;
