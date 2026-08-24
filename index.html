@@ -322,6 +322,7 @@
     <div id="ovlBlue" style="position:absolute; inset:0; overflow:auto; background:#04121c;"></div>
     <div id="ovlWx" style="position:absolute; inset:0; overflow:auto; padding:18px 22px;"></div>
     <div id="ovlCal" style="position:absolute; inset:0; overflow:auto; padding:18px 22px;"></div>
+    <div id="ovlAudit" style="position:absolute; inset:0; overflow:auto; background:#04121c;"></div>
     <iframe id="ovlEmbed" style="position:absolute; inset:0; width:100%; height:100%; border:0; background:#04121c;"
             referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
   </div>
@@ -1275,7 +1276,7 @@ const E = {};
  'cfgStab','cfgSim','cfgSpeed','cfgSysFor','cfgReset','cfgSpeak','cfgSbUrl','cfgSbKey',
  'vaultStat','ovl','ovlStock','ovlMap','ovlBlue','ovlWx','gate','gateCode','gateMsg','gateGo','gateCfg',
  'moodVeil','moodStat','panel','panelBody','panelDump','panelClear','panelClose',
- 'ovlCal','ovlEmbed','panelTitle','panelSub','panelCount','panelTel','panelTools',
+ 'ovlCal','ovlEmbed','ovlAudit','panelTitle','panelSub','panelCount','panelTel','panelTools',
  'panelInput','ignite','camChip','camStat','cam','camVideo','camOverlay','camFps',
  'camGesture','camMeter','mSweep','mPush','mFire','reticle','reticleCore','camBar','camBody','camFold','camShut','camDot',
  'fx','pres','presUI','presName','presSub','presLeft','presRight','presYou','presSaid','presHint'].forEach(k => E[k] = $(k));
@@ -1929,6 +1930,11 @@ const COMMON_RULES =
 'own particles, filling the screen. The body is YOURS — it is not a copy of the user and does not mirror them. ' +
 'Enter it with set_presence when they ask you to appear or show yourself. In there, keep replies short and ' +
 'spoken — they are captions under a body, not a terminal.\n' +
+'- audit_target investigates a link, domain, site, address or email and returns a scored verdict with evidence. ' +
+'Reach for it the moment anyone pastes a link they did not expect, or asks whether something is real, safe, or a ' +
+'scam. Give the verdict first, then the two or three findings that actually drive it, in plain words. If a source ' +
+'could not be reached, say so — a clean result you could not fully check is not the same as a clean result. Never ' +
+'tell someone a link is definitely safe: indicators are not proof.\n' +
 '- When you are embodied you can MOVE. walk_to sends the figure left, right or back to centre, and it walks — ' +
 '"far" or nothing said means the edge of the screen, "a little" or "a bit" or "a step" means a small move from ' +
 'where you are standing. figure_pose makes you wave, salute, point, fold your arms, shrug or bow. Use both ' +
@@ -2332,6 +2338,13 @@ const TOOLS = [
       count: { type: 'number', description: 'Fire a burst of up to 5.' }
     }, required: ['effect'] } },
 
+  { name: 'audit_target', description: 'Investigate a link, domain, website, IP address or email address and report whether it can be trusted, with evidence. Use this WHENEVER the user pastes a link they are unsure about, asks if something is safe, real, a scam or phishing, or asks you to look into a site. It examines the URL structure, DNS, who registered the domain and when, where it is hosted, its email authentication, and — at deep — what the page actually asks visitors for. This is passive: it reads public records and the page as an ordinary visitor. It never probes or attacks. Report the verdict first, then the two or three findings that drive it, and say plainly if a source could not be reached.',
+    params: { type: 'object', properties: {
+      target: { type: 'string', description: 'A URL, bare domain, IP address or email address.' },
+      depth: { type: 'string', enum: ['quick', 'standard', 'deep'],
+               description: 'quick = the link itself, instant and offline. standard = plus DNS, registration and hosting. deep = plus reading the page. Default standard; use deep when they are deciding whether to trust it with anything.' }
+    }, required: ['target'] } },
+
   { name: 'walk_to', description: 'Walk your standing figure somewhere. Use whenever the user tells you to move, walk, step, come here, go over there, or get out of the way. You must be embodied — if you are not, this brings you out first. The figure walks, it does not teleport.',
     params: { type: 'object', properties: {
       direction: { type: 'string', enum: ['left', 'right', 'centre', 'back'], description: 'centre returns to the middle. back is the same as centre.' },
@@ -2486,6 +2499,8 @@ function runTool(name, a) {
       return openTarget(a);
     case 'fire_effect':
       return fireEffect(a);
+    case 'audit_target':
+      return auditTarget(a);
     case 'walk_to':
       return walkTo(a);
     case 'figure_pose':
@@ -2501,7 +2516,12 @@ function runTool(name, a) {
       const shoot = () => {
         const img = camSnapshot();
         if (!img) return { error: 'no frame available — the camera is not running' };
-        history.push({ role: 'user', text: '[camera frame' + (a.reason ? ' · ' + a.reason : '') + ']', image: img });
+        // NOT pushed here. This runs inside the tool loop, between the
+        // assistant's tool_use block and its tool_result — dropping a user
+        // message in that gap is exactly what "tool_use ids were found without
+        // tool_result blocks immediately after" means. It is queued and
+        // attached once the whole result group has been written.
+        app.pendingShot = { img, reason: a.reason || '' };
         streamRow('OPT', 'frame captured' + (a.reason ? ' · ' + a.reason : ''), VI);
         toast('OPTICS', a.reason ? 'Looking · ' + a.reason : 'Taking a look', accentNow());
         return { ok: true, note: 'A still is attached to the next turn — describe what you see.' };
@@ -2564,29 +2584,70 @@ function runTool(name, a) {
 }
 
 /* ----------------------------------------------------- provider adapters --- */
+/** Drop the oldest turns, but never mid-block.
+
+    Shifting blindly can leave a conversation that begins with a tool_result
+    whose tool_use was just discarded, or an assistant tool call whose results
+    were. Both are rejected outright by the API. Keep shifting until the history
+    starts on a plain user turn, which is always a clean seam. */
+function trimHistory(max) {
+  while (history.length > max) history.shift();
+  while (history.length && history[0].role !== 'user') history.shift();
+  return history;
+}
+
 function toAnthropic(hist) {
+  /* The API's rule is positional, not merely relational: the tool_result blocks
+     for an assistant's tool_use blocks must be in the message IMMEDIATELY
+     after it. So rather than transcribing the history in order and hoping it
+     already obeys that, look every result up by id and emit the whole group
+     directly behind the call that owns it. Anything with no recorded result
+     gets one saying so.
+
+     This makes the payload correct however the history got into memory — a
+     turn interrupted, a frame captured mid-loop, an old conversation saved
+     before this was fixed. The alternative is the API refusing the request and
+     the user losing the thread over a bookkeeping slip. */
+  const results = new Map();
+  hist.forEach(m => { if (m.role === 'tool' && m.id) results.set(m.id, m); });
+
   const out = [];
+  const used = new Set();
+
   for (const m of hist) {
     if (m.role === 'user') {
       const c = [];
       if (m.image) c.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: m.image } });
-      c.push({ type: 'text', text: m.text });
+      c.push({ type: 'text', text: m.text || '' });
       out.push({ role: 'user', content: c });
+      continue;
     }
-    else if (m.role === 'assistant') {
+
+    if (m.role === 'assistant') {
       const c = [];
       if (m.text) c.push({ type: 'text', text: m.text });
       (m.tools || []).forEach(t => c.push({ type: 'tool_use', id: t.id, name: t.name, input: t.input || {} }));
-      if (c.length) out.push({ role: 'assistant', content: c });
-    } else if (m.role === 'tool') {
-      const prev = out[out.length - 1];
-      const block = { type: 'tool_result', tool_use_id: m.id, content: m.output };
-      if (prev && prev.role === 'user' && Array.isArray(prev.content) && prev.content[0] && prev.content[0].type === 'tool_result') prev.content.push(block);
-      else out.push({ role: 'user', content: [block] });
+      if (!c.length) continue;
+      out.push({ role: 'assistant', content: c });
+
+      const calls = (m.tools || []).filter(t => t.id);
+      if (calls.length) {
+        out.push({ role: 'user', content: calls.map(t => {
+          const r = results.get(t.id);
+          if (r) used.add(t.id);
+          return { type: 'tool_result', tool_use_id: t.id,
+                   content: r ? r.output : JSON.stringify({ error: 'interrupted — no result was recorded for this call' }) };
+        }) });
+      }
+      continue;
     }
+
+    // a stray tool result whose call never made it into the history at all
+    if (m.role === 'tool' && m.id && !used.has(m.id)) used.add(m.id);
   }
   return out;
 }
+
 function toOpenAI(hist, sys) {
   const out = [{ role: 'system', content: sys }];
   for (const m of hist) {
@@ -2739,7 +2800,7 @@ function setBusy(on) {
 async function converse(userText) {
   plog('▸ YOU', userText, 'user');
   history.push({ role: 'user', text: userText });
-  while (history.length > 30) history.shift();
+  trimHistory(30);
 
   setBusy(true);
   autoOrb('thinking');
@@ -2787,6 +2848,12 @@ async function converse(userText) {
           plog('◂ RESULT · ' + t.name, outStr.length > 4000 ? outStr.slice(0, 4000) + '\n… truncated' : outStr,
                out && out.error ? 'error' : 'result');
           history.push({ role: 'tool', id: t.id, name: t.name, output: JSON.stringify(out) });
+        }
+        // every tool_result for this block is written — now the frame can land
+        if (app.pendingShot) {
+          const shot = app.pendingShot; app.pendingShot = null;
+          history.push({ role: 'user', image: shot.img,
+            text: '[camera frame' + (shot.reason ? ' · ' + shot.reason : '') + ']' });
         }
         continue;
       }
@@ -3108,6 +3175,988 @@ async function selftest() {
   printRow('▸ SELF TEST COMPLETE — a ⟐ show_weather line above means tools work; ' +
     'no ⟐ line means he replied without calling one.', accentNow());
 }
+
+/* ================================================================ FORENSICS ==
+   Audit a link, a domain or a site and say plainly whether it should be
+   trusted, with the evidence for the answer.
+
+   This is defensive work: it looks at a target from the outside, the way a
+   careful person would before clicking, and reports indicators. It does not
+   probe for weaknesses, send anything to the target beyond an ordinary page
+   read, or attempt anything a normal visitor would not.
+
+   Everything is layered so that it degrades honestly:
+
+     · STRUCTURE  — pure analysis of the URL itself. Always works, offline,
+                    instant, and catches most phishing on its own.
+     · DNS        — A / AAAA / MX / NS / TXT / CAA over DNS-over-HTTPS.
+     · REGISTRY   — RDAP: who registered it and, critically, WHEN.
+     · HOSTING    — where the address actually lands, and whose network.
+     · CONTENT    — reads the page as a visitor would and looks at what it asks
+                    for: password fields, off-site form targets, wallet
+                    addresses, urgency, brand names that do not match the domain.
+
+   A source that cannot be reached is reported as unreachable. It never
+   silently becomes a clean result — an audit that quietly downgrades itself to
+   "nothing found" is worse than no audit at all.
+--------------------------------------------------------------------------- */
+const AUDIT = { last: null, running: false, seq: 0 };
+
+/* Brands impersonated often enough to be worth a lookalike check. */
+const BRANDS = [
+  'google', 'gmail', 'youtube', 'facebook', 'instagram', 'whatsapp', 'apple',
+  'icloud', 'microsoft', 'outlook', 'office365', 'live', 'amazon', 'aws',
+  'paypal', 'stripe', 'netflix', 'spotify', 'linkedin', 'twitter', 'discord',
+  'steam', 'roblox', 'coinbase', 'binance', 'metamask', 'blockchain', 'kraken',
+  'chase', 'wellsfargo', 'bankofamerica', 'citibank', 'hsbc', 'barclays',
+  'santander', 'revolut', 'monzo', 'dropbox', 'github', 'gitlab', 'docusign',
+  'fedex', 'ups', 'dhl', 'usps', 'royalmail', 'irs', 'hmrc', 'medicare',
+  'netflix', 'zoom', 'slack', 'notion', 'adobe', 'oracle', 'salesforce'
+];
+
+/* Link shorteners hide the destination, which is not damning on its own but
+   means the URL in front of you is not the URL you are visiting. */
+const SHORTENERS = [
+  'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'is.gd', 'buff.ly',
+  'adf.ly', 'bitly.com', 'cutt.ly', 'rebrand.ly', 'shorturl.at', 'rb.gy',
+  'tiny.cc', 'lnkd.in', 'shorte.st', 'bc.vc', 'soo.gd', 's2r.co', 'clck.ru',
+  'v.gd', 'qr.ae', 'x.co', 'trib.al', 'db.tt', 'mcaf.ee', 'su.pr'
+];
+
+/* Free or bulk-registration zones that carry a wildly disproportionate share
+   of abuse. A domain here is not automatically bad, but it earns a look. */
+const RISKY_TLD = ['tk', 'ml', 'ga', 'cf', 'gq', 'xyz', 'top', 'work', 'click',
+  'link', 'loan', 'download', 'stream', 'racing', 'party', 'review', 'country',
+  'kim', 'science', 'zip', 'mov', 'rest', 'buzz', 'cam', 'quest', 'sbs', 'cfd'];
+
+/* Parameter names that carry a second URL — the classic open-redirect shape. */
+const REDIRECT_PARAMS = ['url', 'u', 'redirect', 'redirect_uri', 'redirect_url',
+  'next', 'target', 'dest', 'destination', 'go', 'goto', 'return', 'returnurl',
+  'return_to', 'continue', 'r', 'link', 'out', 'forward', 'rurl', 'checkout_url'];
+
+const TRACKING_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term',
+  'utm_content', 'utm_id', 'gclid', 'fbclid', 'msclkid', 'dclid', 'twclid',
+  'mc_eid', 'mc_cid', 'igshid', 'ttclid', 'yclid', 'vero_id', '_hsenc', '_hsmi',
+  'oly_enc_id', 'wickedid', 'ref', 'referrer', 'source'];
+
+/* ---- small tools ---------------------------------------------------------- */
+
+/** Edit distance, capped — we only care about "one or two characters off". */
+function editDistance(a, b) {
+  if (Math.abs(a.length - b.length) > 3) return 9;
+  const m = a.length, n = b.length;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+/** Characters chosen because they look like other characters. */
+function deconfuse(s) {
+  return s
+    .replace(/[0]/g, 'o').replace(/[1l|]/g, 'i').replace(/[3]/g, 'e')
+    .replace(/[4]/g, 'a').replace(/[5]/g, 's').replace(/[7]/g, 't')
+    .replace(/[8]/g, 'b').replace(/[9]/g, 'g').replace(/rn/g, 'm')
+    .replace(/vv/g, 'w').replace(/[-_.]/g, '');
+}
+
+/** Does this host mix writing systems? Real domains almost never do; homograph
+    attacks always do. */
+function mixedScript(s) {
+  const sets = {
+    latin: /[a-z]/i, cyrillic: /[Ѐ-ӿ]/, greek: /[Ͱ-Ͽ]/,
+    arabic: /[؀-ۿ]/, hebrew: /[֐-׿]/, han: /[一-鿿]/
+  };
+  return Object.keys(sets).filter(k => sets[k].test(s));
+}
+
+function registrable(host) {
+  // good enough without a public-suffix list: keep the last two labels, or
+  // three when the second-to-last is a well-known second-level suffix
+  const p = String(host || '').toLowerCase().split('.').filter(Boolean);
+  if (p.length < 2) return host;
+  const sld = ['co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'mil'];
+  if (p.length >= 3 && sld.includes(p[p.length - 2]) && p[p.length - 1].length === 2) {
+    return p.slice(-3).join('.');
+  }
+  return p.slice(-2).join('.');
+}
+
+const isIP = (h) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || /^\[?[0-9a-f:]+\]?$/i.test(h) && h.includes(':');
+
+/** One finding. Severity drives both the score and the ordering. */
+function F(area, severity, title, detail, evidence) {
+  return { area, severity, title, detail, evidence: evidence == null ? '' : String(evidence) };
+}
+
+const SEV_WEIGHT = { critical: 42, high: 24, medium: 11, low: 4, info: 0, good: -3 };
+const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, info: 4, good: 5 };
+
+/* ---- what are we even looking at? ---------------------------------------- */
+function parseTarget(raw) {
+  const s = String(raw || '').trim().replace(/^[<(["']+|[>)\]"'.,]+$/g, '');
+  if (!s) return { kind: 'empty' };
+
+  /* An email address, and ONLY an email address. The obvious pattern —
+     [^\s@]+@[^\s@]+ — also matches https://paypal.com@evil.com/login, because
+     slashes and colons are not spaces or @. That misclassified the single most
+     important phishing shape there is as a mailbox, and the credential-smuggling
+     check below never ran on it. No scheme, no slash, exactly one @. */
+  if (!/[/\\:]/.test(s) && (s.match(/@/g) || []).length === 1 &&
+      /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(s)) {
+    return { kind: 'email', email: s, host: s.split('@')[1].toLowerCase(),
+             domain: registrable(s.split('@')[1].toLowerCase()), input: s };
+  }
+  let withScheme = s;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) withScheme = 'http://' + s;
+  let u = null;
+  try { u = new URL(withScheme); } catch (e) { return { kind: 'text', text: s, input: s }; }
+
+  const host = (u.hostname || '').toLowerCase();
+  if (!host || !(host.includes('.') || isIP(host) || host === 'localhost')) {
+    return { kind: 'text', text: s, input: s };
+  }
+  return {
+    kind: isIP(host) ? 'ip' : (/^https?:$/i.test(u.protocol) && (u.pathname !== '/' || u.search) ? 'url' : 'domain'),
+    url: u, host, domain: registrable(host), input: s,
+    hadScheme: /^[a-z][a-z0-9+.-]*:/i.test(s)
+  };
+}
+
+/* ═══════════════════════════════════════════════════ 1 · STRUCTURE (offline) */
+function auditStructure(t) {
+  const f = [];
+  if (t.kind === 'text' || t.kind === 'empty') return f;
+
+  const u = t.url, host = t.host || '', dom = t.domain || host;
+
+  /* --- the scheme --- */
+  if (u) {
+    if (u.protocol === 'http:' && t.hadScheme) {
+      f.push(F('transport', 'medium', 'Plain HTTP, not HTTPS',
+        'Anything you type here travels unencrypted and can be read or altered in transit.', u.protocol + '//'));
+    } else if (u.protocol === 'https:') {
+      f.push(F('transport', 'good', 'HTTPS', 'The connection itself is encrypted.', 'https'));
+    }
+    if (!/^https?:$/i.test(u.protocol)) {
+      f.push(F('transport', 'high', 'Unusual scheme: ' + u.protocol,
+        'Not an ordinary web link. Schemes like this can hand the target to another application.', u.protocol));
+    }
+
+    /* --- credentials smuggled into the authority --- */
+    if (u.username || u.password) {
+      f.push(F('structure', 'critical', 'Credentials embedded in the link',
+        'Text before an @ in a URL is a username, not the destination. Everything before the @ is ignored by the ' +
+        'browser — the real host is what follows it. This is a classic way to make a link look like it goes ' +
+        'somewhere it does not.', u.username + (u.password ? ':•••' : '') + '@' + host));
+    }
+
+    /* --- port --- */
+    if (u.port && !['80', '443', ''].includes(u.port)) {
+      f.push(F('structure', 'low', 'Non-standard port ' + u.port,
+        'Normal web traffic is 80 or 443. Other ports are legitimate but uncommon for public sites.', ':' + u.port));
+    }
+  }
+
+  /* --- the host itself --- */
+  if (isIP(host)) {
+    f.push(F('structure', 'high', 'A raw IP address instead of a name',
+      'Legitimate services almost always publish a domain name. A bare address avoids leaving a registration trail.', host));
+  } else {
+    const labels = host.split('.');
+    const tld = labels[labels.length - 1];
+
+    if (labels.length > 4) {
+      f.push(F('structure', 'medium', 'Deeply nested subdomains (' + labels.length + ' levels)',
+        'A long chain of subdomains is often used to push a familiar-looking name to the front while the ' +
+        'registered domain — the only part that matters — sits at the end.', host));
+    }
+    if (RISKY_TLD.includes(tld)) {
+      f.push(F('structure', 'medium', '.' + tld + ' is a high-abuse zone',
+        'This suffix is free or near-free to register in bulk and carries a disproportionate share of abuse. ' +
+        'Not damning on its own.', '.' + tld));
+    }
+    if (host.startsWith('xn--') || host.includes('.xn--')) {
+      f.push(F('structure', 'high', 'Punycode in the domain name',
+        'The name contains non-Latin characters encoded for DNS. Some of them are visually identical to Latin ' +
+        'letters, which is how a fake can be made to look exactly like the real thing.', host));
+    }
+    /* The URL constructor punycodes a name before we ever see it, so by the
+       time it reaches host the non-Latin characters are gone and the check
+       finds nothing. Look at what was actually typed. */
+    const rawHost = (() => {
+      const m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i.exec(t.input) || /^([^/?#]+)/.exec(t.input);
+      return m ? m[1].replace(/^[^@]*@/, '').split(':')[0] : host;
+    })();
+    const scripts = mixedScript(rawHost);
+    if (scripts.length > 1) {
+      f.push(F('structure', 'critical', 'Mixed writing systems in one name',
+        'The host name uses ' + scripts.join(' and ') + ' characters together. Genuine domains do not do this; ' +
+        'homograph attacks always do.', rawHost + '  ·  ' + scripts.join(' + ')));
+    }
+    if (SHORTENERS.includes(dom)) {
+      f.push(F('structure', 'medium', 'Link shortener (' + dom + ')',
+        'The destination is hidden behind a redirect. The link you were shown is not the site you will land on.', dom));
+    }
+    if (/^\d+$/.test(labels[0]) || /[0-9]{4,}/.test(labels[0])) {
+      f.push(F('structure', 'low', 'Machine-generated subdomain',
+        'Long digit strings in a host name usually mean automatically created infrastructure.', labels[0]));
+    }
+    if (host.length > 45) {
+      f.push(F('structure', 'low', 'Unusually long host name (' + host.length + ' characters)',
+        'Length is used to push the real domain off the end of a phone address bar.', host.length + ' chars'));
+    }
+
+    /* --- brand impersonation ---
+       Both sides must be normalised. deconfuse() folds l→i among other things,
+       so "google" becomes "googie" — comparing a folded host against a raw
+       brand name silently fails to match, and g00g1e-style squats walk
+       straight through. Fold the brand too. */
+    const bare = dom.split('.')[0];
+    const flat = deconfuse(host.replace(/\./g, ''));
+    const bareFolded = deconfuse(bare);
+    for (const brand of BRANDS) {
+      if (bare === brand) break;                                  // it IS the brand
+      const folded = deconfuse(brand);
+      const inSub = host.includes(brand) && !dom.startsWith(brand + '.') && !bare.includes(brand);
+      const d = editDistance(bareFolded, folded);
+      const looksLike = d > 0 && d <= 2 && Math.abs(bare.length - brand.length) <= 3;
+
+      if (inSub) {
+        f.push(F('impersonation', 'critical', '"' + brand + '" appears, but the registered domain is ' + dom,
+          'The part that decides where you actually go is ' + dom + '. A brand name anywhere else in the host — ' +
+          'a subdomain, a path — is decoration and can say anything at all.', host));
+        break;
+      }
+      if (looksLike) {
+        f.push(F('impersonation', 'critical', 'Lookalike of "' + brand + '"',
+          'The registered name is ' + d + ' character' + (d === 1 ? '' : 's') + ' away from ' + brand +
+          ', which is the entire mechanism of a typosquat.', bare + ' vs ' + brand));
+        break;
+      }
+      if (flat.includes(folded) && !bare.includes(brand)) {
+        f.push(F('impersonation', 'high', '"' + brand + '" hidden by character substitution',
+          'Digits and lookalike letters have been used to spell a brand name that the raw text does not contain.',
+          host + ' → ' + flat));
+        break;
+      }
+    }
+
+    /* --- alarm words in the name --- */
+    const bait = ['login', 'signin', 'verify', 'secure', 'account', 'update', 'confirm',
+      'wallet', 'recover', 'unlock', 'suspended', 'billing', 'invoice', 'refund',
+      'support', 'helpdesk', 'reset', 'auth', 'validate'];
+    const hit = bait.filter(w => host.includes(w));
+    if (hit.length >= 2) {
+      f.push(F('impersonation', 'high', 'Security language built into the domain name',
+        'Words like ' + hit.slice(0, 3).join(', ') + ' in a host name are there to reassure you. Real services ' +
+        'put these words in the path, not in the domain they had to register.', hit.join(', ')));
+    } else if (hit.length === 1) {
+      f.push(F('impersonation', 'low', '"' + hit[0] + '" in the host name',
+        'Worth noticing, though common enough to be innocent.', hit[0]));
+    }
+  }
+
+  /* --- the query string --- */
+  if (u && u.search) {
+    const params = [...u.searchParams.entries()];
+    for (const [k, v] of params) {
+      const lk = k.toLowerCase();
+      if (REDIRECT_PARAMS.includes(lk) && /^https?:|^\/\/|%3a%2f%2f/i.test(v)) {
+        let dest = v;
+        try { dest = decodeURIComponent(v); } catch (e) { }
+        f.push(F('structure', 'high', 'A second URL is carried in "' + k + '"',
+          'This link tells the site to forward you somewhere else. Where you end up is decided by that ' +
+          'parameter, not by the domain you can see.', dest.slice(0, 120)));
+      }
+      if (v.length > 24 && /^[A-Za-z0-9+/=_-]{24,}$/.test(v)) {
+        let decoded = '';
+        try { decoded = atob(v.replace(/-/g, '+').replace(/_/g, '/')); } catch (e) { }
+        if (/^[\x20-\x7E]{8,}$/.test(decoded)) {
+          f.push(F('structure', 'medium', 'Encoded payload in "' + k + '"',
+            'A parameter decodes to readable text, which usually means data is being smuggled through the link.',
+            decoded.slice(0, 100)));
+        }
+      }
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+        f.push(F('privacy', 'medium', 'Your email address is in the link',
+          'The address is visible to anyone who sees the URL, and confirms to the sender that you clicked.', v));
+      }
+    }
+    const tracked = params.map(p => p[0].toLowerCase()).filter(k => TRACKING_PARAMS.includes(k));
+    if (tracked.length) {
+      f.push(F('privacy', 'info', tracked.length + ' tracking parameter' + (tracked.length === 1 ? '' : 's'),
+        'These identify you or the campaign that sent you. They can be deleted without breaking the link.',
+        tracked.join(', ')));
+    }
+  }
+
+  /* --- the path --- */
+  if (u && u.pathname) {
+    const p = decodeURIComponent(u.pathname);
+    if (/\.(exe|scr|msi|bat|cmd|com|pif|vbs|js|jar|apk|dmg|pkg|ps1|hta|iso|img)$/i.test(p)) {
+      f.push(F('payload', 'critical', 'The link points directly at an executable file',
+        'This is not a page. Following it downloads something that runs.', p.split('/').pop()));
+    }
+    if (/\.(zip|rar|7z|gz|tar)$/i.test(p)) {
+      f.push(F('payload', 'medium', 'The link points at an archive',
+        'Archives are used to carry executables past filters that would otherwise block them.', p.split('/').pop()));
+    }
+    if (/\.\.\//.test(p) || /%2e%2e/i.test(u.pathname)) {
+      f.push(F('structure', 'high', 'Directory traversal in the path',
+        'The path tries to climb out of its directory, which no ordinary link does.', p.slice(0, 80)));
+    }
+    if (p.length > 100) {
+      f.push(F('structure', 'low', 'Very long path (' + p.length + ' characters)', 'Often used to hide the destination.', p.length + ' chars'));
+    }
+  }
+
+  return f;
+}
+
+/* ═══════════════════════════════════════════════════════════════ 2 · DNS ═══ */
+const DOH = [
+  { name: 'Google', url: (n, t) => 'https://dns.google/resolve?name=' + encodeURIComponent(n) + '&type=' + t, headers: {} },
+  { name: 'Cloudflare', url: (n, t) => 'https://cloudflare-dns.com/dns-query?name=' + encodeURIComponent(n) + '&type=' + t, headers: { accept: 'application/dns-json' } }
+];
+
+async function resolve(name, type) {
+  for (const p of DOH) {
+    try {
+      const r = await fetch(p.url(name, type), { headers: p.headers });
+      if (!r.ok) continue;
+      const j = await r.json();
+      return { ok: true, via: p.name, status: j.Status,
+               answers: (j.Answer || []).map(a => ({ type: a.type, data: a.data, ttl: a.TTL })) };
+    } catch (e) { /* try the next resolver */ }
+  }
+  return { ok: false, error: 'no DNS-over-HTTPS resolver answered' };
+}
+
+async function auditDns(host) {
+  const f = [], records = {};
+  const want = [['A', 1], ['AAAA', 28], ['MX', 15], ['NS', 2], ['TXT', 16], ['CAA', 257]];
+  const got = await Promise.all(want.map(([label, code]) =>
+    resolve(host, code).then(r => [label, r])));
+
+  let reachable = false;
+  got.forEach(([label, r]) => {
+    if (r.ok) reachable = true;
+    records[label] = r.ok ? r.answers.map(a => a.data) : null;
+  });
+
+  if (!reachable) {
+    f.push(F('dns', 'info', 'DNS could not be checked',
+      'No DNS-over-HTTPS resolver answered from this browser. The structural findings above still stand.', ''));
+    return { findings: f, records, reachable: false };
+  }
+
+  const A = records.A || [];
+  if (!A.length && !(records.AAAA || []).length) {
+    f.push(F('dns', 'high', 'The name does not resolve to any address',
+      'Nothing is hosted here right now. Either it never was, or it has already been taken down.', 'no A/AAAA'));
+  }
+
+  const NS = records.NS || [];
+  if (NS.length) {
+    f.push(F('dns', 'info', 'Nameservers', 'Whoever controls these controls the domain.', NS.join(', ')));
+  }
+
+  /* email posture — SPF and DMARC, and the state of MX */
+  const TXT = (records.TXT || []).map(t => t.replace(/^"|"$/g, ''));
+  const spf = TXT.find(t => /^v=spf1/i.test(t));
+  if (spf) {
+    const all = /[-~?+]all/.exec(spf);
+    const strict = all && (all[0] === '-all');
+    f.push(F('email', strict ? 'good' : 'low', 'SPF present' + (strict ? ' and strict' : ''),
+      strict ? 'The domain declares exactly who may send mail as it, and says to reject everyone else.'
+             : 'The domain declares who may send mail as it, but does not insist that others be rejected.', spf.slice(0, 140)));
+  } else if ((records.MX || []).length) {
+    f.push(F('email', 'medium', 'No SPF record',
+      'The domain handles mail but does not say who is allowed to send as it, so anyone can forge its address.', 'no v=spf1'));
+  }
+
+  const dmarcR = await resolve('_dmarc.' + host, 16);
+  const dmarc = dmarcR.ok ? (dmarcR.answers.map(a => a.data.replace(/^"|"$/g, '')).find(t => /^v=DMARC1/i.test(t))) : null;
+  if (dmarc) {
+    const pol = (/p=(\w+)/i.exec(dmarc) || [])[1] || 'none';
+    f.push(F('email', pol === 'reject' ? 'good' : pol === 'quarantine' ? 'low' : 'medium',
+      'DMARC policy: ' + pol,
+      pol === 'reject' ? 'Forged mail from this domain is rejected outright.'
+        : pol === 'quarantine' ? 'Forged mail is sent to spam rather than refused.'
+        : 'A DMARC record exists but takes no action, which offers no real protection.', dmarc.slice(0, 140)));
+  } else if ((records.MX || []).length) {
+    f.push(F('email', 'medium', 'No DMARC record',
+      'Nothing stops someone sending mail that appears to come from this domain.', 'no _dmarc'));
+  }
+
+  if ((records.CAA || []).length) {
+    f.push(F('dns', 'good', 'CAA record present',
+      'The domain restricts which authorities may issue certificates for it. A sign of a deliberately run domain.',
+      records.CAA.join(', ').slice(0, 120)));
+  }
+
+  const verif = TXT.filter(t => /site-verification|verify|_domainkey|token/i.test(t));
+  if (verif.length) {
+    f.push(F('dns', 'info', verif.length + ' service verification record' + (verif.length === 1 ? '' : 's'),
+      'Shows which platforms the domain is enrolled with.', verif.map(v => v.split('=')[0]).join(', ').slice(0, 120)));
+  }
+
+  return { findings: f, records, reachable: true };
+}
+
+/* ══════════════════════════════════════════════════════════ 3 · REGISTRY ══ */
+async function auditRegistry(domain) {
+  const f = [];
+  let data = null;
+  for (const base of ['https://rdap.org/domain/', 'https://rdap.verisign.com/com/v1/domain/']) {
+    try {
+      const r = await fetch(base + encodeURIComponent(domain), { headers: { accept: 'application/rdap+json' } });
+      if (!r.ok) continue;
+      data = await r.json();
+      break;
+    } catch (e) { /* next */ }
+  }
+  if (!data) {
+    f.push(F('registry', 'info', 'Registration details could not be checked',
+      'No RDAP server answered from this browser. Domain age is the single strongest signal there is, so this ' +
+      'is a real gap — treat the verdict as provisional.', ''));
+    return { findings: f, info: null, reachable: false };
+  }
+
+  const ev = data.events || [];
+  const when = (act) => { const e = ev.find(x => (x.eventAction || '').toLowerCase() === act); return e && e.eventDate; };
+  const created = when('registration');
+  const changed = when('last changed') || when('last update of rdap database');
+  const expires = when('expiration');
+
+  const registrar = (data.entities || [])
+    .filter(e => (e.roles || []).includes('registrar'))
+    .map(e => {
+      const v = (e.vcardArray && e.vcardArray[1]) || [];
+      const fn = v.find(x => x[0] === 'fn');
+      return fn ? fn[3] : e.handle;
+    })[0] || null;
+
+  let ageDays = null;
+  if (created) {
+    ageDays = Math.floor((Date.now() - new Date(created).getTime()) / 86400000);
+    if (ageDays < 0) ageDays = 0;
+    if (ageDays <= 30) {
+      f.push(F('registry', 'critical', 'Registered ' + (ageDays <= 1 ? 'today' : ageDays + ' days ago'),
+        'This is the strongest single indicator there is. Phishing and scam domains are typically used within ' +
+        'days of registration and abandoned within weeks. A real business almost never contacts you from a ' +
+        'domain this new.', created.slice(0, 10)));
+    } else if (ageDays <= 180) {
+      f.push(F('registry', 'high', 'Registered ' + ageDays + ' days ago',
+        'Young enough to warrant real caution, particularly if this arrived unsolicited.', created.slice(0, 10)));
+    } else if (ageDays <= 730) {
+      f.push(F('registry', 'low', 'Registered ' + Math.round(ageDays / 30) + ' months ago',
+        'Established, but not long-standing.', created.slice(0, 10)));
+    } else {
+      f.push(F('registry', 'good', 'Registered ' + Math.floor(ageDays / 365) + ' years ago',
+        'A long history is difficult to fake and expensive to throw away.', created.slice(0, 10)));
+    }
+  }
+
+  if (expires) {
+    const days = Math.floor((new Date(expires).getTime() - Date.now()) / 86400000);
+    if (days < 60 && days > -3650) {
+      f.push(F('registry', days < 0 ? 'medium' : 'low',
+        days < 0 ? 'Registration has expired' : 'Registration expires in ' + days + ' days',
+        days < 0 ? 'The domain is past its expiry and may be about to change hands entirely.'
+                 : 'Short remaining registration is typical of a domain nobody intends to keep.', expires.slice(0, 10)));
+    }
+  }
+
+  const status = (data.status || []).map(s => String(s).toLowerCase());
+  const bad = status.filter(s => /hold|suspend|prohibited.*delete|pending ?delete/.test(s));
+  if (status.some(s => s.includes('hold'))) {
+    f.push(F('registry', 'critical', 'The registry has placed this domain on hold',
+      'A hold is applied when a domain is the subject of a complaint or investigation. It is not routine.',
+      status.join(', ')));
+  }
+  if (registrar) {
+    f.push(F('registry', 'info', 'Registrar: ' + registrar, 'Who the domain was bought through.', registrar));
+  }
+
+  return {
+    findings: f, reachable: true,
+    info: { registrar, created, changed, expires, ageDays, status: data.status || [] }
+  };
+}
+
+/* ══════════════════════════════════════════════════════════ 4 · HOSTING ═══ */
+async function auditHosting(ip) {
+  const f = [];
+  if (!ip) return { findings: f, info: null, reachable: false };
+  try {
+    const r = await fetch('https://ipwho.is/' + encodeURIComponent(ip));
+    if (!r.ok) throw new Error('ipwho ' + r.status);
+    const j = await r.json();
+    if (j.success === false) throw new Error(j.message || 'lookup failed');
+
+    const org = (j.connection && (j.connection.org || j.connection.isp)) || '';
+    const asn = (j.connection && j.connection.asn) || '';
+    const where = [j.city, j.region, j.country].filter(Boolean).join(', ');
+
+    f.push(F('hosting', 'info', 'Hosted by ' + (org || 'unknown') + (asn ? ' (AS' + asn + ')' : ''),
+      'Where the address actually lands. A well-known cloud provider says nothing either way — anyone can rent ' +
+      'space there — but a bulletproof or residential network is a genuine signal.', ip + ' · ' + where));
+
+    if (/bulletproof|offshore|anonym/i.test(org)) {
+      f.push(F('hosting', 'high', 'Hosted on a network that advertises non-cooperation',
+        'Providers marketing themselves this way exist largely to resist abuse complaints.', org));
+    }
+    if (j.type === 'residential' || /residential|broadband|cable|dsl|fibre|telecom/i.test(org)) {
+      f.push(F('hosting', 'medium', 'Served from a consumer connection',
+        'Public services are not normally run from residential internet. Often a compromised machine.', org));
+    }
+    return { findings: f, reachable: true,
+             info: { ip, org, asn, country: j.country, city: j.city, lat: j.latitude, lon: j.longitude } };
+  } catch (e) {
+    f.push(F('hosting', 'info', 'Hosting could not be checked', String(e.message || e), ''));
+    return { findings: f, info: null, reachable: false };
+  }
+}
+
+/* ══════════════════════════════════════════════════════════ 5 · CONTENT ═══ */
+/** Read the page the way a visitor would, through a text-extraction proxy that
+    permits cross-origin reads. We never execute anything from the target. */
+async function auditContent(url) {
+  const f = [];
+  let text = '', via = '';
+  const attempts = [
+    { name: 'r.jina.ai', u: 'https://r.jina.ai/' + url },
+    { name: 'allorigins', u: 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url) }
+  ];
+  for (const a of attempts) {
+    try {
+      const r = await fetch(a.u, { headers: { accept: 'text/plain,text/html' } });
+      if (!r.ok) continue;
+      text = await r.text();
+      if (text && text.length > 40) { via = a.name; break; }
+    } catch (e) { /* next */ }
+  }
+  if (!text) {
+    f.push(F('content', 'info', 'The page itself could not be read',
+      'No reader proxy returned the content from this browser. Everything above is based on the link and the ' +
+      'domain rather than on what the page actually does.', ''));
+    return { findings: f, reachable: false, text: '' };
+  }
+
+  const body = text.slice(0, 260000);
+  const low = body.toLowerCase();
+  const host = (() => { try { return new URL(url).hostname.toLowerCase(); } catch (e) { return ''; } })();
+  const dom = registrable(host);
+
+  /* --- what is it asking for --- */
+  const wantsPassword = /type\s*=\s*["']?password|enter your password|password:/i.test(body);
+  const wantsCard = /card ?number|cvv|cvc|expiry|expiration date|security code|card holder/i.test(low);
+  const wantsSeed = /seed phrase|recovery phrase|mnemonic|private key|12[- ]word|24[- ]word|secret recovery/i.test(low);
+  const wantsSSN = /social security|ssn\b|national insurance number|sin number/i.test(low);
+
+  if (wantsSeed) {
+    f.push(F('content', 'critical', 'The page asks for a wallet recovery phrase',
+      'There is no legitimate reason for any website to ask for a seed phrase, recovery phrase or private key. ' +
+      'Not one. Entering it hands over every asset in that wallet, irreversibly.', 'seed / recovery / private key'));
+  }
+  if (wantsPassword) {
+    f.push(F('content', 'medium', 'The page collects a password',
+      'Only enter one if you are certain of the domain — check it against the registration findings above.', 'password field'));
+  }
+  if (wantsCard) {
+    f.push(F('content', 'high', 'The page collects card details',
+      'Combined with a young domain or a lookalike name, this is the shape of a payment scam.', 'card / cvv fields'));
+  }
+  if (wantsSSN) {
+    f.push(F('content', 'high', 'The page asks for a government identity number',
+      'Very few legitimate sites need this, and none need it unsolicited.', 'SSN / NI number'));
+  }
+
+  /* --- forms that post elsewhere --- */
+  const actions = [...body.matchAll(/<form[^>]+action\s*=\s*["']([^"']+)["']/gi)].map(m => m[1]);
+  const offsite = actions.filter(a => {
+    if (!/^https?:\/\//i.test(a)) return false;
+    try { return registrable(new URL(a).hostname.toLowerCase()) !== dom; } catch (e) { return false; }
+  });
+  if (offsite.length) {
+    f.push(F('content', 'critical', 'A form on this page submits to a different domain',
+      'What you type is sent somewhere other than the site you are looking at. This is the mechanism of ' +
+      'credential theft, not a stylistic choice.', offsite[0].slice(0, 120)));
+  }
+
+  /* --- brand claimed vs domain owned --- */
+  for (const brand of BRANDS) {
+    const claims = new RegExp('\\b' + brand + '\\b', 'i').test(low.slice(0, 6000));
+    if (claims && !dom.includes(brand)) {
+      f.push(F('impersonation', 'high', 'The page presents itself as ' + brand + ', on ' + dom,
+        'The name on the page and the name it is served from do not agree.', brand + ' ≠ ' + dom));
+      break;
+    }
+  }
+
+  /* --- pressure --- */
+  const urgency = ['act now', 'within 24 hours', 'immediately or', 'account will be closed',
+    'account has been suspended', 'final notice', 'last warning', 'verify now', 'limited time',
+    'your account has been locked', 'unusual activity', 'confirm your identity now'];
+  const found = urgency.filter(p => low.includes(p));
+  if (found.length >= 2) {
+    f.push(F('content', 'high', 'Manufactured urgency',
+      'Deadlines and threats exist to stop you checking. Anything genuinely urgent will still be there after you ' +
+      'have verified it independently.', found.slice(0, 3).join(' · ')));
+  } else if (found.length === 1) {
+    f.push(F('content', 'medium', 'Pressure language: "' + found[0] + '"',
+      'Worth noting alongside everything else.', found[0]));
+  }
+
+  /* --- crypto --- */
+  const btc = body.match(/\b(bc1[a-z0-9]{25,62}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\b/);
+  const eth = body.match(/\b0x[a-fA-F0-9]{40}\b/);
+  if (btc || eth) {
+    f.push(F('content', 'high', 'A cryptocurrency address is published on the page',
+      'Crypto payments cannot be reversed or charged back, which is exactly why scams ask for them.',
+      (btc && btc[0]) || (eth && eth[0])));
+  }
+
+  /* --- obfuscation --- */
+  if (/eval\s*\(\s*(atob|unescape|String\.fromCharCode)/i.test(body) ||
+      /document\.write\s*\(\s*unescape/i.test(body)) {
+    f.push(F('content', 'high', 'Deliberately obfuscated script',
+      'Code written to be unreadable is written that way for a reason.', 'eval(atob(…))'));
+  }
+  const iframes = [...body.matchAll(/<iframe[^>]+src\s*=\s*["']([^"']+)["']/gi)].map(m => m[1]);
+  const hiddenFrame = /<iframe[^>]*(display\s*:\s*none|width\s*=\s*["']?0|height\s*=\s*["']?0)/i.test(body);
+  if (hiddenFrame) {
+    f.push(F('content', 'high', 'A hidden frame is embedded in the page',
+      'Invisible frames load something you are not meant to see.', 'zero-size or display:none iframe'));
+  }
+
+  /* --- reassurance --- */
+  if (!f.some(x => x.severity === 'critical' || x.severity === 'high')) {
+    f.push(F('content', 'good', 'Nothing alarming in the page content',
+      'Read ' + Math.round(body.length / 1024) + 'KB via ' + via + '. No credential harvesting, off-site forms, ' +
+      'obfuscation or pressure language.', via));
+  }
+
+  return { findings: f, reachable: true, text: body, via,
+           stats: { bytes: body.length, forms: actions.length, offsiteForms: offsite.length, iframes: iframes.length } };
+}
+
+/* ═════════════════════════════════════════════════════════════ SCORING ════ */
+/* A verdict is only as good as what could be checked. Domain age is the single
+   strongest signal there is, so calling something CLEAN when the registry never
+   answered is telling the user a thing we do not know. Cap it instead. */
+function capVerdict(v, sources) {
+  if (!sources) return v;
+  const missed = ['dns', 'registry'].filter(k => sources[k] === false);
+  if (!missed.length) return v;
+  if (v === 'CLEAN') return 'UNVERIFIED';
+  return v;                                   // suspicion survives on its own
+}
+
+function scoreFindings(findings) {
+  let risk = 0;
+  findings.forEach(f => { risk += SEV_WEIGHT[f.severity] || 0; });
+  risk = Math.max(0, risk);
+  const score = Math.max(0, Math.min(100, Math.round(100 - risk)));
+  const verdict =
+    findings.some(f => f.severity === 'critical') ? 'DANGEROUS' :
+    score < 45 ? 'DANGEROUS' :
+    score < 68 ? 'SUSPICIOUS' :
+    score < 86 ? 'CAUTION' : 'CLEAN';
+  return { score, verdict, risk };
+}
+
+const VERDICT_COL = { CLEAN: '#4ade80', UNVERIFIED: '#8fd9ff', CAUTION: '#ffb300',
+                      SUSPICIOUS: '#ff7a1a', DANGEROUS: '#ff3b30' };
+const SEV_COL = { critical: '#ff3b30', high: '#ff7a1a', medium: '#ffb300', low: '#8fd9ff', info: 'rgba(150,215,235,.65)', good: '#4ade80' };
+
+/* ══════════════════════════════════════════════════════════════ THE RUN ═══ */
+async function auditTarget(a) {
+  a = a || {};
+  const t = parseTarget(a.target);
+  if (t.kind === 'empty') return { error: 'nothing to audit' };
+  if (t.kind === 'text') {
+    return { error: 'that does not look like a link, domain or address: "' + String(a.target).slice(0, 60) + '"' };
+  }
+
+  const depth = String(a.depth || 'standard').toLowerCase();
+  const id = ++AUDIT.seq;
+  AUDIT.running = true;
+
+  ovlOpen('audit', 'FORENSIC AUDIT', t.host);
+  ovlBusy(true, 'EXAMINING ' + (t.host || '').toUpperCase().slice(0, 30));
+
+  const report = {
+    id, target: t.input, kind: t.kind, host: t.host, domain: t.domain,
+    url: t.url ? t.url.href : null, at: new Date().toISOString(),
+    findings: [], sources: {}, records: null, registry: null, hosting: null, content: null
+  };
+
+  /* 1 — always, instantly */
+  report.findings.push(...auditStructure(t));
+  report.sources.structure = true;
+  renderAudit(report, true);
+
+  if (depth !== 'quick' && t.kind !== 'text') {
+    const host = t.host;
+
+    const [dns, reg] = await Promise.all([
+      auditDns(host).catch(e => ({ findings: [F('dns', 'info', 'DNS check failed', String(e.message || e), '')], records: {}, reachable: false })),
+      t.kind === 'ip' ? Promise.resolve({ findings: [], info: null, reachable: false })
+                      : auditRegistry(t.domain).catch(e => ({ findings: [], info: null, reachable: false }))
+    ]);
+    report.findings.push(...dns.findings, ...reg.findings);
+    report.records = dns.records; report.registry = reg.info;
+    report.sources.dns = dns.reachable; report.sources.registry = reg.reachable;
+    renderAudit(report, true);
+
+    const ip = t.kind === 'ip' ? host : ((dns.records && dns.records.A && dns.records.A[0]) || null);
+    const host2 = await auditHosting(ip).catch(e => ({ findings: [], info: null, reachable: false }));
+    report.findings.push(...host2.findings);
+    report.hosting = host2.info;
+    report.sources.hosting = host2.reachable;
+    renderAudit(report, true);
+
+    if (depth === 'deep' && t.url && /^https?:$/i.test(t.url.protocol)) {
+      const con = await auditContent(t.url.href).catch(e => ({ findings: [], reachable: false }));
+      report.findings.push(...con.findings);
+      report.content = con.stats || null;
+      report.sources.content = con.reachable;
+    }
+  }
+
+  /* order by severity, then area */
+  report.findings.sort((x, y) => (SEV_ORDER[x.severity] - SEV_ORDER[y.severity]) || x.area.localeCompare(y.area));
+  Object.assign(report, scoreFindings(report.findings));
+
+  report.verdict = capVerdict(report.verdict, report.sources);
+  AUDIT.last = report;
+  AUDIT.running = false;
+  renderAudit(report, false);
+  ovlBusy(false);
+
+  const counts = {};
+  report.findings.forEach(f => { counts[f.severity] = (counts[f.severity] || 0) + 1; });
+
+  return {
+    ok: true,
+    verdict: report.verdict,
+    score: report.score,
+    target: report.target,
+    domain: report.domain,
+    counts,
+    checked: Object.keys(report.sources).filter(k => report.sources[k]),
+    could_not_check: Object.keys(report.sources).filter(k => !report.sources[k]),
+    registration: report.registry ? {
+      registrar: report.registry.registrar,
+      created: report.registry.created,
+      age_days: report.registry.ageDays
+    } : 'not available',
+    hosting: report.hosting ? (report.hosting.org + ' · ' + (report.hosting.country || '')) : 'not available',
+    findings: report.findings
+      .filter(f => f.severity !== 'info' && f.severity !== 'good')
+      .map(f => ({ severity: f.severity, title: f.title, evidence: f.evidence })),
+    verdict_means: report.verdict === 'UNVERIFIED'
+      ? 'Nothing wrong was found in the link itself, but DNS or registration could not be checked. Say that ' +
+        'plainly — do not present this as safe.'
+      : report.verdict === 'CLEAN' ? 'Everything checked came back normal. Still not a guarantee.'
+      : 'Findings of real concern. Lead with them.',
+    note: 'The full report is on screen. Lead with the verdict, name the two or three findings that drive it, ' +
+          'and say plainly what any source that could not be reached means for your confidence.'
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════ REPORT ════ */
+function renderAudit(r, partial) {
+  const host = E.ovlAudit;
+  if (!host) return;
+  const acc = accentNow();
+  const sc = scoreFindings(r.findings);
+  const verdict = partial ? null : (r.verdict || sc.verdict);
+  const score = partial ? sc.score : (r.score != null ? r.score : sc.score);
+  const vcol = VERDICT_COL[verdict || sc.verdict] || acc;
+
+  const chip = (label, val, col) =>
+    '<div style="border:1px solid rgba(0,229,255,.18); background:rgba(0,229,255,.04); padding:9px 12px; min-width:0;">' +
+    '<div style="font-size:8px; letter-spacing:.26em; color:rgba(0,229,255,.55); white-space:nowrap;">' + label + '</div>' +
+    '<div style="font-size:13px; color:' + (col || '#dff6ff') + '; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' +
+    esc(String(val)) + '</div></div>';
+
+  const row = (f) => {
+    const c = SEV_COL[f.severity] || acc;
+    return '<div style="display:flex; gap:11px; padding:9px 0; border-bottom:1px solid rgba(0,229,255,.09);">' +
+      '<div style="flex:none; width:64px; font-size:8px; letter-spacing:.18em; color:' + c + '; padding-top:2px;">' +
+      f.severity.toUpperCase() + '</div>' +
+      '<div style="flex:1; min-width:0;">' +
+      '<div style="font-size:12px; color:#eafcff; line-height:1.4;">' + esc(f.title) + '</div>' +
+      '<div style="font-size:10.5px; color:rgba(150,215,235,.78); line-height:1.6; margin-top:3px;">' + esc(f.detail) + '</div>' +
+      (f.evidence ? '<div style="font-size:10px; color:' + c + '; margin-top:4px; word-break:break-all; opacity:.85;">' +
+        esc(f.evidence) + '</div>' : '') +
+      '</div>' +
+      '<div style="flex:none; font-size:8px; letter-spacing:.2em; color:rgba(0,229,255,.35); padding-top:3px;">' +
+      f.area.toUpperCase() + '</div></div>';
+  };
+
+  const counts = {};
+  r.findings.forEach(f => { counts[f.severity] = (counts[f.severity] || 0) + 1; });
+  const tally = ['critical', 'high', 'medium', 'low']
+    .filter(s => counts[s])
+    .map(s => '<span style="color:' + SEV_COL[s] + ';">' + counts[s] + ' ' + s + '</span>')
+    .join('  ·  ') || '<span style="color:#4ade80;">nothing of concern</span>';
+
+  const src = (k, label) => {
+    const v = r.sources[k];
+    return '<span style="color:' + (v ? 'rgba(120,235,180,.9)' : 'rgba(255,179,0,.85)') + ';">' +
+      (v ? '✓ ' : '✗ ') + label + '</span>';
+  };
+
+  const reg = r.registry;
+  host.innerHTML =
+    '<div style="padding:16px 20px 22px;">' +
+
+    // verdict
+    '<div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap; border-left:3px solid ' + vcol +
+    '; padding-left:16px; margin-bottom:16px;">' +
+      '<div>' +
+        '<div style="font-size:9px; letter-spacing:.34em; color:rgba(0,229,255,.5);">VERDICT</div>' +
+        '<div style="font-size:30px; letter-spacing:.14em; color:' + vcol + '; text-shadow:0 0 22px ' + vcol + '55; margin-top:3px;">' +
+          (partial ? 'EXAMINING…' : verdict) + '</div>' +
+      '</div>' +
+      '<div style="text-align:center;">' +
+        '<div style="font-size:9px; letter-spacing:.28em; color:rgba(0,229,255,.5);">TRUST</div>' +
+        '<div style="font-size:30px; color:' + vcol + '; font-variant-numeric:tabular-nums;">' + score + '</div>' +
+      '</div>' +
+      '<div style="flex:1; min-width:220px;">' +
+        '<div style="font-size:9px; letter-spacing:.28em; color:rgba(0,229,255,.5);">TARGET</div>' +
+        '<div style="font-size:13px; color:#eafcff; margin-top:4px; word-break:break-all;">' + esc(r.target) + '</div>' +
+        '<div style="font-size:10px; color:rgba(150,215,235,.6); margin-top:3px;">' + tally + '</div>' +
+      '</div>' +
+    '</div>' +
+
+    // facts
+    '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-bottom:16px;">' +
+      chip('REGISTERED DOMAIN', r.domain || '—') +
+      chip('AGE', reg && reg.ageDays != null
+        ? (reg.ageDays < 60 ? reg.ageDays + ' days' : Math.floor(reg.ageDays / 365) >= 1
+            ? Math.floor(reg.ageDays / 365) + 'y ' + Math.round((reg.ageDays % 365) / 30) + 'm'
+            : Math.round(reg.ageDays / 30) + ' months')
+        : 'unknown',
+        reg && reg.ageDays != null && reg.ageDays < 180 ? SEV_COL.high : null) +
+      chip('REGISTRAR', (reg && reg.registrar) || 'unknown') +
+      chip('HOSTED BY', (r.hosting && r.hosting.org) || 'unknown') +
+      chip('ADDRESS', (r.hosting && r.hosting.ip) || (r.records && r.records.A && r.records.A[0]) || '—') +
+      chip('COUNTRY', (r.hosting && r.hosting.country) || '—') +
+    '</div>' +
+
+    // findings
+    '<div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.55); margin-bottom:2px;">' +
+      'FINDINGS · ' + r.findings.length + '</div>' +
+    '<div>' + (r.findings.length ? r.findings.map(row).join('') :
+      '<div style="padding:14px 0; font-size:11px; color:rgba(150,215,235,.6);">Nothing flagged.</div>') + '</div>' +
+
+    // raw records
+    (r.records ? '<div style="margin-top:16px;">' +
+      '<div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.55); margin-bottom:6px;">DNS RECORDS</div>' +
+      Object.keys(r.records).filter(k => r.records[k] && r.records[k].length).map(k =>
+        '<div style="display:flex; gap:10px; font-size:10px; padding:3px 0;">' +
+        '<span style="flex:none; width:44px; color:' + acc + ';">' + k + '</span>' +
+        '<span style="color:rgba(150,215,235,.75); word-break:break-all;">' +
+        esc(r.records[k].join('  ·  ').slice(0, 400)) + '</span></div>').join('') +
+      '</div>' : '') +
+
+    // provenance
+    '<div style="margin-top:18px; border-top:1px solid rgba(0,229,255,.14); padding-top:10px; font-size:9.5px; ' +
+      'letter-spacing:.1em; color:rgba(150,215,235,.6); display:flex; gap:14px; flex-wrap:wrap;">' +
+      '<span>SOURCES:</span>' + src('structure', 'structure') + src('dns', 'dns') +
+      src('registry', 'registry') + src('hosting', 'hosting') +
+      (r.sources.content !== undefined ? src('content', 'page') : '') +
+    '</div>' +
+    '<div style="margin-top:8px; font-size:9.5px; line-height:1.6; color:rgba(150,215,235,.45);">' +
+      'Passive assessment from public records and an ordinary page read. Nothing was probed or attacked. ' +
+      'A source marked ✗ could not be reached from this browser. ' +
+      (verdict === 'UNVERIFIED'
+        ? 'Nothing suspicious was found in the link itself, but the checks that matter most — who registered ' +
+          'this and when — did not answer, so this is NOT a clean bill of health.'
+        : 'Indicators are not proof, and a clean result is not a guarantee.') +
+    '</div>' +
+    '</div>';
+
+  if (!partial && E.ovlSub) {
+    E.ovlSub.textContent = (verdict || '') + ' · ' + score + '/100 · ' + r.findings.length + ' findings';
+  }
+}
+
+/** The report as a document you can keep. */
+function auditExport() {
+  const r = AUDIT.last;
+  if (!r) { toast('AUDIT', 'Nothing audited yet', AM); return; }
+  const L = [];
+  L.push('# FORENSIC AUDIT — ' + r.target);
+  L.push('');
+  L.push('| | |');
+  L.push('|---|---|');
+  L.push('| Verdict | **' + r.verdict + '** |');
+  L.push('| Trust score | ' + r.score + '/100 |');
+  L.push('| Registered domain | ' + (r.domain || '—') + ' |');
+  L.push('| Examined | ' + r.at + ' |');
+  if (r.registry) {
+    L.push('| Registrar | ' + (r.registry.registrar || 'unknown') + ' |');
+    L.push('| Registered | ' + (r.registry.created || 'unknown') +
+      (r.registry.ageDays != null ? ' (' + r.registry.ageDays + ' days ago)' : '') + ' |');
+    L.push('| Expires | ' + (r.registry.expires || 'unknown') + ' |');
+  }
+  if (r.hosting) {
+    L.push('| Hosted by | ' + (r.hosting.org || 'unknown') + (r.hosting.asn ? ' (AS' + r.hosting.asn + ')' : '') + ' |');
+    L.push('| Address | ' + r.hosting.ip + ' · ' + [r.hosting.city, r.hosting.country].filter(Boolean).join(', ') + ' |');
+  }
+  L.push('');
+  L.push('## Findings');
+  L.push('');
+  ['critical', 'high', 'medium', 'low', 'info', 'good'].forEach(sev => {
+    const g = r.findings.filter(f => f.severity === sev);
+    if (!g.length) return;
+    L.push('### ' + sev.toUpperCase());
+    L.push('');
+    g.forEach(f => {
+      L.push('- **' + f.title + '** *(' + f.area + ')*');
+      L.push('  ' + f.detail);
+      if (f.evidence) L.push('  `' + f.evidence + '`');
+    });
+    L.push('');
+  });
+  if (r.records) {
+    L.push('## DNS records');
+    L.push('');
+    L.push('```');
+    Object.keys(r.records).forEach(k => {
+      if (r.records[k] && r.records[k].length) L.push(k.padEnd(5) + ' ' + r.records[k].join('\n      '));
+    });
+    L.push('```');
+    L.push('');
+  }
+  L.push('## Provenance');
+  L.push('');
+  Object.keys(r.sources).forEach(k => L.push('- ' + k + ': ' + (r.sources[k] ? 'checked' : 'COULD NOT BE REACHED')));
+  L.push('');
+  L.push('Passive assessment from public records and an ordinary page read. Nothing was probed or attacked.');
+  L.push('Indicators are not proof; a clean result is not a guarantee.');
+
+  const blob = new Blob([L.join('\n')], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'audit-' + (r.domain || 'target').replace(/[^a-z0-9.-]/gi, '_') + '.md';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  toast('AUDIT', 'Report written', accentNow());
+}
+
 
 /* ================================================================ GAUNTLET ===
    Repulsors. One additive 2D canvas over the whole deck, a handful of
@@ -3847,6 +4896,7 @@ function submit(raw, fromVoice) {
       ['LOCAL    — clear wipes console · link opens settings · help this list', 'rgba(0,229,255,.55)'],
       ['WORKSPACE— map, schematics and weather open over the deck · ESC dismisses · EXPORT SVG saves a drawing', 'rgba(0,229,255,.55)'],
       ['PRESENCE — C makes me appear · I gather into a body of my own · ESC to return', 'rgba(0,229,255,.55)'],
+    ['AUDIT — paste any link and ask "is this safe?" · "look into this domain" · "run a deep audit on it"', 'rgba(0,229,255,.55)'],
     ['FIGURE — "walk to the left" · "come back to the centre" · "move a little right" · "wave" · "point at it"', 'rgba(0,229,255,.55)'],
     ['FACE — M hands the deck to your head: look to aim, hold still to click, mouth open to listen, brows to dismiss, turn to walk me', 'rgba(0,229,255,.55)'],
     ['REPULSORS — F fires a bolt · G throws a disk · B fires a beam. Or whip your arm, shove a palm, or punch at the camera.', 'rgba(0,229,255,.55)'],
@@ -4221,7 +5271,8 @@ const PANE_KIND = {
   blueprint: { host: 'ovlBlue',  w: 860, h: 640, min: [360, 280], label: 'SCHEMATIC' },
   weather:   { host: 'ovlWx',    w: 660, h: 470, min: [340, 240], label: 'ATMOSPHERIC' },
   calendar:  { host: 'ovlCal',   w: 700, h: 560, min: [340, 260], label: 'CALENDAR' },
-  embed:     { host: 'ovlEmbed', w: 820, h: 580, min: [320, 240], label: 'EXTERNAL VIEW' }
+  embed:     { host: 'ovlEmbed', w: 820, h: 580, min: [320, 240], label: 'EXTERNAL VIEW' },
+  audit:     { host: 'ovlAudit', w: 760, h: 640, min: [380, 300], label: 'FORENSIC AUDIT' }
 };
 
 function paneCount() { return OVL.order.length; }
@@ -4288,6 +5339,7 @@ function makePane(kind) {
       '<div style="display:flex; align-items:center; gap:13px; flex:none;">' +
         '<span data-x class="pane-act" style="display:none;">EXPORT SVG</span>' +
         '<span data-i class="pane-act" style="display:none;">EXPORT .ICS</span>' +
+        '<span data-r class="pane-act" style="display:none;">EXPORT REPORT</span>' +
         '<span data-c class="pane-act" style="font-size:12px; letter-spacing:0;">&#10005;</span>' +
       '</div>' +
     '</div>' +
@@ -4309,6 +5361,7 @@ function makePane(kind) {
   p.busyMsgEl = el.querySelector('[data-m]');
   p.exportEl = el.querySelector('[data-x]');
   p.icsEl = el.querySelector('[data-i]');
+  p.repEl = el.querySelector('[data-r]');
 
   // adopt the real content surface
   const host = E[k.host];
@@ -4316,6 +5369,7 @@ function makePane(kind) {
 
   p.exportEl.onclick = (ev) => { ev.stopPropagation(); exportSvg(); };
   p.icsEl.onclick = (ev) => { ev.stopPropagation(); calList().then(icsExport).catch(e => toast('EXPORT', String(e.message || e), AM)); };
+  p.repEl.onclick = (ev) => { ev.stopPropagation(); auditExport(); };
   el.querySelector('[data-c]').onclick = (ev) => { ev.stopPropagation(); closePane(p); };
   el.addEventListener('pointerdown', () => focusPane(p));
 
@@ -4391,6 +5445,7 @@ function ovlOpen(mode, title, sub) {
   p.subEl.textContent = sub || '';
   p.exportEl.style.display = mode === 'blueprint' ? 'block' : 'none';
   p.icsEl.style.display = mode === 'calendar' ? 'block' : 'none';
+  p.repEl.style.display = mode === 'audit' ? 'block' : 'none';
   p.busyMsgEl.style.color = 'rgba(0,229,255,.6)';
   if (mode === 'map' && OVL.map) setTimeout(() => OVL.map.invalidateSize(), 60);
   return p;
@@ -4605,6 +5660,10 @@ function arrangePanes(a) {
 addEventListener('resize', () => { OVL.order.forEach(p => { paneClamp(p); paneResized(p); }); });
 
 /* A handle on the pane system, for the console and for the test harness. */
+app.hist = { all: () => history, toAnthropic: () => toAnthropic(history), trim: trimHistory,
+  push: (m) => history.push(m), clear: () => { history.length = 0; } };
+app.audit = { run: auditTarget, parse: parseTarget, structure: auditStructure,
+  score: scoreFindings, last: () => AUDIT.last, exportMd: auditExport };
 app.walk = walkTo;
 app.body = () => ({ x: WALK.x, v: WALK.v, phase: WALK.phase, lean: WALK.lean, pose: POSE.name });
 app.pose = figurePose;
