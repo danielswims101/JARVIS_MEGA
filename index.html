@@ -1223,10 +1223,10 @@ window.dispatchEvent(new Event('jarvis-engine-ready'));
    only ever touched by the edge function. Nothing secret ships in this file.
    ═══════════════════════════════════════════════════════════════════════════ */
 const PRESET = {
-  supabaseUrl:     'https://gzqovsffnziumfbmqdes.supabase.co',
-  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6cW92c2ZmbnppdW1mYm1xZGVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNTgyMTksImV4cCI6MjA5NzgzNDIxOX0.26E4yXVMAjaq_mg4R0BGqRy2adYlG8mgRkbEn3SU36Y',
+  supabaseUrl:     'https://gzqovsffnziumfbmqdes.supabase.co',                 // ← https://xxxxxxxxxxxx.supabase.co
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6cW92c2ZmbnppdW1mYm1xZGVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNTgyMTksImV4cCI6MjA5NzgzNDIxOX0.26E4yXVMAjaq_mg4R0BGqRy2adYlG8mgRkbEn3SU36Y',                 // ← the anon/publishable key (public by design)
 
-  chatFunction:    'jarvis-ai',        // your deployed function
+  chatFunction:    'jarvis-ai',      // edge function holding ANTHROPIC_API_KEY
   verifyFunction:  '',                 // leave blank to verify against chatFunction instead
   model:           'claude-fable-5',
 
@@ -1234,20 +1234,21 @@ const PRESET = {
   units:           'imperial',         // 'imperial' = degrees F / mph, 'metric' = C / km/h
   camera:          false,              // start with the optical bench live (C toggles it)
   speechHold:      2000,               // ms of silence before a spoken sentence is sent
-
-  repulsors:       false,              // hand-fired effects. OFF — they fired on ordinary
-                                       // hand movement and buried the deck. F, G and B
-                                       // still fire from the keyboard either way.
-  gestureSensitivity: 1,               // if you turn repulsors on: >1 fires more easily
+  repulsors:       false,              // OFF by default. Hand-fired effects proved far too
+                                       // eager and dominated the deck; set true to enable
+                                       // gestures. F, G and B always work regardless.
+  gestureSensitivity: 1,               // repulsors: >1 fires more easily, <1 needs a harder
+                                       // move. The bench shows live SWEEP/PUSH figures
+                                       // against the thresholds, so tune it by eye.
   codeHeader:      'x-access-code',    // header carrying the code. Your function must
                                        // allow it in access-control-allow-headers, or
                                        // set this to '' to send no custom header.
 
-  elevenKey: 'sk_1a2db9b34828b2c6b96fe6e01719210a882bf174285039b0',
+  elevenKey: 'sk_1a2db9b34828b2c6b96fe6e01719210a882bf174285039b0',                       // optional — leave blank to use browser speech
   voices: {
-    jarvis: 'eOpDij4ZcACvhwwZD4k1',    // your custom voice
-    friday: 'CdqnllU7Nz7d5Wu8h8ha',
-    edith:  'FEECqq79nQmylfvNhWa3'
+    jarvis: 'eOpDij4ZcACvhwwZD4k1',    // Daniel  · replace with your custom voice ID
+    friday: 'CdqnllU7Nz7d5Wu8h8ha',    // Charlotte
+    edith:  'FEECqq79nQmylfvNhWa3'     // Sarah
   }
 };
 /* ═════════════════════════════════════════════════════════════════════════ */
@@ -1924,6 +1925,11 @@ const COMMON_RULES =
 'plainly finished with. Use arrange_panes to tile them, put one to a side, or shrink and enlarge them; the ' +
 'user can also grab any pane out of the air with a pinch and scale it with two hands.\n' +
 '- Blueprints: keep them to two or three views. Very large drawings risk being cut off mid-transmission.\n' +
+'- You have live object detection. The telemetry each turn carries what is in frame right now, and ' +
+'identify_objects gives you the list with confidences on demand. When someone asks what you can see or what they ' +
+'are holding, use it — it is instant and local. Speak about it naturally, and treat anything under about 60 per ' +
+'cent as a guess rather than a fact. It knows 80 everyday categories; for anything outside them, or to read ' +
+'text, take a still with look_at_me instead.\n' +
 '- With the optical bench on you can see them. If they ask what you can see, what they are holding, or to read ' +
 'something, call look_at_me and describe the still honestly.\n' +
 '- PRESENCE is your embodied mode: the deck folds away and you gather into a standing human figure made of your ' +
@@ -2178,6 +2184,8 @@ function telemetry() {
       ? { tracking: VIS.ready, hands: VIS.handCount, face: VIS.faces, gesture: VIS.gesture,
           pointer: [+VIS.x.toFixed(3), +VIS.y.toFixed(3)],
           subject_in_frame: !!VIS.body,
+          seeing: VIS.objects ? (seeing().map(o => o.object + ' ' + Math.round(o.confidence * 100) + '%').join(', ') || 'nothing recognisable')
+                              : 'object detector not loaded',
           form: RIG.human > 0.9 ? 'his own standing figure' : RIG.human > 0.02 ? 'assembling' : 'sphere',
           panes_open: OVL.order.map(p => p.kind) }
       : 'off — call set_camera to bring the optical bench up'
@@ -2364,6 +2372,11 @@ const TOOLS = [
 
   { name: 'set_camera', description: 'Turn the optical bench on or off on its own, without entering presence. Hands and eyes drive the deck: point to aim, pinch to click, open palm to listen, fist to dismiss, swipe for persona, wink for the microphone.',
     params: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
+  { name: 'identify_objects', description: 'Name what is actually in front of the camera right now. This is live object detection running on the user\'s own machine — 80 everyday categories with real confidence scores — not a guess from a photograph. Use it when they ask what you can see, what they are holding, or to count something. It is instant and costs nothing, so prefer it over look_at_me for ordinary objects; fall back to look_at_me when they hold up something unusual, or text to read.',
+    params: { type: 'object', properties: {
+      strict: { type: 'boolean', description: 'Default true — only report things seen steadily. false includes single-frame glimpses.' }
+    }, required: [] } },
+
   { name: 'look_at_me', description: 'Take a still from the camera and actually look at it. Use when the user asks what you can see, what they are holding, how something looks, or to read something they hold up. Turns the camera on first if it is off.',
     params: { type: 'object', properties: {
       reason: { type: 'string', description: 'What you are looking for — shown to the user so they know why.' }
@@ -2512,6 +2525,8 @@ function runTool(name, a) {
       return setFaceControl(a.on);
     case 'set_camera':
       return a.on ? camStart() : Promise.resolve(camStop());
+    case 'identify_objects':
+      return identifyObjects(a);
     case 'look_at_me': {
       const shoot = () => {
         const img = camSnapshot();
@@ -3848,6 +3863,156 @@ async function auditContent(url) {
            stats: { bytes: body.length, forms: actions.length, offsiteForms: offsite.length, iframes: iframes.length } };
 }
 
+/* ═══════════════════════════════════════════════ 6 · WHERE IT ACTUALLY GOES */
+/* A shortener is a promise you cannot read. Unwind it: ask the reader proxy for
+   the destination and follow the trail, capping the depth so a redirect loop
+   cannot hang the audit. Every hop is evidence in its own right — chains that
+   cross three unrelated domains are a pattern in themselves. */
+async function auditRedirects(url) {
+  const f = [], chain = [url];
+  let current = url, fetched = false;      // did we ever actually reach anything?
+
+  for (let hop = 0; hop < 5; hop++) {
+    let next = null;
+    try {
+      const r = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(current), { redirect: 'follow' });
+      fetched = true;
+      // the proxy exposes where it ended up
+      const landed = r.url && r.url.includes('url=') ? decodeURIComponent(r.url.split('url=')[1]) : null;
+      if (landed && landed !== current) next = landed;
+      if (!next && r.ok) {
+        const body = (await r.text()).slice(0, 8000);
+        // meta refresh and single-line JS redirects are redirects too
+        const meta = /<meta[^>]+http-equiv\s*=\s*["']refresh["'][^>]+content\s*=\s*["'][^"']*url\s*=\s*([^"';]+)/i.exec(body);
+        const js = /(?:location\.(?:href|replace)\s*\(?\s*=?\s*)["']([^"']+)["']/i.exec(body);
+        const to = (meta && meta[1]) || (js && js[1]);
+        if (to) {
+          try { next = new URL(to.trim(), current).href; } catch (e) { }
+          if (next) {
+            f.push(F('redirect', 'medium', 'The page forwards you on by itself',
+              'Not an HTTP redirect — the page arrives and then sends you somewhere else, which is harder to see ' +
+              'and harder for filters to follow.', next.slice(0, 120)));
+          }
+        }
+      }
+    } catch (e) { break; }
+    if (!next || chain.includes(next)) break;
+    chain.push(next);
+    current = next;
+  }
+
+  // reachable means the trace itself worked, not that a chain exists. Saying
+  // "redirects: checked" in the provenance block when nothing was ever fetched
+  // is the same lie as calling an unverified domain clean.
+  if (chain.length < 2) return { findings: f, chain, reachable: fetched };
+
+  const hosts = chain.map(u => { try { return registrable(new URL(u).hostname.toLowerCase()); } catch (e) { return u; } });
+  const distinct = [...new Set(hosts)];
+
+  f.push(F('redirect', distinct.length > 2 ? 'high' : 'medium',
+    'Redirects ' + (chain.length - 1) + ' time' + (chain.length === 2 ? '' : 's') + ' before it lands',
+    'You end up on ' + hosts[hosts.length - 1] + ', not ' + hosts[0] + '. ' +
+    (distinct.length > 2 ? 'A chain across ' + distinct.length + ' unrelated domains is a laundering pattern — ' +
+      'each hop makes the trail harder to follow and the original link harder to blame.'
+      : 'The link you were shown is not the site you arrive at.'),
+    hosts.join(' → ')));
+
+  return { findings: f, chain, hosts, final: chain[chain.length - 1], reachable: fetched };
+}
+
+/* ═════════════════════════════════════════ 7 · COMPARE IT TO THE REAL THING */
+/* When a target impersonates a brand, the most damning evidence is the genuine
+   article standing next to it. Resolve the real domain and put the two side by
+   side: different network, different country, decades of difference in age. */
+async function auditBaseline(t, findings) {
+  const imp = findings.find(f => f.area === 'impersonation' && (f.severity === 'critical' || f.severity === 'high'));
+  if (!imp) return { findings: [], baseline: null };
+
+  const m = /"([a-z0-9]+)"|of "([a-z0-9]+)"|as ([a-z0-9]+),/i.exec(imp.title);
+  const brand = (m && (m[1] || m[2] || m[3]) || '').toLowerCase();
+  if (!brand || !BRANDS.includes(brand)) return { findings: [], baseline: null };
+
+  const real = brand + '.com';
+  if (real === t.domain) return { findings: [], baseline: null };
+
+  const [aReal, aFake] = await Promise.all([resolve(real, 1), resolve(t.host, 1)]);
+  if (!aReal.ok || !aFake.ok) return { findings: [], baseline: null };
+
+  const ipReal = (aReal.answers[0] || {}).data, ipFake = (aFake.answers[0] || {}).data;
+  if (!ipReal || !ipFake) return { findings: [], baseline: null };
+
+  const [hReal, hFake] = await Promise.all([
+    fetch('https://ipwho.is/' + ipReal).then(r => r.json()).catch(() => null),
+    fetch('https://ipwho.is/' + ipFake).then(r => r.json()).catch(() => null)
+  ]);
+  if (!hReal || !hFake) return { findings: [], baseline: null };
+
+  const orgReal = (hReal.connection && (hReal.connection.org || hReal.connection.isp)) || '?';
+  const orgFake = (hFake.connection && (hFake.connection.org || hFake.connection.isp)) || '?';
+
+  const f = [F('baseline', 'high', 'It is not hosted anywhere near the real ' + brand,
+    'The genuine ' + real + ' answers from ' + orgReal + ' in ' + (hReal.country || '?') + '. This one answers ' +
+    'from ' + orgFake + ' in ' + (hFake.country || '?') + '. Nothing about the infrastructure matches the brand ' +
+    'it is claiming to be.',
+    real + ' → ' + ipReal + ' · ' + t.host + ' → ' + ipFake)];
+
+  return { findings: f, baseline: { brand, real, ipReal, ipFake, orgReal, orgFake,
+    countryReal: hReal.country, countryFake: hFake.country } };
+}
+
+/* ═══════════════════════════════════════════════ 8 · WHAT IT ADDS UP TO ═══ */
+/* Individually a young domain is nothing, a login form is nothing, and a brand
+   name is nothing. Together they are a specific accusation. Correlation is the
+   difference between a list of observations and an actual finding. */
+function correlate(report) {
+  const f = [];
+  const has = (area, sev) => report.findings.some(x => x.area === area && (!sev || x.severity === sev));
+  const age = report.registry && report.registry.ageDays;
+  const young = age != null && age <= 90;
+  const impersonating = has('impersonation');
+  const asksForSecrets = report.findings.some(x =>
+    /password|card details|recovery phrase|identity number/i.test(x.title));
+  const offsiteForm = report.findings.some(x => /submits to a different domain/i.test(x.title));
+
+  if (impersonating && young) {
+    f.push(F('assessment', 'critical', 'A brand-new domain wearing a familiar name',
+      'Registered ' + (age <= 1 ? 'today' : age + ' days ago') + ' AND built to look like a brand it does not own. ' +
+      'Those two facts together are not a coincidence — that is the entire construction of a phishing site.',
+      age + ' days · impersonation'));
+  }
+  if (impersonating && asksForSecrets) {
+    f.push(F('assessment', 'critical', 'It looks like a brand it is not, and it wants your credentials',
+      'The purpose of the resemblance is what it is asking you to type into it.', 'impersonation + credential form'));
+  }
+  if (young && asksForSecrets) {
+    f.push(F('assessment', 'critical', 'A domain this new should not be asking for these details',
+      'Legitimate services do not begin collecting credentials from a domain registered ' + age + ' days ago.',
+      age + ' days · credential form'));
+  }
+  if (offsiteForm && impersonating) {
+    f.push(F('assessment', 'critical', 'What you type here goes to a third party',
+      'It presents as one company, is registered to another, and posts your input to a third. There is no ' +
+      'innocent version of that arrangement.', 'offsite form + impersonation'));
+  }
+  if (has('redirect') && (impersonating || young)) {
+    f.push(F('assessment', 'high', 'The destination is hidden behind redirects as well',
+      'Concealing where the link lands, on top of everything else, is deliberate.', 'redirect chain'));
+  }
+  return f;
+}
+
+/* ══════════════════════════════════════════════════════ CHAIN OF CUSTODY ══ */
+/* A forensic report that cannot be checked later is an opinion. Hash what was
+   actually fetched, stamp it, and record it so the report can be shown to
+   someone else and still mean something. */
+async function sha256(text) {
+  try {
+    const buf = new TextEncoder().encode(String(text));
+    const d = await crypto.subtle.digest('SHA-256', buf);
+    return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) { return null; }
+}
+
 /* ═════════════════════════════════════════════════════════════ SCORING ════ */
 /* A verdict is only as good as what could be checked. Domain age is the single
    strongest signal there is, so calling something CLEAN when the registry never
@@ -3924,13 +4089,38 @@ async function auditTarget(a) {
     report.sources.hosting = host2.reachable;
     renderAudit(report, true);
 
+    // does the target look like something it is not? then fetch the real thing
+    // and stand them side by side
+    const base = await auditBaseline(t, report.findings).catch(() => ({ findings: [], baseline: null }));
+    report.findings.push(...base.findings);
+    report.baseline = base.baseline;
+    if (base.baseline) { report.sources.baseline = true; renderAudit(report, true); }
+
     if (depth === 'deep' && t.url && /^https?:$/i.test(t.url.protocol)) {
-      const con = await auditContent(t.url.href).catch(e => ({ findings: [], reachable: false }));
-      report.findings.push(...con.findings);
+      const [con, redir] = await Promise.all([
+        auditContent(t.url.href).catch(() => ({ findings: [], reachable: false })),
+        auditRedirects(t.url.href).catch(() => ({ findings: [], chain: [], reachable: false }))
+      ]);
+      report.findings.push(...con.findings, ...redir.findings);
       report.content = con.stats || null;
+      report.chain = redir.chain && redir.chain.length > 1 ? redir.chain : null;
       report.sources.content = con.reachable;
+      report.sources.redirects = redir.reachable;
+
+      // hash exactly what was read, so the report can be checked later
+      if (con.text) {
+        report.evidence = {
+          sha256: await sha256(con.text),
+          bytes: con.text.length,
+          read_via: con.via,
+          at: new Date().toISOString()
+        };
+      }
     }
   }
+
+  // and finally, what the individual findings mean together
+  report.findings.push(...correlate(report));
 
   /* order by severity, then area */
   report.findings.sort((x, y) => (SEV_ORDER[x.severity] - SEV_ORDER[y.severity]) || x.area.localeCompare(y.area));
@@ -3960,6 +4150,12 @@ async function auditTarget(a) {
       age_days: report.registry.ageDays
     } : 'not available',
     hosting: report.hosting ? (report.hosting.org + ' · ' + (report.hosting.country || '')) : 'not available',
+    redirect_chain: report.chain ? report.chain.map(u => { try { return new URL(u).hostname; } catch (e) { return u; } }) : null,
+    compared_against_real_brand: report.baseline
+      ? report.baseline.real + ' is on ' + report.baseline.orgReal + ' (' + report.baseline.countryReal +
+        '), this is on ' + report.baseline.orgFake + ' (' + report.baseline.countryFake + ')'
+      : null,
+    evidence_hash: report.evidence ? report.evidence.sha256 : null,
     findings: report.findings
       .filter(f => f.severity !== 'info' && f.severity !== 'good')
       .map(f => ({ severity: f.severity, title: f.title, evidence: f.evidence })),
@@ -4071,12 +4267,43 @@ function renderAudit(r, partial) {
         esc(r.records[k].join('  ·  ').slice(0, 400)) + '</span></div>').join('') +
       '</div>' : '') +
 
+    // where it actually goes
+    (r.chain ? '<div style="margin-top:16px;">' +
+      '<div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.55); margin-bottom:6px;">' +
+        'REDIRECT TRAIL</div>' +
+      r.chain.map((u, i) => '<div style="display:flex; gap:9px; font-size:10px; padding:3px 0;">' +
+        '<span style="flex:none; width:20px; color:' + acc + ';">' + (i + 1) + '</span>' +
+        '<span style="color:rgba(150,215,235,.8); word-break:break-all;">' + esc(u.slice(0, 150)) + '</span></div>').join('') +
+      '</div>' : '') +
+
+    // the real brand, alongside
+    (r.baseline ? '<div style="margin-top:16px; border:1px solid rgba(255,122,26,.35); background:rgba(255,122,26,.06); padding:11px 13px;">' +
+      '<div style="font-size:8px; letter-spacing:.3em; color:rgba(255,122,26,.9); margin-bottom:6px;">' +
+        'SIDE BY SIDE WITH THE REAL ' + esc(r.baseline.brand.toUpperCase()) + '</div>' +
+      '<div style="font-size:10.5px; line-height:1.7; color:rgba(190,230,244,.85);">' +
+      '<div>' + esc(r.baseline.real) + ' → ' + esc(r.baseline.ipReal) + ' · ' + esc(r.baseline.orgReal) +
+        ' · ' + esc(r.baseline.countryReal || '?') + '</div>' +
+      '<div style="color:#ff7a1a;">' + esc(r.host) + ' → ' + esc(r.baseline.ipFake) + ' · ' + esc(r.baseline.orgFake) +
+        ' · ' + esc(r.baseline.countryFake || '?') + '</div>' +
+      '</div></div>' : '') +
+
+    // chain of custody
+    (r.evidence ? '<div style="margin-top:16px;">' +
+      '<div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.55); margin-bottom:6px;">' +
+        'EVIDENCE</div>' +
+      '<div style="font-size:10px; line-height:1.7; color:rgba(150,215,235,.7);">' +
+      '<div>SHA-256 &nbsp;<span style="color:' + acc + '; word-break:break-all;">' + esc(r.evidence.sha256 || 'unavailable') + '</span></div>' +
+      '<div>' + r.evidence.bytes + ' bytes read via ' + esc(r.evidence.read_via || '?') + ' at ' + esc(r.evidence.at) + '</div>' +
+      '</div></div>' : '') +
+
     // provenance
     '<div style="margin-top:18px; border-top:1px solid rgba(0,229,255,.14); padding-top:10px; font-size:9.5px; ' +
       'letter-spacing:.1em; color:rgba(150,215,235,.6); display:flex; gap:14px; flex-wrap:wrap;">' +
       '<span>SOURCES:</span>' + src('structure', 'structure') + src('dns', 'dns') +
       src('registry', 'registry') + src('hosting', 'hosting') +
       (r.sources.content !== undefined ? src('content', 'page') : '') +
+      (r.sources.redirects !== undefined ? src('redirects', 'redirects') : '') +
+      (r.sources.baseline !== undefined ? src('baseline', 'baseline') : '') +
     '</div>' +
     '<div style="margin-top:8px; font-size:9.5px; line-height:1.6; color:rgba(150,215,235,.45);">' +
       'Passive assessment from public records and an ordinary page read. Nothing was probed or attacked. ' +
@@ -4139,6 +4366,31 @@ function auditExport() {
       if (r.records[k] && r.records[k].length) L.push(k.padEnd(5) + ' ' + r.records[k].join('\n      '));
     });
     L.push('```');
+    L.push('');
+  }
+  if (r.chain) {
+    L.push('## Redirect trail');
+    L.push('');
+    r.chain.forEach((u, i) => L.push((i + 1) + '. ' + u));
+    L.push('');
+  }
+  if (r.baseline) {
+    L.push('## Compared against the real ' + r.baseline.brand);
+    L.push('');
+    L.push('| | address | network | country |');
+    L.push('|---|---|---|---|');
+    L.push('| ' + r.baseline.real + ' | ' + r.baseline.ipReal + ' | ' + r.baseline.orgReal + ' | ' + (r.baseline.countryReal || '?') + ' |');
+    L.push('| ' + r.host + ' | ' + r.baseline.ipFake + ' | ' + r.baseline.orgFake + ' | ' + (r.baseline.countryFake || '?') + ' |');
+    L.push('');
+  }
+  if (r.evidence) {
+    L.push('## Evidence');
+    L.push('');
+    L.push('- SHA-256 of the page as read: `' + (r.evidence.sha256 || 'unavailable') + '`');
+    L.push('- ' + r.evidence.bytes + ' bytes, via ' + (r.evidence.read_via || '?'));
+    L.push('- Captured ' + r.evidence.at);
+    L.push('');
+    L.push('The hash covers exactly the bytes this assessment was made from. If the page changes, it will not match.');
     L.push('');
   }
   L.push('## Provenance');
@@ -5662,8 +5914,11 @@ addEventListener('resize', () => { OVL.order.forEach(p => { paneClamp(p); paneRe
 /* A handle on the pane system, for the console and for the test harness. */
 app.hist = { all: () => history, toAnthropic: () => toAnthropic(history), trim: trimHistory,
   push: (m) => history.push(m), clear: () => { history.length = 0; } };
+app.see = { list: seeing, identify: identifyObjects, note: (d, t) => noteObjects(d, t), raw: () => VIS.dets };
 app.audit = { run: auditTarget, parse: parseTarget, structure: auditStructure,
-  score: scoreFindings, last: () => AUDIT.last, exportMd: auditExport };
+  score: scoreFindings, last: () => AUDIT.last, exportMd: auditExport,
+  correlate, redirects: auditRedirects, baseline: auditBaseline, hash: sha256,
+  cap: capVerdict, render: renderAudit };
 app.walk = walkTo;
 app.body = () => ({ x: WALK.x, v: WALK.v, phase: WALK.phase, lean: WALK.lean, pose: POSE.name });
 app.pose = figurePose;
@@ -6846,6 +7101,7 @@ const VIS = {
   palmAt: 0, fistAt: 0, winkAt: 0,
   swipeX: 0, swipeAt: 0,
   faces: 0, handCount: 0,
+  objects: null, dets: [], objN: 0, objAt: 0,
   fps: 0, fAcc: 0, fN: 0
 };
 
@@ -6973,6 +7229,24 @@ async function camStart() {
     // — and skipping the pose model saves a model download and a third
     // inference pass on every single frame.
     VIS.pose = null;
+
+    /* Object detection. EfficientDet-Lite over the same runtime that is already
+       loaded: 80 everyday classes, boxes and confidences, entirely on this
+       machine. This is what turns "he can take a picture and guess" into "he
+       can see what is in front of him and name it".
+
+       It is heavier than the landmark models, so it runs on its own slower
+       cadence in the loop rather than every frame. If it fails to load, hands
+       and face carry on without it. */
+    try {
+      VIS.objects = await mp.ObjectDetector.createFromOptions(files, {
+        baseOptions: { modelAssetPath: MP_MODELS + '/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite', delegate: 'GPU' },
+        scoreThreshold: 0.42, maxResults: 10, runningMode: 'VIDEO'
+      });
+    } catch (e) {
+      VIS.objects = null;
+      printRow('OPTICS — object detection unavailable: ' + String(e.message || e) + '. Hands and face still work.', DIM);
+    }
   } catch (e) {
     VIS.loading = false; paintCam();
     printRow('OPTICS — could not load the vision models: ' + String(e.message || e), AM);
@@ -7128,6 +7402,65 @@ function fireClick(px, py) {
   if (app.engine) app.engine.shock((px / innerWidth) * 2 - 1, -((py / innerHeight) * 2 - 1));
 }
 
+/* ---- what is in front of the camera --------------------------------------
+   Raw detections flicker: a mug drops out for two frames and returns. Talking
+   about that directly would make him sound unreliable. Keep a short-memory
+   inventory instead — something seen recently and repeatedly is "there", and it
+   takes a second of absence before it is gone.
+--------------------------------------------------------------------------- */
+const SEEN = new Map();          // label → { score, hits, first, last, box }
+
+function noteObjects(dets, now) {
+  VIS.dets = dets || [];
+  (dets || []).forEach(d => {
+    const c = (d.categories && d.categories[0]) || {};
+    const label = String(c.categoryName || '').trim();
+    if (!label) return;
+    const prev = SEEN.get(label);
+    if (prev) {
+      prev.score = prev.score * 0.7 + (c.score || 0) * 0.3;
+      prev.hits++; prev.last = now; prev.box = d.boundingBox;
+    } else {
+      SEEN.set(label, { score: c.score || 0, hits: 1, first: now, last: now, box: d.boundingBox });
+    }
+  });
+  // forget anything that has not been seen for a second and a half
+  SEEN.forEach((v, k) => { if (now - v.last > 1500) SEEN.delete(k); });
+}
+
+/** The inventory, most confident first, only things seen enough to be real. */
+function seeing(minHits) {
+  const out = [];
+  SEEN.forEach((v, k) => {
+    if (v.hits >= (minHits == null ? 2 : minHits)) {
+      out.push({ object: k, confidence: +v.score.toFixed(2), seen_for_ms: Math.round(v.last - v.first) });
+    }
+  });
+  return out.sort((a, b) => b.confidence - a.confidence);
+}
+
+function identifyObjects(a) {
+  a = a || {};
+  const start = () => {
+    const list = seeing(a.strict === false ? 1 : 2);
+    if (!VIS.ready) return { error: 'the optical bench is not tracking yet' };
+    if (!VIS.objects) {
+      return { error: 'the object detector did not load on this machine — use look_at_me instead and describe the still yourself' };
+    }
+    if (!list.length) {
+      return { ok: true, seeing: [], note: 'Nothing recognisable in frame. The detector knows 80 everyday categories; ' +
+        'anything outside them will not appear here, so use look_at_me if they are holding something unusual.' };
+    }
+    return {
+      ok: true, seeing: list, count: list.length,
+      note: 'Live detection, running on this machine. Name what you see naturally. Confidence below about 0.6 is a ' +
+            'guess — say so rather than asserting it.'
+    };
+  };
+  if (VIS.on && VIS.ready) return start();
+  return camStart().then(r => (r && r.error) ? r : new Promise(res => setTimeout(() => res(start()), 1400)));
+}
+
 function camLoop(now) {
   if (!VIS.on || !VIS.ready) return;
   VIS.raf = requestAnimationFrame(camLoop);
@@ -7139,6 +7472,18 @@ function camLoop(now) {
   let hres = null, fres = null;
   try { hres = VIS.hands.detectForVideo(v, now); } catch (e) { }
   try { fres = VIS.face.detectForVideo(v, now); } catch (e) { }
+
+  // objects on their own clock — roughly six times a second is plenty for
+  // naming what is on a desk, and keeps the hands responsive
+  if (VIS.objects && now - VIS.objAt > 160) {
+    VIS.objAt = now;
+    try {
+      const o = VIS.objects.detectForVideo(v, Math.round(now));
+      noteObjects(o && o.detections, now);
+    } catch (e) { }
+  } else {
+    SEEN.forEach((val, k) => { if (now - val.last > 1500) SEEN.delete(k); });
+  }
 
   // ── his body is his own ──────────────────────────────────────────────────
   // Nothing here reads your posture. A face or a hand tells him somebody is
@@ -7281,15 +7626,17 @@ function camLoop(now) {
 
   if (g !== VIS.gesture) { VIS.gesture = g; }
   if (OVL.grab) g = OVL.grab.mode === 'scale' ? 'scale' : 'carry';
-  const label = (VIS.body ? 'SUBJECT · ' : '') + (hands.length
+  const objs = seeing();
+  const objBit = objs.length ? objs.slice(0, 2).map(o => o.object).join('+').toUpperCase() + ' · ' : '';
+  const label = objBit + (VIS.body ? 'SUBJECT · ' : '') + (hands.length
     ? (hands.length + 'H · ' + g.toUpperCase())
     : face ? 'GAZE' : (VIS.body ? 'LOCK' : 'NO SUBJECT'));
   if (E.camGesture && !/·\s(PERSONA|LISTENING|DISMISS|VOICE)$/.test(E.camGesture.textContent)) camSay(label);
 
-  if (!VIS.folded) drawCamOverlay(hands, face);
+  if (!VIS.folded) drawCamOverlay(hands, face, VIS.dets);
 }
 
-function drawCamOverlay(hands, face) {
+function drawCamOverlay(hands, face, dets) {
   const c = E.camOverlay; if (!c) return;
   const w = c.clientWidth, h = c.clientHeight;
   if (!w || !h) return;
@@ -7297,6 +7644,33 @@ function drawCamOverlay(hands, face) {
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, w, h);
   const acc = accentNow();
+
+  /* objects first, behind the skeletons — the feed is mirrored on screen, so
+     every x is flipped to match what you are actually looking at */
+  (dets || []).forEach(d => {
+    const b = d.boundingBox; if (!b) return;
+    const cat = (d.categories && d.categories[0]) || {};
+    const vw = E.camVideo.videoWidth || 640, vh = E.camVideo.videoHeight || 480;
+    const x = (1 - (b.originX + b.width) / vw) * w;
+    const y = (b.originY / vh) * h;
+    const bw = (b.width / vw) * w, bh = (b.height / vh) * h;
+    const strong = (cat.score || 0) > 0.6;
+    ctx.strokeStyle = strong ? acc : 'rgba(255,179,0,.75)';
+    ctx.lineWidth = 1.2; ctx.globalAlpha = .9;
+    // corner brackets rather than a full box — less to read, same information
+    const k = Math.min(9, bw / 3, bh / 3);
+    [[x, y, 1, 1], [x + bw, y, -1, 1], [x, y + bh, 1, -1], [x + bw, y + bh, -1, -1]].forEach(([cx, cy, sx, sy]) => {
+      ctx.beginPath();
+      ctx.moveTo(cx + sx * k, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + sy * k);
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+    ctx.font = '600 8px "JetBrains Mono", monospace';
+    ctx.fillStyle = strong ? acc : 'rgba(255,179,0,.9)';
+    ctx.textAlign = 'left';
+    const label = String(cat.categoryName || '').toUpperCase() + ' ' + Math.round((cat.score || 0) * 100);
+    ctx.fillText(label, x + 1, Math.max(8, y - 3));
+  });
 
   if (face) {
     ctx.fillStyle = acc + '55';
@@ -7577,6 +7951,7 @@ function presStat() {
     cell('FORM', RIG.human > 0.97 ? 'CORPOREAL' : RIG.human > 0.02 ? 'ASSEMBLING' : 'DISPERSED') +
     cell('SUBJECT', VIS.body ? 'IN FRAME' : VIS.faces ? 'FACE ONLY' : 'NONE') +
     cell('GESTURE', (VIS.gesture || 'none').toUpperCase()) +
+    cell('SEEING', (seeing()[0] && seeing()[0].object.toUpperCase()) || '—') +
     cell('COGNITIVE', t.cognitive_load_pct + '%');
   E.presRight.innerHTML =
     cell('MODEL', link.model.replace('claude-', '')) +
