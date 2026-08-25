@@ -1597,7 +1597,10 @@ function fit(c) {
   return { ctx, w, h };
 }
 
-function drawVitals() {
+/* Superseded by drawVitals2 in instruments.js. Kept as a thin alias so any
+   caller that still names the old function lands on the new instrument. */
+function drawVitals() { return drawVitals2(); }
+function drawVitalsLegacy() {
   const f = fit(E.cVitals); if (!f) return;
   const { ctx, w, h } = f;
   const cw = w / 2, ch = h / 2;
@@ -1633,7 +1636,8 @@ function drawVitals() {
   });
 }
 
-function drawNet(dt) {
+function drawNet(dt) { return drawNet3D(dt); }
+function drawNetLegacy(dt) {
   const f = fit(E.cNet); if (!f) return;
   const { ctx, w, h } = f, N = sim.nodes;
   for (let i = 0; i < N.length; i++) {
@@ -1682,7 +1686,8 @@ function drawNet(dt) {
   }
 }
 
-function drawCore(dt) {
+function drawCore(dt) { return drawCore2(dt); }
+function drawCoreLegacy(dt) {
   const f = fit(E.cCore); if (!f) return;
   const { ctx, w, h } = f;
   if (Math.random() < 0.006) sim.chargeT = rnd(0.55, 0.99);
@@ -1721,7 +1726,8 @@ function drawCore(dt) {
   }
 }
 
-function drawNeural(dt) {
+function drawNeural(dt) { return drawNeural2(dt); }
+function drawNeuralLegacy(dt) {
   const f = fit(E.cNeural); if (!f) return;
   const { ctx, w, h } = f;
   sim.head = (sim.head + 1) % 260;
@@ -1947,7 +1953,17 @@ function loop(now) {
   // full-screen trace panel. A floating pane covers a corner of the screen, not
   // the deck: freezing every instrument the moment you asked for the weather is
   // most of what "it goes dark" actually was.
-  if (!PANEL.on) { drawVitals(); drawNet(dt); drawCore(dt); drawNeural(dt); drawRadar(dt); }
+  if (!PANEL.on) {
+    // Every panel is now a simulation being drawn, not a drawing pretending to
+    // be a simulation. They are stepped here, once, at the real frame time.
+    vitalsStep(dt, !!app.busy, NET3.nodes.length ? NET3.energy : 0);
+    coreStep(dt, 0.42 + VITALS.chans[0].v / 190);
+    drawVitals2();
+    if (afford('net3d', 5)) meter('net3d', () => drawNet3D(dt)); 
+    drawCore2(dt);
+    drawNeural2(dt);
+    drawRadar(dt);
+  }
   if (!PANEL.on) drawWave();
 }
 
@@ -5236,6 +5252,1281 @@ async function relevantMemory(text, limit) {
 }
 
 function memoryForget() { RECALL.loaded = false; RECALL.rows = []; }
+
+/* ══════════════════════════════════════════════════════ HANDS, PROPERLY ════
+   Four things were wrong with the old input path, and every one of them is the
+   sort of fault you feel immediately and cannot name:
+
+     1. A fixed 0.28-per-frame lerp. That is not a time constant, it is a
+        per-frame constant — so the pointer was twice as sluggish at 30fps as at
+        60, and lagged visibly behind any quick movement at either.
+     2. Hard thresholds. A pinch distance sitting at 0.419 versus 0.421 flipped
+        the gesture every other frame, which is why grabbing something felt like
+        wrestling it.
+     3. The pointer source switched between the fingertip and the knuckle when
+        the gesture changed, so the crosshair jumped several centimetres the
+        instant you pinched — exactly when you least wanted it to move.
+     4. One gain for everything. Enough gain to reach a corner made fine
+        pointing impossible; enough for fine pointing put the corners out of
+        reach.
+
+   What replaces them:
+
+     · A 1€ filter on the pointer. Its whole idea is that jitter and lag need
+       opposite treatments, so the cutoff frequency rises with speed: heavy
+       smoothing when you are barely moving, almost none when you sweep. It is
+       three lines of maths and it is the difference between a cursor that
+       shivers and one that sits still.
+     · Schmitt triggers on every binary decision, so nothing can chatter.
+     · A gesture only becomes real after it has been the same for a few frames,
+       and only stops being real after it has been absent for a few more.
+     · The pointer source is blended, not switched.
+     · A gain curve: precise below a few centimetres per second, fast above.
+
+   None of this removes a capability. It removes the noise around them.       */
+
+/* ─────────────────────────────────────────────────────────────── 1€ FILTER ── */
+function LowPass() {
+  return { y: null, s: null,
+    filter(x, a) {
+      this.s = this.y === null ? x : a * x + (1 - a) * this.s;
+      this.y = x;
+      return this.s;
+    },
+    reset() { this.y = null; this.s = null; }
+  };
+}
+
+/** minCutoff sets how still a still hand looks; beta sets how quickly the
+ *  filter gets out of the way when you move. Those are the only two knobs and
+ *  they trade against each other in the obvious direction. */
+function OneEuro(minCutoff, beta, dCutoff) {
+  return {
+    // beta is in cutoff-Hz per (frame-width per second). A hand sweeping the
+    // screen moves at roughly 0.5 frame-widths/s, so beta must be of order ten
+    // for the cutoff to actually rise into the responsive range. The original
+    // 0.035 left the cutoff pinned at the minimum and the cursor underwater.
+    minCutoff: minCutoff == null ? 1.0 : minCutoff,
+    beta: beta == null ? 12 : beta,
+    dCutoff: dCutoff == null ? 1.0 : dCutoff,
+    x: LowPass(), dx: LowPass(), last: null, speed: 0,
+
+    alpha(cutoff, dt) {
+      const tau = 1 / (2 * Math.PI * cutoff);
+      return 1 / (1 + tau / dt);
+    },
+    filter(v, dt) {
+      if (!(dt > 0)) dt = 1 / 60;
+      const prev = this.x.y;
+      const rate = prev === null ? 0 : (v - prev) / dt;
+      const edx = this.dx.filter(rate, this.alpha(this.dCutoff, dt));
+      this.speed = Math.abs(edx);
+      const cutoff = this.minCutoff + this.beta * this.speed;
+      return this.x.filter(v, this.alpha(cutoff, dt));
+    },
+    reset() { this.x.reset(); this.dx.reset(); this.speed = 0; }
+  };
+}
+
+/* ────────────────────────────────────────────────────────── SCHMITT TRIGGER ──
+   One threshold to switch on, a different one to switch off. The gap between
+   them is what makes a decision stick instead of vibrating. */
+function Schmitt(onAt, offAt, startOn) {
+  return {
+    onAt, offAt, state: !!startOn,
+    read(v) {
+      // works whichever way round the thresholds are, so callers can use it for
+      // "small means on" (pinch distance) as naturally as the other way
+      if (onAt < offAt) this.state = this.state ? v < offAt : v < onAt;
+      else this.state = this.state ? v > offAt : v > onAt;
+      return this.state;
+    },
+    reset(s) { this.state = !!s; }
+  };
+}
+
+/* ══════════════════════════════════════════════════════════ THE HAND MODEL ══ */
+const HAND = {
+  // pointer, one filter per axis
+  fx: OneEuro(1.0, 14), fy: OneEuro(1.0, 14),
+  x: 0.5, y: 0.5, vx: 0, vy: 0,
+  anchor: 0,                    // 0 = knuckle, 1 = fingertip. Blended, never switched.
+  gain: 1,
+
+  // per-hand gesture state, keyed by index
+  slots: [],
+  gesture: 'none', gestureAt: 0,
+  quality: 0,                   // how much to trust the tracker right now
+  lostAt: 0,
+
+  // tunables, exposed so they can be adjusted without hunting through code
+  cfg: {
+    pinchOn: 0.38, pinchOff: 0.50,        // fraction of palm span
+    extendOn: 1.45, extendOff: 1.25,      // tip reach, against the knuckle
+    hold: 3,                              // frames a gesture must persist
+    release: 5,                           // frames it must be gone
+    deadzone: 0.0016,                     // of the frame — below this, do not move
+    gainLow: 0.72, gainHigh: 1.65,        // pointer gain at slow and fast speeds
+    gainKnee: 0.55                        // speed, in frame-widths per second
+  }
+};
+
+function handSlot(i) {
+  if (!HAND.slots[i]) {
+    HAND.slots[i] = {
+      pinch: Schmitt(HAND.cfg.pinchOn, HAND.cfg.pinchOff),
+      ext: [0, 1, 2, 3].map(() => Schmitt(HAND.cfg.extendOn, HAND.cfg.extendOff)),
+      votes: {}, current: 'none', absent: 0,
+      spanF: OneEuro(2.0, 0.5)
+    };
+  }
+  return HAND.slots[i];
+}
+
+function handReset() {
+  HAND.fx.reset(); HAND.fy.reset();
+  HAND.slots = [];
+  HAND.gesture = 'none';
+  HAND.quality = 0;
+}
+
+const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+
+/** How far a fingertip reaches, measured against its own knuckle rather than
+ *  its middle joint.
+ *
+ *  Against the middle joint the two distances differ by only a few per cent
+ *  even between a straight finger and a curled one, so the decision sat on a
+ *  knife edge and any noise flipped it. Against the knuckle the ratio is about
+ *  2.2 for a straight finger and about 0.9 for a curled one — a gap wide enough
+ *  that the answer is never in doubt.
+ *
+ *  Ratios rather than absolute distances, so it is invariant to how far away
+ *  the hand is and how large the hand happens to be. */
+function extension(lm, tip, mcp) {
+  const wrist = lm[0];
+  const a = d3(lm[tip], wrist), b = d3(lm[mcp], wrist);
+  return b > 0.0001 ? a / b : 0;
+}
+
+/** Read one hand into a stable, debounced description. */
+function readHandStable(lm, i, dt) {
+  const S = handSlot(i);
+  const span = d3(lm[0], lm[9]) || 0.001;
+
+  // ── pinch, with hysteresis ───────────────────────────────────────────────
+  const pinchDist = d3(lm[4], lm[8]) / span;
+  const pinching = S.pinch.read(pinchDist);
+
+  // ── finger extension, each with its own trigger ──────────────────────────
+  const raw = [extension(lm, 8, 5), extension(lm, 12, 9), extension(lm, 16, 13), extension(lm, 20, 17)];
+  const fingers = raw.map((v, k) => S.ext[k].read(v));
+  const up = fingers.filter(Boolean).length;
+
+  // ── the shape, before debouncing ─────────────────────────────────────────
+  // Order matters: a pinch is checked first because pinching curls the index
+  // finger, so by finger count alone a pinch and a fist are the same thing.
+  let want;
+  if (pinching) want = 'pinch';
+  else if (up === 0) want = 'fist';
+  else if (fingers[0] && up === 1) want = 'point';
+  else if (fingers[0] && fingers[1] && up === 2) want = 'peace';
+  else if (up >= 4) want = 'palm';
+  else want = 'hand';
+
+  // ── debounce: a shape must persist before it is believed ─────────────────
+  S.votes[want] = (S.votes[want] || 0) + 1;
+  for (const k in S.votes) if (k !== want) S.votes[k] = Math.max(0, S.votes[k] - 1);
+  if (want !== S.current && S.votes[want] >= HAND.cfg.hold) {
+    S.current = want;
+    for (const k in S.votes) if (k !== want) S.votes[k] = 0;
+  }
+
+  // ── the two points the pointer can come from ────────────────────────────
+  const tip = lm[8], knuckle = lm[9];
+  // Blend towards the fingertip when pointing or pinching, rather than jumping
+  // to it. A jump at the moment of pinching is the single most disorienting
+  // thing an air cursor can do: it moves exactly when you are trying to hold
+  // still on a target.
+  const wantAnchor = (S.current === 'point' || S.current === 'pinch') ? 1 : 0;
+  HAND.anchor += (wantAnchor - HAND.anchor) * Math.min(1, dt * 9);
+  const px = knuckle.x + (tip.x - knuckle.x) * HAND.anchor;
+  const py = knuckle.y + (tip.y - knuckle.y) * HAND.anchor;
+
+  return {
+    shape: S.current,
+    pinch: S.current === 'pinch',
+    point: S.current === 'point',
+    palm: S.current === 'palm',
+    fist: S.current === 'fist',
+    peace: S.current === 'peace',
+    fingers, up, pinchDist,
+    span: S.spanF.filter(span, dt),
+    rawSpan: span,
+    tip, centre: knuckle,
+    px, py,
+    // how confident the tracker looks: a hand half out of frame or collapsed to
+    // a point is not something to act on
+    quality: handQuality(lm, span)
+  };
+}
+
+/** Cheap sanity score for a landmark set. */
+function handQuality(lm, span) {
+  let inFrame = 0;
+  for (let i = 0; i < 21; i++) {
+    const p = lm[i];
+    if (p.x > 0.02 && p.x < 0.98 && p.y > 0.02 && p.y < 0.98) inFrame++;
+  }
+  const framing = inFrame / 21;
+  // a hand that is too small in frame is mostly noise
+  const size = Math.min(1, span / 0.06);
+  return Math.max(0, Math.min(1, framing * 0.65 + size * 0.35));
+}
+
+/* ══════════════════════════════════════════════════════════ THE POINTER ════
+   Filter, then apply a gain curve, then a dead zone. In that order: filtering
+   after gain would amplify the noise before removing it, and a dead zone before
+   filtering would quantise the input into visible steps.                     */
+function stepPointer(rawX, rawY, dt, quality) {
+  if (rawX == null) return null;
+
+  const fx = HAND.fx.filter(rawX, dt);
+  const fy = HAND.fy.filter(rawY, dt);
+
+  // speed in frame-widths per second, from the filter's own derivative estimate
+  const speed = Math.hypot(HAND.fx.speed, HAND.fy.speed);
+
+  // Gain rises with speed. Below the knee you get sub-unity gain, which is what
+  // makes small targets hittable; above it you get more than unity, which is
+  // what puts the corners in reach without a bigger arm movement.
+  const t = Math.min(1, speed / HAND.cfg.gainKnee);
+  HAND.gain = HAND.cfg.gainLow + (HAND.cfg.gainHigh - HAND.cfg.gainLow) * (t * t * (3 - 2 * t));
+
+  const dx = (fx - 0.5) * HAND.gain + 0.5;
+  const dy = (fy - 0.5) * HAND.gain + 0.5;
+
+  // Dead zone against residual tracker noise while genuinely holding still.
+  // Applied to the *change*, not the position, so it never introduces drift.
+  const moved = Math.hypot(dx - HAND.x, dy - HAND.y);
+  if (moved > HAND.cfg.deadzone) {
+    HAND.vx = (dx - HAND.x) / Math.max(0.001, dt);
+    HAND.vy = (dy - HAND.y) / Math.max(0.001, dt);
+    HAND.x = dx; HAND.y = dy;
+  } else {
+    HAND.vx *= 0.5; HAND.vy *= 0.5;
+  }
+
+  HAND.x = Math.max(0, Math.min(1, HAND.x));
+  HAND.y = Math.max(0, Math.min(1, HAND.y));
+  HAND.quality = quality == null ? 1 : quality;
+  return { x: HAND.x, y: HAND.y, speed, gain: HAND.gain };
+}
+
+/* ══════════════════════════════════════════════════════════ DWELL & INTENT ══
+   A held gesture needs a visible countdown or it feels like nothing is
+   happening. Every timed gesture goes through this so they all behave the same
+   way and all show the same feedback. */
+const INTENT = { name: null, at: 0, need: 0, progress: 0 };
+
+function intent(name, active, needMs, now) {
+  if (!active) {
+    if (INTENT.name === name) { INTENT.name = null; INTENT.progress = 0; }
+    return false;
+  }
+  if (INTENT.name !== name) { INTENT.name = name; INTENT.at = now; INTENT.need = needMs; }
+  const held = now - INTENT.at;
+  INTENT.progress = Math.max(0, Math.min(1, held / needMs));
+  if (held >= needMs) { INTENT.name = null; INTENT.progress = 0; return true; }
+  return false;
+}
+
+function intentProgress(name) { return INTENT.name === name ? INTENT.progress : 0; }
+
+/* ═════════════════════════════════════════════════════════ A STEADIER GRAB ══
+   Carrying and scaling a pane in mid air both suffered from the same thing: the
+   pane followed the raw fingertip, so it inherited every tremor in your hand.
+   Filtering the grab separately from the pointer means the pane can be steady
+   while the cursor stays responsive. */
+/* These filters work in PIXELS, not in frame-widths like the pointer's, so the
+   beta scale is completely different — a drag moves at hundreds of pixels per
+   second where the pointer moves at fractions of a frame per second. Tuned so a
+   stationary hand holds a window dead still, and a moving one converges within
+   two or three frames. */
+const GRABF = {
+  x: OneEuro(1.4, 0.030), y: OneEuro(1.4, 0.030),
+  w: OneEuro(1.1, 0.022), h: OneEuro(1.1, 0.022),
+  active: false,
+  reset() { this.x.reset(); this.y.reset(); this.w.reset(); this.h.reset(); this.active = false; }
+};
+
+function smoothGrab(x, y, dt) {
+  GRABF.active = true;
+  return { x: GRABF.x.filter(x, dt), y: GRABF.y.filter(y, dt) };
+}
+function smoothBox(w, h, dt) {
+  return { w: GRABF.w.filter(w, dt), h: GRABF.h.filter(h, dt) };
+}
+
+/* ═══════════════════════════════════════════════════════════ INSTRUMENTS ════
+   Four panels that were decoration and are now simulations.
+
+   The distinction matters more than it sounds. A sine wave labelled NEURAL
+   ACTIVITY tells you nothing and cannot surprise you. A network of leaky
+   integrate-and-fire neurons with real synaptic delay produces bursts,
+   silences and avalanches that nobody wrote in — and when the deck is thinking
+   hard, the activity genuinely changes because the input current genuinely
+   changed.
+
+   Everything here is charged against the frame budget through the governor, so
+   the extra fidelity costs frames only when there are frames to spare.       */
+
+/* ══════════════════════════════════════════════ 1 · THE NETWORK, IN 3D ═════
+   A force-directed graph in three dimensions with real routing on top of it.
+
+   Layout is Fruchterman-Reingold: every node repels every other, every edge
+   pulls its endpoints together, and the whole thing is annealed by a
+   temperature that decays. With thirty nodes the O(n²) repulsion is a few
+   hundred operations a frame, which is cheaper than the Barnes-Hut tree that
+   would replace it.
+
+   Traffic is not decorative either. Packets are routed by Dijkstra over link
+   latency, so they take multi-hop paths through the graph and re-route when a
+   node fails. Watching a route shift after a failure is the whole point of a
+   topology display.                                                          */
+
+const NET3 = {
+  nodes: [], links: [], packets: [],
+  rot: 0, tilt: 0.42, dist: 3.4, autoSpin: true,
+  temp: 1, energy: 0, lastEnergy: 0,
+  routes: new Map(), routeAt: 0,
+  events: [], seq: 1,
+  drag: null,
+  stats: { throughput: 0, dropped: 0, delivered: 0, meanHops: 0, meanLatency: 0 }
+};
+
+const NODE_KIND = {
+  core:    { r: 5.2, col: '#eafcff', mass: 3.0, label: 'CORE' },
+  gateway: { r: 4.0, col: '#00e5ff', mass: 2.0, label: 'GW' },
+  relay:   { r: 3.0, col: '#0a84ff', mass: 1.2, label: 'RLY' },
+  edge:    { r: 2.4, col: '#63f0ff', mass: 0.8, label: 'EDG' },
+  sensor:  { r: 2.0, col: '#7aa8ff', mass: 0.6, label: 'SNS' }
+};
+
+function netBuild(seed) {
+  let s = seed || 20260824;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+
+  NET3.nodes = []; NET3.links = []; NET3.packets = []; NET3.events = [];
+  const add = (kind, name) => {
+    const k = NODE_KIND[kind];
+    const n = {
+      id: NET3.nodes.length, kind, name,
+      x: (rnd() - 0.5) * 1.6, y: (rnd() - 0.5) * 1.6, z: (rnd() - 0.5) * 1.6,
+      vx: 0, vy: 0, vz: 0,
+      mass: k.mass, r: k.r,
+      load: 0.1 + rnd() * 0.3, health: 1, up: true,
+      queue: 0, seen: 0, downUntil: 0
+    };
+    NET3.nodes.push(n);
+    return n;
+  };
+
+  const core = add('core', 'ARC');
+  const gws = [add('gateway', 'GW-A'), add('gateway', 'GW-B'), add('gateway', 'GW-C')];
+  const relays = [];
+  for (let i = 0; i < 6; i++) relays.push(add('relay', 'R' + (i + 1)));
+  const edges = [];
+  for (let i = 0; i < 9; i++) edges.push(add('edge', 'E' + (i + 1)));
+  const sensors = [];
+  for (let i = 0; i < 7; i++) sensors.push(add('sensor', 'S' + (i + 1)));
+
+  const link = (a, b, gbps) => {
+    if (a === b) return;
+    if (NET3.links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))) return;
+    NET3.links.push({
+      a: a.id, b: b.id,
+      capacity: gbps,
+      // latency is proportional to the length the layout settles on, plus a
+      // fixed switching cost — so a route through three short hops can genuinely
+      // beat one long one, which is what makes the routing interesting
+      base: 0.4 + gbps * 0.02,
+      util: 0.05, up: true, errors: 0
+    });
+  };
+
+  gws.forEach(g => link(core, g, 400));
+  gws.forEach((g, i) => link(g, gws[(i + 1) % gws.length], 200));   // ring between gateways
+  relays.forEach((r, i) => { link(gws[i % gws.length], r, 100); link(r, relays[(i + 2) % relays.length], 40); });
+  edges.forEach((e, i) => { link(relays[i % relays.length], e, 25); if (i % 3 === 0) link(relays[(i + 1) % relays.length], e, 25); });
+  sensors.forEach((sn, i) => link(edges[i % edges.length], sn, 5));
+
+  NET3.temp = 1;
+  NET3.routeAt = 0;
+  NET3.routes.clear();
+  return NET3;
+}
+
+/** Adjacency, rebuilt when the graph changes. */
+function netAdj() {
+  const adj = NET3.nodes.map(() => []);
+  NET3.links.forEach((l, i) => {
+    if (!l.up) return;
+    const A = NET3.nodes[l.a], B = NET3.nodes[l.b];
+    if (!A || !B || !A.up || !B.up) return;
+    // congestion raises the effective cost, so traffic spreads across the fabric
+    const cost = l.base * (1 + l.util * 2.4);
+    adj[l.a].push({ to: l.b, cost, link: i });
+    adj[l.b].push({ to: l.a, cost, link: i });
+  });
+  return adj;
+}
+
+/** Dijkstra from one node to everywhere. Returns predecessor arrays. */
+function netRoute(from) {
+  const adj = netAdj();
+  const n = NET3.nodes.length;
+  const dist = new Array(n).fill(Infinity);
+  const prev = new Array(n).fill(-1);
+  const prevLink = new Array(n).fill(-1);
+  const done = new Array(n).fill(false);
+  dist[from] = 0;
+  for (let iter = 0; iter < n; iter++) {
+    let u = -1, best = Infinity;
+    for (let i = 0; i < n; i++) if (!done[i] && dist[i] < best) { best = dist[i]; u = i; }
+    if (u < 0) break;
+    done[u] = true;
+    for (const e of adj[u]) {
+      const nd = dist[u] + e.cost;
+      if (nd < dist[e.to]) { dist[e.to] = nd; prev[e.to] = u; prevLink[e.to] = e.link; }
+    }
+  }
+  return { dist, prev, prevLink };
+}
+
+function netPath(from, to) {
+  const key = from + '>' + to;
+  let r = NET3.routes.get(from);
+  if (!r) { r = netRoute(from); NET3.routes.set(from, r); }
+  if (!isFinite(r.dist[to])) return null;
+  const hops = [], links = [];
+  let cur = to;
+  let guard = 0;
+  while (cur !== from && guard++ < 64) {
+    hops.unshift(cur);
+    links.unshift(r.prevLink[cur]);
+    cur = r.prev[cur];
+    if (cur < 0) return null;
+  }
+  hops.unshift(from);
+  return { hops, links, cost: r.dist[to] };
+}
+
+/* ───────────────────────────────────────────────────────────── the physics ── */
+function netLayout(dt) {
+  const N = NET3.nodes;
+  const n = N.length;
+  if (!n) return 0;
+
+  // repulsion — every pair, in three dimensions
+  const K = 0.62;
+  for (let i = 0; i < n; i++) {
+    const a = N[i];
+    for (let j = i + 1; j < n; j++) {
+      const b = N[j];
+      let dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+      let d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < 1e-6) { dx = 1e-3; dy = 1e-3; dz = 1e-3; d2 = 3e-6; }
+      const d = Math.sqrt(d2);
+      const f = (K * K) / d2;
+      const ux = dx / d, uy = dy / d, uz = dz / d;
+      a.vx += ux * f / a.mass; a.vy += uy * f / a.mass; a.vz += uz * f / a.mass;
+      b.vx -= ux * f / b.mass; b.vy -= uy * f / b.mass; b.vz -= uz * f / b.mass;
+    }
+  }
+  // attraction along the links
+  for (const l of NET3.links) {
+    const a = N[l.a], b = N[l.b];
+    if (!a || !b) continue;
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-4;
+    // fatter links pull harder, so the backbone forms a visible spine
+    const f = (d * d) / K * (0.5 + l.capacity / 800);
+    const ux = dx / d, uy = dy / d, uz = dz / d;
+    a.vx += ux * f / a.mass; a.vy += uy * f / a.mass; a.vz += uz * f / a.mass;
+    b.vx -= ux * f / b.mass; b.vy -= uy * f / b.mass; b.vz -= uz * f / b.mass;
+  }
+  // gentle pull to the origin so the graph cannot drift off
+  for (const a of N) { a.vx -= a.x * 0.55; a.vy -= a.y * 0.55; a.vz -= a.z * 0.55; }
+
+  // integrate, with the annealing temperature capping how far anything moves
+  let energy = 0;
+  const step = Math.min(0.05, dt) * NET3.temp;
+  for (const a of N) {
+    const sp = Math.sqrt(a.vx * a.vx + a.vy * a.vy + a.vz * a.vz);
+    const cap = Math.min(1, 0.35 / (sp || 1e-6));
+    a.x += a.vx * step * cap; a.y += a.vy * step * cap; a.z += a.vz * step * cap;
+    a.vx *= 0.82; a.vy *= 0.82; a.vz *= 0.82;
+    const R = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+    if (R > 1.6) { const k = 1.6 / R; a.x *= k; a.y *= k; a.z *= k; }
+    energy += sp;
+  }
+  NET3.lastEnergy = NET3.energy;
+  NET3.energy = energy / n;
+  // cool down, but never all the way — a graph that freezes stops reacting to
+  // a node going down, which is exactly when you want it to move
+  NET3.temp = Math.max(0.22, NET3.temp * 0.995);
+  return NET3.energy;
+}
+
+/* ───────────────────────────────────────────────────────── traffic and faults ── */
+function netTraffic(dt, now, busy) {
+  const N = NET3.nodes;
+  if (!N.length) return;
+
+  // links relax towards the load their endpoints are offering
+  for (const l of NET3.links) {
+    const a = N[l.a], b = N[l.b];
+    const want = l.up && a.up && b.up ? Math.min(0.98, (a.load + b.load) * 0.5) : 0;
+    l.util += (want - l.util) * Math.min(1, dt * 1.6);
+  }
+  for (const a of N) {
+    const drive = a.kind === 'sensor' ? 0.25 : a.kind === 'core' ? 0.55 : 0.35;
+    const target = a.up ? drive + (busy ? 0.30 : 0) + Math.sin(now / 1000 * (0.3 + a.id * 0.07)) * 0.12 : 0;
+    a.load += (Math.max(0, Math.min(1, target)) - a.load) * Math.min(1, dt * 0.9);
+    a.health += ((a.up ? 1 : 0) - a.health) * Math.min(1, dt * 2);
+    if (!a.up && now > a.downUntil) {
+      a.up = true;
+      NET3.events.unshift({ at: now, text: a.name + ' RESTORED', col: '#00e5ff' });
+      NET3.routes.clear();
+    }
+  }
+
+  // a node occasionally falls over, and the routes have to notice
+  if (Math.random() < dt * 0.06) {
+    const cand = N.filter(x => x.up && x.kind !== 'core');
+    if (cand.length > 4) {
+      const victim = cand[(Math.random() * cand.length) | 0];
+      victim.up = false;
+      victim.downUntil = now + 3000 + Math.random() * 5000;
+      NET3.events.unshift({ at: now, text: victim.name + ' UNREACHABLE', col: '#ff3b30' });
+      NET3.routes.clear();
+    }
+  }
+  if (NET3.events.length > 6) NET3.events.length = 6;
+
+  // routes are recomputed on a slow clock, or immediately after a change
+  if (now - NET3.routeAt > 1400) { NET3.routes.clear(); NET3.routeAt = now; }
+
+  // ── launch packets along genuine multi-hop routes ────────────────────────
+  const want = busy ? 0.55 : 0.28;
+  if (Math.random() < want && NET3.packets.length < 40) {
+    const live = N.filter(x => x.up);
+    if (live.length > 2) {
+      const src = live[(Math.random() * live.length) | 0];
+      const dst = live[(Math.random() * live.length) | 0];
+      if (src !== dst) {
+        const path = netPath(src.id, dst.id);
+        if (path && path.hops.length > 1) {
+          NET3.packets.push({
+            path, i: 0, t: 0,
+            speed: 1.4 + Math.random() * 1.6,
+            kind: Math.random() < 0.14 ? 'priority' : Math.random() < 0.08 ? 'error' : 'data',
+            born: now
+          });
+        } else {
+          NET3.stats.dropped++;
+        }
+      }
+    }
+  }
+
+  // ── advance them ─────────────────────────────────────────────────────────
+  for (let i = NET3.packets.length - 1; i >= 0; i--) {
+    const p = NET3.packets[i];
+    p.t += dt * p.speed;
+    while (p.t >= 1) {
+      p.t -= 1; p.i++;
+      if (p.i >= p.path.hops.length - 1) {
+        NET3.stats.delivered++;
+        NET3.stats.meanHops = NET3.stats.meanHops * 0.95 + (p.path.hops.length - 1) * 0.05;
+        NET3.stats.meanLatency = NET3.stats.meanLatency * 0.95 + (now - p.born) * 0.05;
+        NET3.packets.splice(i, 1);
+        p.done = true;
+        break;
+      }
+      // a hop into a node that has since gone down is a genuine drop
+      const nextId = p.path.hops[p.i];
+      if (!N[nextId] || !N[nextId].up) {
+        NET3.stats.dropped++;
+        NET3.packets.splice(i, 1);
+        p.done = true;
+        break;
+      }
+    }
+  }
+  NET3.stats.throughput = NET3.packets.length;
+}
+
+/* ─────────────────────────────────────────────────────────── the projection ── */
+/** Rotate about Y then X, then project with perspective. */
+function netProject(n, w, h) {
+  const cy = Math.cos(NET3.rot), sy = Math.sin(NET3.rot);
+  const cx = Math.cos(NET3.tilt), sx = Math.sin(NET3.tilt);
+  const x1 = n.x * cy - n.z * sy;
+  const z1 = n.x * sy + n.z * cy;
+  const y2 = n.y * cx - z1 * sx;
+  const z2 = n.y * sx + z1 * cx;
+  const zc = z2 + NET3.dist;
+  if (zc < 0.15) return null;
+  const f = 1.9 / zc;
+  const scale = Math.min(w, h) * 0.42;
+  return {
+    x: w / 2 + x1 * f * scale,
+    y: h / 2 + y2 * f * scale,
+    z: zc,
+    // farther is smaller and dimmer — this is what makes it read as depth
+    s: f, fog: Math.max(0.12, Math.min(1, 1.55 / zc - 0.28))
+  };
+}
+
+/* ══════════════════════════════════════════ 2 · VITALS, WITH MEMORY ════════
+   Four dials with no history could not show a trend, and a trend is most of
+   what a vital sign is for. Each channel now keeps a ring buffer, derives its
+   own rate of change, and is coupled to the others the way the real quantities
+   would be: thermal follows load with a lag, power draw follows both.        */
+const VITALS = {
+  chans: [
+    { key: 'core', label: 'CORE LOAD', unit: '%', v: 34, target: 34, hist: new Float32Array(180), warn: 78, crit: 92 },
+    { key: 'mem',  label: 'MEMORY',    unit: '%', v: 41, target: 41, hist: new Float32Array(180), warn: 82, crit: 94 },
+    { key: 'therm',label: 'THERMAL',   unit: '°', v: 38, target: 38, hist: new Float32Array(180), warn: 70, crit: 84 },
+    { key: 'pwr',  label: 'DRAW',      unit: '%', v: 46, target: 46, hist: new Float32Array(180), warn: 85, crit: 96 }
+  ],
+  head: 0, at: 0, alarms: {}
+};
+
+function vitalsStep(dt, busy, netLoad) {
+  const V = VITALS;
+  const [core, mem, therm, pwr] = V.chans;
+
+  // Load is driven by what the deck is actually doing, not by a random walk.
+  const paneCost = (typeof paneCount === 'function' ? paneCount() : 0) * 6;
+  const camCost = (typeof VIS === 'object' && VIS && VIS.on) ? 22 : 0;
+  core.target = Math.min(99, 18 + paneCost + camCost + (busy ? 34 : 0) + netLoad * 18);
+  mem.target = Math.min(99, 30 + paneCost * 1.6 + camCost * 0.8 + (busy ? 12 : 0));
+
+  // Thermal is the interesting one: it integrates load rather than following
+  // it, so it rises slowly under sustained work and falls more slowly still.
+  const heatIn = core.v * 0.011 + pwr.v * 0.006;
+  const heatOut = (therm.v - 22) * 0.021;
+  therm.target = Math.max(22, Math.min(96, therm.v + (heatIn - heatOut) * dt * 60));
+
+  // Draw follows load and thermal — fans cost power too.
+  pwr.target = Math.min(99, 22 + core.v * 0.52 + Math.max(0, therm.v - 45) * 0.55);
+
+  V.chans.forEach(c => {
+    const k = c.key === 'therm' ? 0.55 : 2.2;
+    const prev = c.v;
+    c.v += (c.target - c.v) * Math.min(1, dt * k);
+    c.rate = (c.v - prev) / Math.max(dt, 1e-3);
+  });
+
+  V.at += dt;
+  if (V.at > 0.1) {                       // ten samples a second is plenty
+    V.at = 0;
+    V.head = (V.head + 1) % 180;
+    V.chans.forEach(c => { c.hist[V.head] = c.v; });
+  }
+
+  // Alarms with hysteresis, so a value sitting on the line does not flash.
+  V.chans.forEach(c => {
+    const a = V.alarms[c.key] || (V.alarms[c.key] = { level: 0 });
+    // Resolved in one pass. Stepping down a single level per frame meant a
+    // value that fell from critical to idle still read as elevated, which is
+    // exactly the alarm nobody trusts.
+    const hyst = 6;
+    if (c.v > c.crit) a.level = 2;
+    else if (c.v > c.warn) a.level = Math.min(a.level, 2) >= 2 && c.v > c.crit - hyst ? 2 : 1;
+    else if (c.v > c.warn - hyst) a.level = a.level >= 2 && c.v > c.crit - hyst ? 2 : Math.min(a.level, 1);
+    else a.level = 0;
+  });
+}
+
+function vitalsHistory(c, n) {
+  const out = [];
+  const count = Math.min(n || 180, 180);
+  for (let i = 0; i < count; i++) {
+    out.push(c.hist[(VITALS.head + 1 + (180 - count) + i) % 180]);
+  }
+  return out;
+}
+
+/* ══════════════════════════════════════════ 3 · THE ARC REACTOR ════════════
+   A real coupled system rather than a spinning ring.
+
+   Four state variables that genuinely depend on each other: plasma density,
+   temperature, the containment field holding it, and the resulting output.
+   Fusion power rises very steeply with temperature; losses rise with density
+   over containment. Push the injectors too hard and containment margin falls,
+   which raises losses, which cools the plasma — a real negative feedback that
+   the display can be seen to ride.                                          */
+const CORE2 = {
+  density: 0.55, temp: 0.62, field: 0.88, output: 0.6, override: 0,
+  inject: 0.5, targetOut: 0.62,
+  q: 0, margin: 1, ripple: 0, instability: 0,
+  t: 0, hist: new Float32Array(160), head: 0,
+  filaments: [], quench: 0, quenchAt: 0
+};
+
+function coreStep(dt, demand) {
+  const C = CORE2;
+  C.t += dt;
+
+  // The governor asks for more output; the injectors follow with a lag.
+  //
+  // Above 1.0 the request is an override: the regulator is bypassed and a floor
+  // is put under the injectors, so they cannot quietly back off. Without that
+  // the loop is simply too good — it always finds a safe operating point, and a
+  // containment system that can never be stressed is not a containment system.
+  C.override = Math.max(0, demand - 1);
+  C.targetOut = Math.max(0.18, Math.min(0.99, demand));
+  const err = C.targetOut - C.output;
+  // The regulator is deliberately bounded. An integrator with no limit winds up
+  // against the ceiling and then cannot respond to anything, which is how the
+  // first version of this ended up pinned at maximum injection for every demand.
+  C.inject = Math.max(0.05, Math.min(1.10, C.inject + err * dt * 1.6));
+  if (C.override > 0) C.inject = Math.max(C.inject, 0.72 + C.override * 1.7);
+
+  // ── density ──────────────────────────────────────────────────────────────
+  // Fuelled by the injectors, lost to burn-up and to transport across a field
+  // that is not perfectly confining.
+  const transport = C.density * Math.max(0, 1.15 - C.field) * 0.9;
+  C.density += (C.inject * 0.78 - C.density * 0.55 - transport) * dt;
+  C.density = Math.max(0.02, Math.min(2.2, C.density));
+
+  // ── temperature ──────────────────────────────────────────────────────────
+  // Fusion power is density² times the reaction rate, and the reaction rate is
+  // NOT monotonic in temperature — the real deuterium-tritium cross-section
+  // rises very steeply, peaks, and falls away again. That peak is what gives
+  // the plasma a temperature it settles at rather than one it runs away to.
+  // Modelling it as a bare power law meant the only thing stopping the
+  // temperature was an arbitrary clamp, which is not a model of anything.
+  const T = Math.max(0, C.temp);
+  const sigv = Math.pow(T, 3.2) / (1 + Math.pow(T / 1.05, 4.8));
+  const fusion = C.density * C.density * sigv * 3.39;
+  // bremsstrahlung — density² and the square root of temperature
+  const radiate = Math.sqrt(T) * C.density * C.density * 0.55;
+  // conduction across the containment: a weaker field loses heat faster, which
+  // is the coupling that makes a containment failure genuinely cool the plasma
+  const conduct = T * (0.30 + Math.max(0, 1 - C.field) * 0.85);
+  C.temp += (fusion * 0.42 + C.inject * 0.60 - radiate - conduct) * dt;
+  C.temp = Math.max(0.02, Math.min(8, C.temp));      // numerical guard only
+
+  // ── containment ──────────────────────────────────────────────────────────
+  // The field weakens as the plasma pushes on it and recovers when it does not.
+  const pressure = C.density * C.temp;
+  C.margin = Math.max(0, Math.min(1.4, 1.25 - pressure * 0.75));
+  C.field += ((0.55 + C.margin * 0.42) - C.field) * dt * 1.3;
+  C.field = Math.max(0.15, Math.min(1, C.field));
+
+  // Q — energy out over energy in. The number that decides whether a reactor is
+  // a power station or a very expensive heater.
+  C.q = C.inject > 0.02 ? fusion / (C.inject * 0.9) : 0;
+  C.output += (Math.min(1, fusion * 1.0) - C.output) * dt * 2.2;
+  C.output = Math.max(0, Math.min(1.15, C.output));
+
+  // Instability grows when the margin is thin, and shows as field ripple.
+  const want = Math.max(0, 0.45 - C.margin) * 2.2;
+  C.instability += (want - C.instability) * dt * 1.5;
+  C.ripple = C.instability * (0.5 + 0.5 * Math.sin(C.t * 23));
+
+  // A genuine quench: containment fails, the plasma dumps, everything resets.
+  if (C.instability > 0.85 && C.quench <= 0) {
+    C.quench = 1; C.quenchAt = C.t;
+    C.density *= 0.25; C.temp *= 0.3; C.field = 0.2; C.inject = 0.2;
+  }
+  C.quench = Math.max(0, C.quench - dt * 0.8);
+
+  C.head = (C.head + 1) % 160;
+  C.hist[C.head] = C.output;
+
+  // filaments: field lines that live and die, seeded by instability
+  if (C.filaments.length < 14 && Math.random() < 0.4 + C.instability) {
+    C.filaments.push({ a: Math.random() * Math.PI * 2, life: 0,
+      span: 0.4 + Math.random() * 1.4, w: 0.5 + Math.random() });
+  }
+  for (let i = C.filaments.length - 1; i >= 0; i--) {
+    const f = C.filaments[i];
+    f.life += dt * (1.1 + C.instability * 2);
+    f.a += dt * (0.4 + C.instability) * (i % 2 ? 1 : -1);
+    if (f.life > 1) C.filaments.splice(i, 1);
+  }
+  return C;
+}
+
+/* ══════════════════════════════════════════ 4 · A SPIKING NETWORK ══════════
+   Leaky integrate-and-fire, which is the simplest neuron model that still
+   behaves like a neuron: membrane potential leaks towards rest, sums whatever
+   arrives, fires when it crosses threshold, then cannot fire again for a
+   refractory period.
+
+   Eighty of them, wired sparsely, eighty per cent excitatory and twenty per
+   cent inhibitory — roughly the cortical ratio, and the reason the population
+   produces bursts and silences instead of either seizing or going quiet.    */
+const SNN = {
+  n: 80, v: null, thresh: null, refrac: null, inhib: null,
+  syn: [], delayBuf: null, delayHead: 0,
+  spikes: [], raster: [], rate: 0, rateHist: new Float32Array(160), head: 0,
+  drive: 0.35, t: 0, fired: 0, totalSpikes: 0
+};
+
+function snnBuild(seed) {
+  let s = seed || 7717;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const n = SNN.n;
+  SNN.v = new Float32Array(n);
+  SNN.thresh = new Float32Array(n);
+  SNN.refrac = new Float32Array(n);
+  SNN.inhib = new Uint8Array(n);
+  SNN.syn = [];
+  for (let i = 0; i < n; i++) {
+    SNN.v[i] = rnd() * 0.5;
+    SNN.thresh[i] = 0.72 + rnd() * 0.26;   // a spread, so they recruit gradually
+    SNN.inhib[i] = rnd() < 0.2 ? 1 : 0;
+    const out = [];
+    const k = 4 + ((rnd() * 5) | 0);
+    for (let j = 0; j < k; j++) {
+      const to = (rnd() * n) | 0;
+      if (to === i) continue;
+      out.push({ to, w: (SNN.inhib[i] ? -1 : 1) * (0.10 + rnd() * 0.22), d: 1 + ((rnd() * 5) | 0) });
+    }
+    SNN.syn.push(out);
+  }
+  // eight slots of synaptic delay — the reason activity travels rather than
+  // arriving everywhere at once
+  SNN.delayBuf = [];
+  for (let d = 0; d < 8; d++) SNN.delayBuf.push(new Float32Array(n));
+  SNN.delayHead = 0;
+  SNN.raster = [];
+  SNN.totalSpikes = 0;
+  return SNN;
+}
+
+function snnStep(dt, drive) {
+  if (!SNN.v) snnBuild();
+  const n = SNN.n;
+  SNN.t += dt;
+  SNN.drive += ((drive == null ? 0.35 : drive) - SNN.drive) * Math.min(1, dt * 3);
+
+  const incoming = SNN.delayBuf[SNN.delayHead];
+  const fired = [];
+  const leak = Math.exp(-dt / 0.045);          // 45ms membrane time constant
+
+  for (let i = 0; i < n; i++) {
+    if (SNN.refrac[i] > 0) { SNN.refrac[i] -= dt; SNN.v[i] = 0; incoming[i] = 0; continue; }
+    // leak towards rest, then add what arrived plus background drive
+    // Drive gain. With a 45ms membrane constant the steady-state potential is
+    // input/(1 - leak), so at dt = 1/60 a gain of 14 puts a fully driven cell
+    // just at threshold — firing hard without the whole population saturating.
+    // At 7.5 it settled around 0.48 and nothing ever fired at all.
+    SNN.v[i] = SNN.v[i] * leak + incoming[i] + SNN.drive * dt * 17 +
+               (Math.random() - 0.5) * dt * 9;
+    // The noise term is not decoration. A purely deterministic population is
+    // all-or-nothing: below threshold nothing fires and nothing can trigger
+    // anything else, so the panel sits blank until it suddenly saturates. Real
+    // cortical firing is substantially noise-driven and irregular, and putting
+    // that back is what gives a graded response across the whole input range.
+    incoming[i] = 0;
+    if (SNN.v[i] >= SNN.thresh[i]) {
+      SNN.v[i] = 0;
+      SNN.refrac[i] = 0.006 + Math.random() * 0.006;
+      fired.push(i);
+    }
+  }
+
+  // deliver each spike into the future, at its own synaptic delay
+  for (const i of fired) {
+    for (const sy of SNN.syn[i]) {
+      const slot = (SNN.delayHead + sy.d) % 8;
+      SNN.delayBuf[slot][sy.to] += sy.w;
+    }
+  }
+  SNN.delayHead = (SNN.delayHead + 1) % 8;
+
+  SNN.fired = fired.length;
+  SNN.totalSpikes += fired.length;
+  // population rate, in spikes per neuron per second
+  const inst = fired.length / n / Math.max(dt, 1e-3);
+  SNN.rate += (inst - SNN.rate) * Math.min(1, dt * 8);
+  SNN.head = (SNN.head + 1) % 160;
+  SNN.rateHist[SNN.head] = SNN.rate;
+
+  SNN.raster.push({ t: SNN.t, ids: fired });
+  if (SNN.raster.length > 220) SNN.raster.shift();
+  return fired;
+}
+
+/* ══════════════════════════════════════════════════════════ THE RENDERERS ═══
+   Each takes the simulation state above and draws it. Nothing here invents
+   data; if a panel shows a number, something upstream computed it.          */
+
+function drawNet3D(dt) {
+  const f = fit(E.cNet); if (!f) return;
+  const { ctx, w, h } = f;
+  const now = performance.now();
+  const busy = !!app.busy;
+
+  if (!NET3.nodes.length) netBuild();
+  meter('net.layout', () => netLayout(dt));
+  netTraffic(dt, now, busy);
+
+  if (NET3.autoSpin && !NET3.drag) NET3.rot += dt * 0.13;
+
+  // project everything once, then sort back-to-front so depth reads correctly
+  const P = new Array(NET3.nodes.length);
+  for (let i = 0; i < NET3.nodes.length; i++) P[i] = netProject(NET3.nodes[i], w, h);
+
+  // ── links, far ones first ────────────────────────────────────────────────
+  const drawn = NET3.links.map((l, i) => ({ l, i, z: ((P[l.a] && P[l.a].z) || 9) + ((P[l.b] && P[l.b].z) || 9) }))
+    .sort((a, b) => b.z - a.z);
+  for (const { l } of drawn) {
+    const A = P[l.a], B = P[l.b];
+    if (!A || !B) continue;
+    const na = NET3.nodes[l.a], nb = NET3.nodes[l.b];
+    const live = l.up && na.up && nb.up;
+    const fog = Math.min(A.fog, B.fog);
+    const hot = l.util > 0.7;
+    ctx.strokeStyle = !live ? 'rgba(255,59,48,' + (0.10 * fog).toFixed(3) + ')'
+      : hot ? 'rgba(255,179,0,' + (0.30 * fog).toFixed(3) + ')'
+            : 'rgba(0,229,255,' + ((0.07 + l.util * 0.22) * fog).toFixed(3) + ')';
+    ctx.lineWidth = Math.max(0.4, (0.4 + l.capacity / 420) * fog);
+    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+  }
+
+  // ── packets, riding their routed path ────────────────────────────────────
+  for (const p of NET3.packets) {
+    const from = P[p.path.hops[p.i]], to = P[p.path.hops[p.i + 1]];
+    if (!from || !to) continue;
+    const x = from.x + (to.x - from.x) * p.t;
+    const y = from.y + (to.y - from.y) * p.t;
+    const fog = from.fog + (to.fog - from.fog) * p.t;
+    const col = p.kind === 'priority' ? '#ffb300' : p.kind === 'error' ? '#ff3b30' : '#eafcff';
+    ctx.globalAlpha = fog;
+    ctx.shadowBlur = 8 * fog; ctx.shadowColor = col; ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(x, y, (p.kind === 'data' ? 1.5 : 2.1) * (0.5 + fog * 0.7), 0, 7); ctx.fill();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  }
+
+  // ── nodes, far ones first ────────────────────────────────────────────────
+  const order = NET3.nodes.map((n, i) => i).filter(i => P[i]).sort((a, b) => P[b].z - P[a].z);
+  for (const i of order) {
+    const n = NET3.nodes[i], pr = P[i];
+    const k = NODE_KIND[n.kind];
+    const r = Math.max(1, k.r * pr.s * 1.6);
+    const col = !n.up ? '#ff3b30' : n.load > 0.8 ? '#ffb300' : k.col;
+    ctx.globalAlpha = pr.fog;
+    // load ring
+    if (n.up && n.load > 0.02) {
+      ctx.strokeStyle = col; ctx.lineWidth = 1.4 * pr.fog;
+      ctx.beginPath(); ctx.arc(pr.x, pr.y, r + 2.5, -Math.PI / 2, -Math.PI / 2 + n.load * Math.PI * 2); ctx.stroke();
+    }
+    ctx.fillStyle = col;
+    ctx.shadowBlur = (n.kind === 'core' ? 14 : 6) * pr.fog; ctx.shadowColor = col;
+    ctx.beginPath(); ctx.arc(pr.x, pr.y, r, 0, 7); ctx.fill();
+    ctx.shadowBlur = 0;
+    if (!n.up) {
+      ctx.strokeStyle = 'rgba(255,59,48,.9)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pr.x - r - 3, pr.y - r - 3); ctx.lineTo(pr.x + r + 3, pr.y + r + 3);
+      ctx.moveTo(pr.x + r + 3, pr.y - r - 3); ctx.lineTo(pr.x - r - 3, pr.y + r + 3); ctx.stroke();
+    }
+    if (pr.fog > 0.55 && (n.kind === 'core' || n.kind === 'gateway')) {
+      ctx.fillStyle = 'rgba(234,252,255,' + (0.75 * pr.fog).toFixed(2) + ')';
+      ctx.font = '600 7px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(n.name, pr.x, pr.y - r - 5);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ── the readout ──────────────────────────────────────────────────────────
+  const up = NET3.nodes.filter(n => n.up).length;
+  ctx.textAlign = 'left';
+  ctx.font = '400 7.5px "JetBrains Mono", monospace';
+  ctx.fillStyle = 'rgba(0,229,255,.55)';
+  ctx.fillText(up + '/' + NET3.nodes.length + ' UP · ' + NET3.links.length + ' LINKS', 4, 10);
+  ctx.fillText('IN FLIGHT ' + NET3.stats.throughput +
+               ' · ' + NET3.stats.meanHops.toFixed(1) + ' HOPS', 4, 20);
+  ctx.fillStyle = NET3.energy < 0.35 ? 'rgba(0,229,255,.4)' : 'rgba(255,179,0,.6)';
+  ctx.fillText(NET3.energy < 0.35 ? 'CONVERGED' : 'SETTLING', 4, 30);
+  if (NET3.events.length) {
+    const e = NET3.events[0];
+    if (now - e.at < 4000) {
+      ctx.fillStyle = e.col; ctx.textAlign = 'right';
+      ctx.fillText(e.text, w - 4, 10);
+    }
+  }
+}
+
+function drawVitals2() {
+  const f = fit(E.cVitals); if (!f) return;
+  const { ctx, w, h } = f;
+  const cw = w / 2, ch = h / 2;
+
+  VITALS.chans.forEach((v, i) => {
+    const cx = cw * (i % 2) + cw / 2, cy = ch * ((i / 2) | 0) + ch / 2 - 8;
+    const rad = Math.min(cw, ch) * 0.29;
+    const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
+    const alarm = (VITALS.alarms[v.key] || {}).level || 0;
+    const col = alarm === 2 ? RD : alarm === 1 ? AM : CY;
+
+    // history, drawn as a filled sparkline behind the dial
+    const hist = vitalsHistory(v, 90);
+    ctx.beginPath();
+    hist.forEach((val, k) => {
+      const x = cx - rad * 1.15 + (k / (hist.length - 1)) * rad * 2.3;
+      const y = cy + rad * 1.02 - (val / 100) * rad * 0.5;
+      k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.strokeStyle = 'rgba(0,229,255,.28)'; ctx.lineWidth = 0.9; ctx.stroke();
+
+    // warning and critical bands on the scale itself
+    const band = (from, to, c) => {
+      ctx.strokeStyle = c; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad + 6, a0 + (a1 - a0) * (from / 100), a0 + (a1 - a0) * (to / 100));
+      ctx.stroke();
+    };
+    band(v.warn, v.crit, 'rgba(255,179,0,.30)');
+    band(v.crit, 100, 'rgba(255,59,48,.35)');
+
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(0,229,255,.14)';
+    ctx.beginPath(); ctx.arc(cx, cy, rad, a0, a1); ctx.stroke();
+    for (let t = 0; t <= 20; t++) {
+      const a = a0 + (a1 - a0) * (t / 20), maj = t % 5 === 0;
+      ctx.strokeStyle = maj ? 'rgba(0,229,255,.45)' : 'rgba(0,229,255,.18)';
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * (rad + 2), cy + Math.sin(a) * (rad + 2));
+      ctx.lineTo(cx + Math.cos(a) * (rad + (maj ? 7 : 4)), cy + Math.sin(a) * (rad + (maj ? 7 : 4)));
+      ctx.stroke();
+    }
+
+    const p = Math.max(0, Math.min(1, v.v / 100));
+    ctx.lineWidth = 3.0; ctx.strokeStyle = col;
+    ctx.shadowBlur = alarm ? 14 : 9; ctx.shadowColor = col;
+    ctx.beginPath(); ctx.arc(cx, cy, rad, a0, a0 + (a1 - a0) * p); ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    const na = a0 + (a1 - a0) * p;
+    ctx.strokeStyle = '#eafcff'; ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(na) * rad * 0.28, cy + Math.sin(na) * rad * 0.28);
+    ctx.lineTo(cx + Math.cos(na) * rad * 0.90, cy + Math.sin(na) * rad * 0.90);
+    ctx.stroke();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx, cy, 2, 0, 7); ctx.fill();
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#dff6ff'; ctx.font = '600 14px "JetBrains Mono", monospace';
+    ctx.fillText(v.v.toFixed(0) + (v.unit === '%' ? '' : '°'), cx, cy + rad * 0.66);
+
+    // trend arrow — a rate, not a guess
+    const r = v.rate || 0;
+    if (Math.abs(r) > 0.6) {
+      ctx.fillStyle = r > 0 ? 'rgba(255,179,0,.85)' : 'rgba(0,229,255,.7)';
+      ctx.font = '600 9px "JetBrains Mono", monospace';
+      ctx.fillText(r > 0 ? '▲' : '▼', cx + rad * 0.72, cy + rad * 0.66);
+    }
+
+    ctx.fillStyle = alarm ? col : 'rgba(0,229,255,.55)';
+    ctx.font = '400 7.5px "JetBrains Mono", monospace';
+    const rowBottom = ch * (((i / 2) | 0) + 1);
+    ctx.fillText(v.label, cx, Math.min(cy + rad + 14, rowBottom - 3));
+  });
+}
+
+function drawCore2(dt) {
+  const f = fit(E.cCore); if (!f) return;
+  const { ctx, w, h } = f;
+  const C = CORE2;
+  const cx = w / 2, cy = h / 2, R0 = Math.min(w, h) * 0.40;
+
+  // containment rings, rippling with instability
+  for (let ring = 0; ring < 3; ring++) {
+    const segs = 30 - ring * 6;
+    const rot = C.t * (ring % 2 ? -0.30 : 0.44);
+    for (let i = 0; i < segs; i++) {
+      const a0 = rot + (i / segs) * Math.PI * 2;
+      const a1 = a0 + (Math.PI * 2 / segs) * 0.62;
+      const wobble = C.ripple * Math.sin(a0 * 5 + C.t * 9) * R0 * 0.06;
+      const r = R0 * (1 - ring * 0.18) + wobble;
+      const on = (i / segs) < C.field;
+      ctx.strokeStyle = on
+        ? (ring === 0 ? (C.instability > 0.5 ? '#ffb300' : CY) : 'rgba(10,132,255,.72)')
+        : 'rgba(0,229,255,.09)';
+      ctx.lineWidth = ring === 0 ? 3.6 : 2.4;
+      if (on && ring === 0) { ctx.shadowBlur = 10 + C.instability * 14; ctx.shadowColor = ctx.strokeStyle; }
+      ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, r), a0, a1); ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  // field filaments, born and dying with the instability
+  C.filaments.forEach(fl => {
+    const life = Math.sin(Math.PI * Math.min(1, fl.life));
+    const r0 = R0 * 0.16, r1 = r0 + R0 * 0.55 * fl.span * (0.4 + 0.6 * life);
+    ctx.strokeStyle = 'rgba(0,229,255,' + (0.10 + 0.35 * life).toFixed(3) + ')';
+    ctx.lineWidth = fl.w;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(fl.a) * r0, cy + Math.sin(fl.a) * r0);
+    const mid = fl.a + 0.4 * C.instability;
+    ctx.quadraticCurveTo(cx + Math.cos(mid) * (r0 + r1) / 2, cy + Math.sin(mid) * (r0 + r1) / 2,
+                         cx + Math.cos(fl.a) * r1, cy + Math.sin(fl.a) * r1);
+    ctx.stroke();
+  });
+
+  // the plasma itself: brightness from temperature, size from density
+  const pr = R0 * (0.20 + C.density * 0.20);
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(2, pr));
+  const hot = Math.min(1, C.temp / 1.1);
+  g.addColorStop(0, 'rgba(255,255,255,' + (0.55 + hot * 0.45).toFixed(3) + ')');
+  g.addColorStop(0.35, 'rgba(' + (120 + hot * 135 | 0) + ',' + (229 - hot * 40 | 0) + ',255,.55)');
+  g.addColorStop(1, 'rgba(0,229,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, pr), 0, 7); ctx.fill();
+
+  if (C.quench > 0.02) {
+    ctx.strokeStyle = 'rgba(255,59,48,' + C.quench.toFixed(2) + ')';
+    ctx.lineWidth = 2 + C.quench * 4;
+    ctx.beginPath(); ctx.arc(cx, cy, R0 * (1.05 - C.quench * 0.5), 0, 7); ctx.stroke();
+  }
+
+  // output trace along the bottom
+  ctx.strokeStyle = 'rgba(0,229,255,.35)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i < 160; i++) {
+    const v = C.hist[(C.head + 1 + i) % 160];
+    const x = (i / 159) * w, y = h - 4 - v * 16;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#03060a'; ctx.font = '700 12px "JetBrains Mono", monospace';
+  ctx.fillText((C.output * 100).toFixed(1), cx, cy + 4);
+  ctx.textAlign = 'left';
+  ctx.font = '400 7px "JetBrains Mono", monospace';
+  ctx.fillStyle = 'rgba(0,229,255,.55)';
+  ctx.fillText('Q ' + C.q.toFixed(2), 4, 10);
+  ctx.fillText('n ' + C.density.toFixed(2) + '  T ' + C.temp.toFixed(2), 4, 19);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = C.margin < 0.3 ? RD : C.margin < 0.6 ? AM : 'rgba(0,229,255,.55)';
+  ctx.fillText('MARGIN ' + (C.margin * 100).toFixed(0) + '%', w - 4, 10);
+
+  if (E.coreStat) {
+    const s = C.quench > 0.05 ? 'QUENCH' : C.instability > 0.55 ? 'UNSTABLE'
+      : C.q > 1.2 ? 'IGNITED' : C.output < 0.3 ? 'SUBCRITICAL' : 'NOMINAL';
+    E.coreStat.textContent = s;
+    E.coreStat.style.color = /QUENCH|UNSTABLE/.test(s) ? 'rgba(255,59,48,.85)'
+      : s === 'IGNITED' ? 'rgba(0,229,255,.85)' : 'rgba(255,179,0,.65)';
+  }
+}
+
+function drawNeural2(dt) {
+  const f = fit(E.cNeural); if (!f) return;
+  const { ctx, w, h } = f;
+
+  const lvl = app.engine && app.engine.audio ? app.engine.audio.level : 0;
+  // Map the deck's states onto the responsive part of the population's curve.
+  // Below about 0.6 the network is genuinely silent, which is correct but makes
+  // for a blank panel at idle — so idle sits just into the firing range and
+  // thinking pushes it well up it.
+  const drive = 0.62 + (app.busy ? 0.26 : 0) + lvl * 0.35 +
+                (typeof VITALS === 'object' ? VITALS.chans[0].v / 500 : 0);
+  meter('snn', () => snnStep(Math.min(0.05, dt), drive));
+
+  const rasterH = h * 0.62;
+
+  // ── raster: one dot per spike, neuron on Y, time on X ────────────────────
+  const R = SNN.raster;
+  const span = 220;
+  for (let k = 0; k < R.length; k++) {
+    const x = (k / (span - 1)) * w;
+    const age = 1 - k / Math.max(1, R.length);
+    const ids = R[k].ids;
+    for (let m = 0; m < ids.length; m++) {
+      const id = ids[m];
+      const y = (id / SNN.n) * rasterH;
+      ctx.fillStyle = SNN.inhib[id]
+        ? 'rgba(255,120,90,' + (0.85 - age * 0.55).toFixed(3) + ')'
+        : 'rgba(0,229,255,' + (0.9 - age * 0.55).toFixed(3) + ')';
+      ctx.fillRect(x, y, 1.6, 1.6);
+    }
+  }
+
+  // ── population rate underneath ───────────────────────────────────────────
+  ctx.strokeStyle = 'rgba(0,229,255,.10)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, rasterH + 1); ctx.lineTo(w, rasterH + 1); ctx.stroke();
+
+  const rateH = h - rasterH - 10;
+  let peak = 1;
+  for (let i = 0; i < 160; i++) peak = Math.max(peak, SNN.rateHist[i]);
+  ctx.beginPath();
+  for (let i = 0; i < 160; i++) {
+    const v = SNN.rateHist[(SNN.head + 1 + i) % 160];
+    const x = (i / 159) * w;
+    const y = h - 8 - (v / peak) * rateH;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.strokeStyle = app.busy ? VI : '#63f0ff';
+  ctx.lineWidth = 1.2; ctx.stroke();
+
+  ctx.font = '400 7px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(0,229,255,.5)';
+  ctx.fillText(SNN.n + ' LIF · ' + Math.round(SNN.rate) + ' Hz', 3, 9);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(150,215,235,.42)';
+  ctx.fillText(SNN.fired + ' SPIKING', w - 3, 9);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,120,90,.5)';
+  ctx.fillText('INHIB', 3, h - 2);
+}
+
+/* ─────────────────────────────────────────────── steering the topology ─────
+   The graph is worth turning by hand — depth is much easier to read when you
+   control the rotation yourself than when it spins on its own. */
+function bindNetDrag() {
+  const c = E.cNet;
+  if (!c || c.__netBound) return;
+  c.__netBound = true;
+  c.style.cursor = 'grab';
+  c.addEventListener('pointerdown', (e) => {
+    NET3.drag = { x: e.clientX, y: e.clientY };
+    c.style.cursor = 'grabbing';
+    try { c.setPointerCapture(e.pointerId); } catch (err) { }
+  });
+  c.addEventListener('pointermove', (e) => {
+    if (!NET3.drag) return;
+    NET3.rot += (e.clientX - NET3.drag.x) * 0.010;
+    NET3.tilt = Math.max(-1.3, Math.min(1.3, NET3.tilt + (e.clientY - NET3.drag.y) * 0.008));
+    NET3.drag = { x: e.clientX, y: e.clientY };
+  });
+  const up = () => { NET3.drag = null; c.style.cursor = 'grab'; };
+  c.addEventListener('pointerup', up);
+  c.addEventListener('pointercancel', up);
+  c.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    NET3.dist = Math.max(1.9, Math.min(7, NET3.dist + e.deltaY * 0.0022));
+  }, { passive: false });
+  c.addEventListener('dblclick', () => { NET3.autoSpin = !NET3.autoSpin; });
+}
+
+/** Hand control, called from the gesture loop when the crosshair is over it. */
+function netHand(dx, dy, scale) {
+  NET3.rot += dx * 3.4;
+  NET3.tilt = Math.max(-1.3, Math.min(1.3, NET3.tilt - dy * 2.8));
+  if (scale && scale !== 1) NET3.dist = Math.max(1.9, Math.min(7, NET3.dist / scale));
+}
 
 /* ══════════════════════════════════════════════════ A FACE THAT SPEAKS ═════
    Four extra bones — jaw, mouth, two brows — hung off the skull, driven by the
@@ -8906,11 +10197,10 @@ function paneAim(p) {
     hands, so two pinches anywhere on screen grabbed the front window and
     resized it — which is why it kept expanding on its own.
 */
-function paneHands(pts) {
+function paneHands(pts, dt) {
   if (!paneCount()) { paneAim(null); paneRelease(); return; }
-
-  if (pts.length >= 2) return paneScale(pts);
-  if (pts.length === 1) return paneCarry(pts[0]);
+  if (pts.length >= 2) return paneScale(pts, dt || 1 / 60);
+  if (pts.length === 1) return paneCarry(pts[0], dt || 1 / 60);
   paneRelease();
 }
 
@@ -8919,12 +10209,14 @@ function paneRelease() {
   OVL.grab.pane.el.classList.remove('held');
   if (OVL.grab.mode === 'scale') paneResized(OVL.grab.pane);
   OVL.grab = null;
+  GRABF.reset();
 }
 
-function paneScale(pts) {
-  const dx = Math.abs(pts[0].x - pts[1].x);
-  const dy = Math.abs(pts[0].y - pts[1].y);
-  const mx = (pts[0].x + pts[1].x) / 2, my = (pts[0].y + pts[1].y) / 2;
+function paneScale(pts, dt) {
+  const box = smoothBox(Math.abs(pts[0].x - pts[1].x), Math.abs(pts[0].y - pts[1].y), dt);
+  const dx = box.w, dy = box.h;
+  const mid = smoothGrab((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2, dt);
+  const mx = mid.x, my = mid.y;
 
   if (!OVL.grab || OVL.grab.mode !== 'scale') {
     // only take hold of something your hands are genuinely around or over
@@ -8980,7 +10272,11 @@ function paneBetween(pts) {
   return null;
 }
 
-function paneCarry(q) {
+function paneCarry(raw, dt) {
+  // The pane is filtered harder than the cursor. A cursor has to be responsive;
+  // a window being carried only has to be steady, and a window inheriting every
+  // tremor in your hand is the thing that makes mid-air dragging feel broken.
+  const q = smoothGrab(raw.x, raw.y, dt);
   if (!OVL.grab || OVL.grab.mode !== 'move') {
     const p = paneAt(q.x, q.y);
     if (!p) { paneAim(null); paneRelease(); return; }
@@ -9101,6 +10397,17 @@ app.setAudio = (level, fftAt) => {
   if (!a.fft || a.fft.length < 32) a.fft = new Uint8Array(32);
   for (let i = 0; i < 32; i++) a.fft[i] = fftAt ? fftAt(i) : 0;
 };
+
+app.instr = {
+  net: NET3, netHand, bindNetDrag, netBuild, netLayout, netRoute, netPath, netAdj, netTraffic, netProject,
+  vitals: VITALS, vitalsStep, vitalsHistory,
+  core: CORE2, coreStep,
+  snn: SNN, snnBuild, snnStep
+};
+
+app.hands = { OneEuro, Schmitt, LowPass, read: readHandStable, pointer: stepPointer,
+  reset: handReset, state: () => HAND, cfg: HAND.cfg, quality: handQuality,
+  extension, intent, intentProgress, grab: smoothGrab, box: smoothBox, GRABF };
 
 app.lab = { run: runLab, exec: labRun, kill: labKill, history: () => LAB.history };
 app.feeds = { show: showFeed, quakes, space: spaceWeather, air: airQuality, crew: peopleInSpace,
@@ -10732,19 +12039,29 @@ function camLoop(now) {
   // two scale it. Collected before the pointer logic so a grab can suppress
   // the click that would otherwise fire underneath it.
   const pinches = [];
+  const read = [];
   for (let i = 0; i < hands.length && i < 2; i++) {
-    const hh = readHand(hands[i]);
-    if (hh.pinch) pinches.push({ x: (1 - hh.tip.x) * innerWidth, y: hh.tip.y * innerHeight });
+    const hh = readHandStable(hands[i], i, dt);
+    read.push(hh);
+    // Only a hand the tracker is actually confident about may grab something.
+    // A half-visible hand produces a plausible-looking pinch and then drags a
+    // pane across the screen, which is indistinguishable from a bug.
+    if (hh.pinch && hh.quality > 0.45) {
+      pinches.push({ x: (1 - hh.tip.x) * innerWidth, y: hh.tip.y * innerHeight });
+    }
   }
-  paneHands(pinches);
+  if (!pinches.length) GRABF.reset();
+  paneHands(pinches, dt);
 
   // ── pointer: the pointing hand wins, otherwise the head ──────────────────
-  let tx = null, ty = null, g = 'none';
+  let tx = null, ty = null, g = 'none', quality = 0;
   if (hands.length) {
-    const h = readHand(hands[0]);
-    const src = h.point || h.pinch ? h.tip : h.centre;
-    tx = 1 - src.x; ty = src.y;                                 // the feed is mirrored
-    g = h.pinch ? 'pinch' : h.point ? 'point' : h.palm ? 'palm' : h.fist ? 'fist' : h.peace ? 'peace' : 'hand';
+    const h = read[0] || readHandStable(hands[0], 0, dt);
+    // px/py are already blended between knuckle and fingertip, so the crosshair
+    // does not jump at the instant you pinch
+    tx = 1 - h.px; ty = h.py;                                   // the feed is mirrored
+    g = h.shape;
+    quality = h.quality;
 
     // ── the gauntlet reads this hand for combat gestures ─────────────────
     gauntlet(h, now);
@@ -10760,14 +12077,15 @@ function camLoop(now) {
     }
     if (now - VIS.swipeAt > 260) VIS.swipeX = px;
 
-    // pinch = click, on the rising edge only
-    if (h.pinch && !VIS.pinch && !OVL.grab) fireClick(VIS.x * innerWidth, VIS.y * innerHeight);
+    // pinch = click, on the rising edge only, and only from a hand worth trusting
+    if (h.pinch && !VIS.pinch && !OVL.grab && h.quality > 0.4) {
+      fireClick(VIS.x * innerWidth, VIS.y * innerHeight);
+    }
     VIS.pinch = h.pinch;
 
-    // open palm held = start listening. It cannot stop listening: a palm sitting
+    // Open palm held = start listening. It cannot stop listening: a palm sitting
     // in frame would otherwise switch the microphone off and on forever.
-    if (h.palm && !micLive()) { if (!VIS.palmAt) VIS.palmAt = now; else if (now - VIS.palmAt > 700) { VIS.palmAt = 0; if (voiceOnly()) camSay('PALM · LISTENING'); } }
-    else VIS.palmAt = 0;
+    if (intent('palm', h.palm && !micLive(), 700, now)) { if (voiceOnly()) camSay('PALM · LISTENING'); }
     // ── dismissal has to be deliberate ───────────────────────────────────
     // A relaxed hand has no fingers extended, which is exactly what a fist
     // looks like. So simply resting your hand in frame was closing whatever you
@@ -10779,15 +12097,13 @@ function camLoop(now) {
     // must stay closed for the best part of a second, and the thing being
     // closed must have been on screen long enough to have been looked at.
     if (h.palm || h.point || h.peace) VIS.openAt = now;
-    const deliberate = h.fist && !OVL.grab && (now - (VIS.openAt || 0) < 1500);
-    if (deliberate) {
-      if (!VIS.fistAt) VIS.fistAt = now;
-      else if (now - VIS.fistAt > 850 && now - (OVL.openedAt || 0) > 1800) {
-        VIS.fistAt = 0; VIS.openAt = 0;
-        if (paneCount()) ovlClose(); else if (PANEL.on) setPanel(false);
-        camSay('FIST · DISMISS');
-      }
-    } else VIS.fistAt = 0;
+    const deliberate = h.fist && !OVL.grab &&
+      (now - (VIS.openAt || 0) < 1500) && (now - (OVL.openedAt || 0) > 1800);
+    if (intent('fist', deliberate, 850, now)) {
+      VIS.openAt = 0;
+      if (paneCount()) ovlClose(); else if (PANEL.on) setPanel(false);
+      camSay('FIST · DISMISS');
+    }
   } else if (face) {
     const nose = face[1] || face[4];
     // A little more gain than the head actually turns, so you can reach the
@@ -10835,12 +12151,21 @@ function camLoop(now) {
   }
 
   if (tx != null) {
-    VIS.x += (tx - VIS.x) * 0.28;                               // smoothing
-    VIS.y += (ty - VIS.y) * 0.28;
+    // 1€ filter, gain curve, dead zone — see hands.js for why in that order
+    const pt = stepPointer(tx, ty, dt, quality);
+    VIS.x = pt.x; VIS.y = pt.y;
+    VIS.speed = pt.speed; VIS.gain = pt.gain;
     const px = VIS.x * innerWidth, py = VIS.y * innerHeight;
     E.reticle.style.transform = 'translate(' + px.toFixed(1) + 'px,' + py.toFixed(1) + 'px)';
-    E.reticle.style.color = VIS.pinch ? '#eafcff' : accentNow();
-    E.reticleCore.style.transform = VIS.pinch ? 'scale(1.9)' : 'scale(1)';
+    // A held gesture is invisible without a countdown — you cannot tell whether
+    // it is working or whether you are doing it wrong. Every timed gesture
+    // drives the same ring.
+    const prog = Math.max(intentProgress('palm'), intentProgress('fist'), intentProgress('dwell'));
+    E.reticle.style.color = VIS.pinch ? '#eafcff' : prog > 0 ? '#ffd280' : accentNow();
+    E.reticleCore.style.transform = VIS.pinch ? 'scale(1.9)' : 'scale(' + (1 + prog * 1.4).toFixed(2) + ')';
+    // and the whole crosshair fades out as the tracker loses confidence, so a
+    // hand drifting out of frame looks like what it is rather than like a fault
+    E.reticle.style.opacity = (0.35 + 0.65 * Math.max(0, Math.min(1, quality || 0))).toFixed(2);
     if (app.engine) app.engine.setPointer(VIS.x * 2 - 1, VIS.y * 2 - 1);
     if (!hands.length) faceDwell(px, py, dt);       // hands always win over dwell
     else { FACE.dwell = 0; if (E.reticleCore) E.reticleCore.style.background = 'currentColor'; }
@@ -10850,8 +12175,9 @@ function camLoop(now) {
   if (OVL.grab) g = OVL.grab.mode === 'scale' ? 'scale' : 'carry';
   const objs = seeing();
   const objBit = objs.length ? objs.slice(0, 2).map(o => o.object).join('+').toUpperCase() + ' · ' : '';
+  const qBit = hands.length && quality < 0.5 ? ' · WEAK' : '';
   const label = objBit + (VIS.body ? 'SUBJECT · ' : '') + (hands.length
-    ? (hands.length + 'H · ' + g.toUpperCase())
+    ? (hands.length + 'H · ' + g.toUpperCase() + qBit)
     : face ? 'GAZE' : (VIS.body ? 'LOCK' : 'NO SUBJECT'));
   if (E.camGesture && !/·\s(PERSONA|LISTENING|DISMISS|VOICE)$/.test(E.camGesture.textContent)) camSay(label);
 
@@ -11569,6 +12895,7 @@ paintVault();
 paintCam();
 bindUI();
 bindEngine();
+bindNetDrag();
 perfInit();
 setTimeout(() => { if (E.boot) E.boot.style.display = 'none'; }, 2000);
 requestAnimationFrame(loop);
