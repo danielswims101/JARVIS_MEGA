@@ -91,12 +91,66 @@
   #deck.presence > #reticle { z-index:60; }
   #deck.presence > #toasts  { z-index:61; }
 
+  /* ════════════════════════════════════════════════ HOLOGRAPHIC CHROME ═══
+     Everything below is one idea: a panel is not a rectangle drawn on the
+     screen, it is a pane of lit glass suspended in front of it. Three things
+     do almost all of that work —
+
+       · corner brackets instead of a continuous border. A closed rectangle
+         reads as a window; four brackets read as a targeting frame.
+       · a gradient sweep travelling along the top edge, so the frame is
+         powered rather than printed.
+       · a genuine drop shadow plus an inner rim light, which is what makes
+         it sit ABOVE the background instead of being cut out of it.       */
+
+  @keyframes edgeFlow { 0% { background-position: -220% 0; } 100% { background-position: 220% 0; } }
+  @keyframes hudSpin  { to { transform: rotate(360deg); } }
+  @keyframes hudSpinR { to { transform: rotate(-360deg); } }
+  @keyframes cornerBlink { 0%,100% { opacity:.85; } 50% { opacity:.35; } }
+  @keyframes hazeDrift { from { transform:translate3d(-2.5%,-1.5%,0) scale(1.04); }
+                         to   { transform:translate3d(2.5%,1.5%,0) scale(1.10); } }
+  @keyframes gridRun   { from { background-position:0 0, 0 0; }
+                         to   { background-position:0 70px, 0 70px; } }
+  @keyframes riseIn { from { opacity:0; transform:translateY(9px) scale(.985); } to { opacity:1; transform:none; } }
+
   /* floating panes */
-  .pane { position:absolute; display:flex; flex-direction:column; pointer-events:auto; overflow:hidden;
-          background:linear-gradient(158deg, rgba(5,20,30,.95), rgba(2,7,12,.93));
-          border:1px solid rgba(0,229,255,.30); box-shadow:0 0 44px rgba(0,0,0,.62);
-          backdrop-filter:blur(10px); animation:panelIn .5s cubic-bezier(.16,1,.3,1) both; }
-  .pane.focus { border-color:rgba(0,229,255,.62); box-shadow:0 0 30px rgba(0,229,255,.14), 0 20px 60px rgba(0,0,0,.6); }
+  .pane { position:absolute; display:flex; flex-direction:column; pointer-events:auto; overflow:visible;
+          background:
+            linear-gradient(158deg, rgba(6,24,36,.93), rgba(2,7,12,.90)),
+            radial-gradient(120% 90% at 12% 0%, rgba(0,229,255,.10), transparent 60%);
+          border:1px solid rgba(0,229,255,.22);
+          box-shadow:
+            0 0 0 1px rgba(0,229,255,.06),
+            inset 0 1px 0 rgba(160,230,255,.16),
+            inset 0 0 34px rgba(0,120,170,.07),
+            0 28px 70px rgba(0,0,0,.62),
+            0 0 90px rgba(0,140,200,.07);
+          backdrop-filter:blur(14px) saturate(1.25);
+          animation:panelIn .5s cubic-bezier(.16,1,.3,1) both; }
+
+  /* the powered top edge */
+  .pane::before { content:''; position:absolute; left:0; right:0; top:-1px; height:1px; pointer-events:none;
+          background:linear-gradient(90deg, transparent, rgba(0,229,255,.05) 20%, #7fe9ff 50%, rgba(0,229,255,.05) 80%, transparent);
+          background-size:220% 100%; animation:edgeFlow 5.5s linear infinite; opacity:.55; }
+
+  /* corner brackets, drawn with two gradients so they cost no extra elements */
+  .pane::after { content:''; position:absolute; inset:-3px; pointer-events:none;
+          background:
+            linear-gradient(#7fe9ff,#7fe9ff) left  top   /1px 15px no-repeat,
+            linear-gradient(#7fe9ff,#7fe9ff) left  top   /15px 1px no-repeat,
+            linear-gradient(#7fe9ff,#7fe9ff) right top   /1px 15px no-repeat,
+            linear-gradient(#7fe9ff,#7fe9ff) right top   /15px 1px no-repeat,
+            linear-gradient(#7fe9ff,#7fe9ff) left  bottom/1px 15px no-repeat,
+            linear-gradient(#7fe9ff,#7fe9ff) left  bottom/15px 1px no-repeat,
+            linear-gradient(#7fe9ff,#7fe9ff) right bottom/1px 15px no-repeat,
+            linear-gradient(#7fe9ff,#7fe9ff) right bottom/15px 1px no-repeat;
+          opacity:.30; transition:opacity .4s ease; }
+  .pane.focus::after { opacity:.85; }
+  .pane.aim::after   { opacity:1; animation:cornerBlink .9s ease-in-out infinite; }
+  .pane.focus { border-color:rgba(0,229,255,.50);
+                box-shadow: 0 0 0 1px rgba(0,229,255,.14), inset 0 1px 0 rgba(180,240,255,.22),
+                            inset 0 0 44px rgba(0,150,210,.10), 0 30px 76px rgba(0,0,0,.66),
+                            0 0 120px rgba(0,170,235,.14); }
   .pane.aim   { border-color:#eafcff; box-shadow:0 0 34px rgba(234,252,255,.30); }
   .pane.held  { border-color:#eafcff; box-shadow:0 0 50px rgba(234,252,255,.45); }
   .pane-head  { display:flex; align-items:center; justify-content:space-between; gap:12px; flex:none;
@@ -116,6 +170,58 @@
 
   <canvas id="orb" style="position:absolute; left:0; top:0; width:100%; height:100%; display:block; z-index:0;
        transition:transform .55s cubic-bezier(.16,1,.3,1), opacity .35s ease, box-shadow .5s ease;"></canvas>
+  <!-- ══════════════════════════════════════════ ATMOSPHERE AND HUD ═══════
+       Four cheap layers that give the deck depth it did not have. All of them
+       are CSS — no canvas, no draw calls, no frame budget — and between them
+       they do more for how advanced this looks than anything on the GPU. -->
+
+  <!-- 1 · volumetric haze. Two enormous off-centre radial gradients drifting
+          against each other, so the background is a lit space rather than a
+          flat colour. -->
+  <div id="haze" style="position:absolute; inset:-25%; z-index:0; pointer-events:none; opacity:.85;
+       background:
+         radial-gradient(48% 38% at 22% 28%, rgba(0,150,220,.16), transparent 62%),
+         radial-gradient(42% 34% at 78% 72%, rgba(90,60,200,.13), transparent 60%),
+         radial-gradient(60% 50% at 50% 50%, rgba(0,200,255,.05), transparent 70%);
+       filter:blur(30px); animation:hazeDrift 44s ease-in-out infinite alternate;"></div>
+
+  <!-- 2 · the floor grid, in perspective. A horizon does more for a sense of
+          space than any amount of parallax. -->
+  <div id="floorGrid" style="position:absolute; left:-50%; right:-50%; bottom:-8%; height:52%; z-index:0;
+       pointer-events:none; opacity:.24; transform:perspective(420px) rotateX(68deg);
+       transform-origin:50% 100%; mask-image:linear-gradient(to top, #000 4%, transparent 78%);
+       -webkit-mask-image:linear-gradient(to top, #000 4%, transparent 78%);
+       background-image:
+         linear-gradient(to right, rgba(0,229,255,.30) 1px, transparent 1px),
+         linear-gradient(to top,   rgba(0,229,255,.22) 1px, transparent 1px);
+       background-size:70px 70px; animation:gridRun 9s linear infinite;"></div>
+
+  <!-- 3 · the HUD ring. Three concentric arcs around the core, counter-
+          rotating at unrelated rates so they never line up twice. -->
+  <div id="hud" style="position:absolute; inset:0; z-index:2; pointer-events:none; display:flex;
+       align-items:center; justify-content:center;">
+    <div style="position:absolute; width:min(62vh,62vw); height:min(62vh,62vw); border-radius:50%;
+         border:1px solid rgba(0,229,255,.10);
+         border-top-color:rgba(0,229,255,.42); border-right-color:rgba(0,229,255,.28);
+         animation:hudSpin 58s linear infinite;"></div>
+    <div style="position:absolute; width:min(50vh,50vw); height:min(50vh,50vw); border-radius:50%;
+         border:1px dashed rgba(0,229,255,.13);
+         animation:hudSpinR 38s linear infinite;"></div>
+    <div style="position:absolute; width:min(74vh,74vw); height:min(74vh,74vw); border-radius:50%;
+         border:1px solid transparent; border-bottom-color:rgba(122,168,255,.22);
+         border-left-color:rgba(0,229,255,.16); animation:hudSpin 92s linear infinite reverse;"></div>
+    <!-- tick marks, every 30 degrees -->
+    <div id="hudTicks" style="position:absolute; width:min(66vh,66vw); height:min(66vh,66vw);
+         animation:hudSpin 140s linear infinite;"></div>
+  </div>
+
+  <!-- 4 · scanlines and a faint vignette over everything -->
+  <div id="scan" style="position:absolute; inset:0; z-index:4; pointer-events:none; opacity:.5;
+       background:
+         repeating-linear-gradient(to bottom, rgba(0,0,0,.16) 0 1px, transparent 1px 3px),
+         radial-gradient(120% 100% at 50% 50%, transparent 52%, rgba(0,0,0,.42) 100%);
+       mix-blend-mode:multiply;"></div>
+
   <div id="moodVeil" style="position:absolute; inset:0; z-index:1; pointer-events:none; background:#000; opacity:0; transition:opacity .8s ease;"></div>
 
   <!-- ================================================================ TOP BAR -->
@@ -308,6 +414,19 @@
   </div>
 
   <!-- ================================================================ OVERLAYS -->
+  <!-- drop a document anywhere on the deck -->
+  <div id="dropVeil" style="position:absolute; inset:0; z-index:75; display:none; align-items:center;
+       justify-content:center; background:rgba(2,10,16,.78); backdrop-filter:blur(8px); pointer-events:none;">
+    <div style="border:1px dashed rgba(0,229,255,.55); padding:38px 54px; text-align:center;
+         background:rgba(4,18,28,.72); box-shadow:0 0 80px rgba(0,170,235,.18);">
+      <div style="font-size:13px; letter-spacing:.34em; color:#eafcff;">RELEASE TO INGEST</div>
+      <div style="font-size:9.5px; letter-spacing:.14em; color:rgba(150,215,235,.7); margin-top:10px;">
+        TEXT · MARKDOWN · CSV · JSON · CODE · PDF<br>
+        read, split and indexed on this machine — nothing is uploaded
+      </div>
+    </div>
+  </div>
+
   <div id="toasts" style="position:absolute; right:20px; bottom:206px; z-index:20; display:flex; flex-direction:column; align-items:flex-end; gap:8px; pointer-events:none;"></div>
 
   <div style="position:absolute; inset:0; z-index:24; pointer-events:none; background:radial-gradient(ellipse at 50% 48%, rgba(0,0,0,0) 42%, rgba(0,0,0,.55) 88%, rgba(0,0,0,.85) 100%);"></div>
@@ -599,6 +718,7 @@ import { RenderPass } from 'https://unpkg.com/three@0.160.0/examples/jsm/postpro
 import { UnrealBloomPass } from 'https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/OutputPass.js';
+import { AfterimagePass } from 'https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/AfterimagePass.js';
 
 const STATES = ['idle', 'listening', 'thinking', 'speaking', 'alert'];
 
@@ -705,6 +825,7 @@ const VERT = NOISE + `
 attribute vec3 aDir;
 attribute float aRad, aRand, aLayer, aSize, aSeed, aSeg, aBt;
 uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark, uVH, uHuman, uScatter;
+uniform float uFocus, uAperture, uSpin;
 uniform vec3 uBoneA[22];
 uniform vec3 uBoneB[22];
 // Both radii in one vec2. A float array still burns a whole vec4 slot per
@@ -712,8 +833,7 @@ uniform vec3 uBoneB[22];
 // leaves the 22-bone rig cheaper in uniform slots than the 18-bone one was.
 uniform vec2 uBoneR[22];
 uniform vec3 uShockDir, uMood;
-varying vec3 vCol;
-varying float vA;
+varying vec3 vCol; varying float vA; varying vec2 vStreak; varying float vBlur;
 
 void main(){
   float t = uTime;
@@ -869,44 +989,165 @@ void main(){
   vA = a * uBoot * (0.6 + 0.4*breath) * pack;
 
   float size = aSize * (1.0 + energy*0.6 + shock*1.2) * uPixel * uVH * (1.0 - uHuman * 0.14);
+
+  // ── depth of field ───────────────────────────────────────────────────────
+  // Additive point sprites give this almost for free: a point out of focus is
+  // a bigger, fainter disc. Spread the same energy over more pixels and it
+  // reads as bokeh, at the cost of two instructions. Doing it properly with a
+  // separate blur pass would cost a full-screen pass and look no better on a
+  // field made entirely of points.
+  float depth = -mv.z;
+  float coc = abs(depth - uFocus) / max(0.6, uAperture);
+  coc = clamp(coc, 0.0, 1.0);
+  float blur = 1.0 + coc * coc * 5.5;
+  size *= blur;
+  vA /= (1.0 + coc * coc * 3.2);
+  vBlur = coc;
+
+  // ── motion streaks ───────────────────────────────────────────────────────
+  // The field is always turning, so the dominant motion of every particle is
+  // tangential. Stretching each sprite along its own tangent — rather than
+  // computing a real velocity, which would mean evaluating the noise twice —
+  // gives the streaking of a long exposure for the price of a cross product.
+  vec3 tangent = normalize(cross(vec3(0.0, 1.0, 0.0), normalize(pos + 1e-5)));
+  vec4 tclip = projectionMatrix * (modelViewMatrix * vec4(pos + tangent * 0.05, 1.0));
+  vec2 tdir = normalize((tclip.xy / max(0.001, tclip.w)) - (gl_Position.xy / max(0.001, gl_Position.w)) + 1e-6);
+  float speed = uSpin * (0.35 + 0.65 * aRad) * (1.0 + wSpeak * 0.8 + shock * 2.2);
+  vStreak = tdir * clamp(speed, 0.0, 0.72);
+  size *= 1.0 + length(vStreak) * 1.3;
+
   gl_PointSize = size * (13.0 / max(0.001, -mv.z));
 }`;
 
 const FRAG = `
 precision mediump float;
-varying vec3 vCol; varying float vA;
+varying vec3 vCol; varying float vA; varying vec2 vStreak; varying float vBlur;
 void main(){
   vec2 uv = gl_PointCoord - 0.5;
+
+  // Squash the sprite across its direction of travel and let it run along it.
+  // A round dot is a still object; an ellipse is a moving one, and the eye
+  // reads the difference immediately even at two pixels across.
+  float sl = length(vStreak);
+  if (sl > 0.004) {
+    vec2 dir = vStreak / sl;
+    vec2 perp = vec2(-dir.y, dir.x);
+    float along = dot(uv, dir) / (1.0 + sl * 2.6);
+    float across = dot(uv, perp) * (1.0 + sl * 1.5);
+    uv = vec2(along, across);
+  }
+
   float d = length(uv);
   if(d > 0.5) discard;
-  float a = pow(1.0 - d*2.0, 2.4);
+  // An out-of-focus point has a softer edge and a brighter rim — that is what
+  // separates bokeh from a blurry smudge.
+  float core = pow(1.0 - d*2.0, mix(2.4, 1.1, vBlur));
+  float rim = smoothstep(0.34, 0.5, d) * vBlur * 0.55;
+  float a = core + rim;
   gl_FragColor = vec4(vCol * a, a * vA);
 }`;
+
+/* ══════════════════════════════════════════════════════════════ GOD RAYS ═══
+   A radial blur anchored on the core, added back over the image. Physically
+   this is what you get when a bright source is seen through a scattering
+   medium, and it is the single cheapest effect that makes a light source read
+   as genuinely bright rather than merely white. Twenty-four taps along a ray
+   towards the centre, decaying as they go. */
+const GODRAY = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uCentre: { value: new THREE.Vector2(0.5, 0.5) },
+    uDensity: { value: 0.62 }, uWeight: { value: 0.22 },
+    uDecay: { value: 0.955 }, uExposure: { value: 0.42 }, uSamples: { value: 24 }
+  },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+  fragmentShader: `
+  uniform sampler2D tDiffuse; uniform vec2 uCentre;
+  uniform float uDensity, uWeight, uDecay, uExposure; uniform int uSamples;
+  varying vec2 vUv;
+  void main(){
+    vec4 base = texture2D(tDiffuse, vUv);
+    vec2 delta = (vUv - uCentre) * (uDensity / 24.0);
+    vec2 uv = vUv;
+    float illum = 1.0;
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < 24; i++) {
+      if (i >= uSamples) break;
+      uv -= delta;
+      vec3 s = texture2D(tDiffuse, uv).rgb;
+      // only genuinely bright pixels throw rays; everything else would just
+      // smear the whole image towards the middle
+      float lum = max(0.0, dot(s, vec3(0.299, 0.587, 0.114)) - 0.42);
+      acc += s * lum * illum * uWeight;
+      illum *= uDecay;
+    }
+    gl_FragColor = vec4(base.rgb + acc * uExposure, base.a);
+  }`
+};
 
 const POST = {
   uniforms: {
     tDiffuse: { value: null }, uTime: { value: 0 }, uAmount: { value: 1 },
-    uRes: { value: new THREE.Vector2(1, 1) }
+    uRes: { value: new THREE.Vector2(1, 1) },
+    uStreak: { value: 0.5 }, uGrain: { value: 0.045 }, uVignette: { value: 0.55 },
+    uScan: { value: 0.03 }, uSat: { value: 1.12 }
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} `,
   fragmentShader: `
-  uniform sampler2D tDiffuse; uniform float uTime, uAmount; uniform vec2 uRes; varying vec2 vUv;
+  uniform sampler2D tDiffuse; uniform float uTime, uAmount, uStreak, uGrain, uVignette, uScan, uSat;
+  uniform vec2 uRes; varying vec2 vUv;
   float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+
   void main(){
     vec2 uv = vUv;
     vec2 c = uv - 0.5;
     float r2 = dot(c,c);
-    vec2 off = c * (0.0016 + r2*0.010) * uAmount;
-    vec4 col;
+
+    // ── barrel distortion ──────────────────────────────────────────────────
+    // A real lens bends the image outward at the edges. A fraction of a per
+    // cent is invisible as distortion and entirely visible as "this is being
+    // seen through glass rather than composited onto a rectangle".
+    uv = uv + c * r2 * 0.022 * uAmount;
+
+    // ── chromatic dispersion ───────────────────────────────────────────────
+    // Wavelength-dependent, so it grows towards the edges the way real glass
+    // does rather than sitting as a constant offset over the whole frame.
+    vec2 off = c * (0.0014 + r2*0.011) * uAmount;
+    vec3 col;
     col.r = texture2D(tDiffuse, uv + off).r;
     col.g = texture2D(tDiffuse, uv).g;
     col.b = texture2D(tDiffuse, uv - off).b;
-    col.a = 1.0;
+
+    // ── anamorphic streak ──────────────────────────────────────────────────
+    // The horizontal flare an anamorphic lens throws off a bright point. Nine
+    // taps sideways, brightest pixels only — it is the effect that reads most
+    // immediately as "cinema" rather than "canvas".
+    if (uStreak > 0.01) {
+      vec3 streak = vec3(0.0);
+      for (int i = 1; i <= 9; i++) {
+        float w = 1.0 - float(i) / 10.0;
+        float d = float(i) * 0.0075;
+        vec3 a = texture2D(tDiffuse, uv + vec2(d, 0.0)).rgb;
+        vec3 b = texture2D(tDiffuse, uv - vec2(d, 0.0)).rgb;
+        vec3 s = a + b;
+        float lum = max(0.0, dot(s, vec3(0.299,0.587,0.114)) - 1.1);
+        streak += s * lum * w * w;
+      }
+      col += streak * vec3(0.28, 0.62, 1.0) * 0.055 * uStreak;
+    }
+
+    // ── grade ──────────────────────────────────────────────────────────────
+    float lum = dot(col, vec3(0.299, 0.587, 0.114));
+    col = mix(vec3(lum), col, uSat);                  // a little more colour
+    col = pow(max(col, 0.0), vec3(0.97));             // lift the shadows slightly
+
+    // ── film ───────────────────────────────────────────────────────────────
     float g = hash(uv*uRes + fract(uTime)*137.0);
-    col.rgb += (g - 0.5) * 0.045;
-    col.rgb *= 1.0 - smoothstep(0.28, 0.95, r2) * 0.55;
-    col.rgb *= 0.97 + 0.03*sin(uv.y*uRes.y*1.6);
-    gl_FragColor = col;
+    col += (g - 0.5) * uGrain;
+    col *= 1.0 - smoothstep(0.26, 0.98, r2) * uVignette;
+    col *= 1.0 - uScan + uScan*sin(uv.y*uRes.y*1.6);
+
+    gl_FragColor = vec4(col, 1.0);
   }`
 };
 
@@ -1032,7 +1273,8 @@ function init(canvas, opts = {}) {
     uScatter: { value: 0 },
     uBoneA: { value: Array.from({ length: 22 }, () => new THREE.Vector3()) },
     uBoneB: { value: Array.from({ length: 22 }, () => new THREE.Vector3()) },
-    uBoneR: { value: Array.from({ length: 22 }, () => new THREE.Vector2(0.06, 0.06)) }
+    uBoneR: { value: Array.from({ length: 22 }, () => new THREE.Vector2(0.06, 0.06)) },
+    uFocus: { value: 5.2 }, uAperture: { value: 3.4 }, uSpin: { value: 0.10 }
   };
   const mat = new THREE.ShaderMaterial({
     uniforms, vertexShader: VERT, fragmentShader: FRAG,
@@ -1082,14 +1324,34 @@ function init(canvas, opts = {}) {
   composer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
   composer.setSize(canvas.clientWidth, canvas.clientHeight);
   composer.addPass(new RenderPass(scene, camera));
+
+  /* Temporal accumulation. Each frame is blended over a decayed copy of the
+     last, so every particle drags a luminous tail behind it. This is the
+     single largest visual change in the whole pipeline and it costs one
+     full-screen blend: the field stops looking like a cloud of dots and starts
+     looking like something in motion. */
+  const trails = new AfterimagePass(0.86);
+  composer.addPass(trails);
+
   const bloom = new UnrealBloomPass(new THREE.Vector2(canvas.clientWidth, canvas.clientHeight), 1.25, 0.62, 0.32);
   composer.addPass(bloom);
+
+  const rays = new ShaderPass(GODRAY);
+  composer.addPass(rays);
+
+  /* ACES rather than the default linear clip. Highlights roll off into colour
+     instead of clamping to flat white, which is most of the difference between
+     an image that looks rendered and one that looks photographed. */
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.18;
   composer.addPass(new OutputPass());
+
   const post = new ShaderPass(POST);
   post.renderToScreen = true;
   composer.addPass(post);
 
   /* state */
+  const fx = { trails: 1, rays: 1, streak: 1, dof: 1 };
   const weights = [1, 0, 0, 0, 0], target = [1, 0, 0, 0, 0];
   let stateName = 'idle';
   const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -1151,6 +1413,25 @@ function init(canvas, opts = {}) {
     bloom.strength = (api.bloomBase + weights[1] * 0.25 + weights[4] * 0.3 + audio.level * 0.18) * (1 - hum * 0.26);
     post.uniforms.uTime.value = t;
     post.uniforms.uAmount.value = 1 + weights[2] * 2.2 + weights[4] * 3.4;
+    post.uniforms.uStreak.value = fx.streak * (0.6 + audio.level * 1.4 + weights[3] * 0.8);
+    post.uniforms.uSat.value = 1.10 + weights[4] * 0.22 + audio.level * 0.10;
+
+    /* ── the lens breathes ────────────────────────────────────────────────
+       Focus pulls in as he speaks and pushes out when he is idle, so the
+       field has depth that changes rather than a fixed plane of sharpness.
+       Aperture opens under load, which throws more of it out of focus. */
+    const wantFocus = 5.2 - weights[3] * 1.4 - weights[2] * 0.5 + Math.sin(t * 0.21) * 0.35;
+    uniforms.uFocus.value += (wantFocus - uniforms.uFocus.value) * Math.min(1, dt * 1.6);
+    const wantAp = 3.4 - weights[2] * 1.1 - audio.level * 0.9;
+    uniforms.uAperture.value += (wantAp - uniforms.uAperture.value) * Math.min(1, dt * 1.2);
+    // and the field spins faster when he is thinking, which lengthens the streaks
+    const wantSpin = fx.trails * (0.06 + weights[2] * 0.16 + weights[4] * 0.22 + audio.level * 0.10);
+    uniforms.uSpin.value += (wantSpin - uniforms.uSpin.value) * Math.min(1, dt * 2.2);
+
+    // god rays chase the core, and flare on a shock
+    rays.uniforms.uExposure.value = fx.rays * (0.34 + weights[3] * 0.30 + shockAmp * 0.85);
+    rays.uniforms.uDensity.value = 0.58 + shockAmp * 0.30;
+    trails.uniforms.damp.value = fx.trails > 0 ? (0.80 + weights[2] * 0.09 + weights[3] * 0.05) : 0;
 
     composer.render();
 
@@ -1231,6 +1512,16 @@ function init(canvas, opts = {}) {
       api.externalQuality = true;
       if (dust) dust.visible = !!on;
     },
+    /* Every optional pass is a lever, so the governor can shed effects before it
+       ever touches the particle count. Trails and rays are a full-screen pass
+       each; the streak is nine taps. All three are worth more than particles
+       are, per millisecond, which is exactly why they go first. */
+    setFX(o) {
+      Object.assign(fx, o || {});
+      trails.enabled = fx.trails > 0;
+      rays.enabled = fx.rays > 0;
+    },
+    get fx() { return Object.assign({}, fx); },
     setMood(r, g, b, amt, dark) {
       uniforms.uMood.value.set(r, g, b);
       uniforms.uMoodAmt.value = amt || 0;
@@ -2514,6 +2805,42 @@ const TOOLS = [
       query: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }
     }, required: [] } },
 
+  { name: 'recall_memory', description: 'Search everything you have been told and every document you have been given, by MEANING as well as by wording. Use it whenever the user refers to something they told you before, asks what you know about a subject, or asks a question a document they gave you would answer. Always quote the passage you answered from and say which file it came from. Each result says whether it was found by meaning or by exact wording — a "meaning" match on this index is a hint, not a guarantee, so say so if that is all you have.',
+    params: { type: 'object', properties: {
+      query: { type: 'string', description: 'What you are looking for, in plain language.' },
+      limit: { type: 'number', description: 'How many passages. Default 6.' }
+    }, required: ['query'] } },
+
+  { name: 'remember_this', description: 'Store something in long-term memory so it can be found later by meaning. Use for facts about the user, preferences, decisions, anything worth keeping. Stored on their machine only.',
+    params: { type: 'object', properties: {
+      text: { type: 'string', description: 'The thing to remember, written so it will make sense out of context later.' },
+      title: { type: 'string' }
+    }, required: ['text'] } },
+
+  { name: 'forget_memory', description: 'Remove things from long-term memory — a document by filename, a note by title, or "everything". Honour it immediately.',
+    params: { type: 'object', properties: {
+      what: { type: 'string', description: 'A filename, part of a title, or "everything".' }
+    }, required: ['what'] } },
+
+  { name: 'memory_stats', description: 'How much is indexed, from where, and what the method actually is. Use when asked what you remember or how your memory works.',
+    params: { type: 'object', properties: {}, required: [] } },
+
+  { name: 'add_rule', description: 'Create a standing rule that fires on its own and survives a reload: when something happens, do something. Triggers are startup, interval (every N minutes), vital (a reading crosses a threshold), presence (somebody appears or leaves), object (a named thing comes into view), said (you say a matching phrase), quiet (N minutes of silence). The instruction is put to you exactly as if the user had typed it, so it can be anything you can do. Always read the rule back and say when it will next fire.',
+    params: { type: 'object', properties: {
+      name: { type: 'string' },
+      trigger: { type: 'string', enum: ['startup', 'interval', 'vital', 'presence', 'object', 'said', 'quiet'] },
+      arg: { type: 'string', description: 'For interval/quiet: minutes. For vital: core, mem, therm or pwr. For presence: "appears" or "leaves". For object: the object name. For said: a phrase or pattern.' },
+      threshold: { type: 'number', description: 'For vital triggers — the value to cross.' },
+      instruction: { type: 'string', description: 'What to do, phrased as an instruction to yourself.' },
+      cooldown_s: { type: 'number', description: 'Minimum seconds between firings. Default 300.' }
+    }, required: ['trigger', 'instruction'] } },
+
+  { name: 'list_rules', description: 'Show the standing rules, when each fires, how often it has, and whether any have been disabled for failing.',
+    params: { type: 'object', properties: {}, required: [] } },
+
+  { name: 'delete_rule', description: 'Remove a standing rule by name, or "all".',
+    params: { type: 'object', properties: { which: { type: 'string' } }, required: ['which'] } },
+
   { name: 'run_code', description: 'Write JavaScript, run it, and show the user the result. Use for anything that needs actual computation rather than an assertion — arithmetic over many numbers, simulations, unit conversion chains, parsing, statistics, generating a sequence, checking your own working. It runs in an isolated worker with no DOM and no network, so it cannot touch the deck or send anything anywhere. Top-level await works. console.log to show working; return the answer. If it errors, read the fault and fix it — never report a number you did not actually get out of it.',
     params: { type: 'object', properties: {
       code: { type: 'string', description: 'JavaScript. It is wrapped in an async function, so you may await and you may return.' },
@@ -2764,6 +3091,50 @@ function runTool(name, a) {
       if (a.query) q += '&title=ilike.*' + encodeURIComponent(a.query) + '*';
       return SB.rest(q).then(rows => ({ ok: true, count: rows ? rows.length : 0, events: rows }));
     }
+
+    case 'recall_memory': {
+      const hits = mindSearch(a.query, a.limit || 6);
+      if (!hits.length) {
+        return { found: 0,
+          note: 'Nothing indexed matches that. Either it was never stored, or it is worded differently enough ' +
+                'that neither the meaning nor the wording lined up. Say so rather than guessing at an answer.' };
+      }
+      return { found: hits.length, passages: hits,
+        note: 'Quote the passage you use and name its source. "matched_by" tells you how strong the hit is.' };
+    }
+
+    case 'remember_this': {
+      const d = mindAdd(a.text, { source: 'note', kind: 'note', title: a.title, meta: { pinned: true } });
+      mindSave();
+      if (!d) return { error: 'that was too short to be worth storing' };
+      streamRow('MIND', 'indexed · ' + d.title.slice(0, 40), VI);
+      return { ok: true, id: d.id, title: d.title,
+        stored: 'on this machine only, as a 256-dimension vector plus the text',
+        warning: MIND.lastError || undefined };
+    }
+
+    case 'forget_memory':
+      return mindForget(a.what);
+
+    case 'memory_stats':
+      return mindStats();
+
+    case 'add_rule': {
+      const r = ruleAdd({ name: a.name, trigger: a.trigger, arg: a.arg,
+        threshold: a.threshold, instruction: a.instruction, cooldown_s: a.cooldown_s });
+      if (r.ok) toast('RULE', 'Standing rule added · ' + r.name, VI);
+      return r;
+    }
+
+    case 'list_rules': {
+      const l = ruleList();
+      return l.length ? { rules: l, recent: RULES.fired.slice(0, 5) }
+        : { rules: [], note: 'No standing rules yet. Offer an example — "tell me if the core goes above 85" ' +
+                             'or "every twenty minutes, check for earthquakes near me".' };
+    }
+
+    case 'delete_rule':
+      return ruleRemove(a.which);
 
     case 'run_code':
       return runLab(a);
@@ -3088,11 +3459,25 @@ async function converse(userText) {
   // him without being asked for. This is the difference between a system that
   // stores facts and one that remembers them.
   try {
-    const mem = await relevantMemory(userText, 4);
-    if (mem.length) {
-      sys += '\n\nWHAT YOU ALREADY KNOW THAT BEARS ON THIS:\n' + JSON.stringify(mem) +
-             '\nUse it naturally if it helps. Do not announce that you looked it up.';
-      plog('◆ RECALLED', mem.map(m => m.key + ' → ' + m.value).join('\n'), 'result');
+    // Two sources, both local: the vault's key/value notes, and the semantic
+    // index over everything he has been told or given. The second is the one
+    // that finds a document passage nobody thought to tag.
+    const [kv, sem] = await Promise.all([
+      relevantMemory(userText, 3).catch(() => []),
+      Promise.resolve(mindSearch(userText, 4))
+    ]);
+    if (kv.length || sem.length) {
+      sys += '\n\nWHAT YOU ALREADY KNOW THAT BEARS ON THIS:\n';
+      if (kv.length) sys += 'Notes: ' + JSON.stringify(kv) + '\n';
+      if (sem.length) {
+        sys += 'Indexed passages: ' + JSON.stringify(sem.map(h => ({
+          from: h.source, found_by: h.matched_by, text: h.text.slice(0, 700)
+        }))) + '\n';
+      }
+      sys += 'Use it naturally. Do not announce that you looked it up. If you take a fact from an ' +
+             'indexed passage, name the file it came from.';
+      plog('◆ RECALLED', [...kv.map(m => m.key + ' → ' + m.value),
+        ...sem.map(h => h.source + ' (' + h.matched_by + ') ' + h.text.slice(0, 90))].join('\n'), 'result');
     }
   } catch (e) { /* memory is a convenience, never a blocker */ }
 
@@ -3545,15 +3930,20 @@ const PERF = {
    instrument rate spans 10 to 60. The cheap lever has the wide range.       */
 const TIERS = [
   { name: 'MINIMAL', particles: 0.55, bloom: 0.80, dust: false, instrHz: 10,
-    handHz: 20, faceHz: 12, objectHz: 2,  globeSeg: 24, terrainSeg: 48,  net3d: false, trails: false },
+    handHz: 20, faceHz: 12, objectHz: 2,  globeSeg: 24, terrainSeg: 48,  net3d: false,
+    fx: { trails: 0, rays: 0, streak: 0, dof: 0 } },
   { name: 'LOW',     particles: 0.68, bloom: 0.88, dust: false, instrHz: 15,
-    handHz: 24, faceHz: 15, objectHz: 3,  globeSeg: 32, terrainSeg: 64,  net3d: true,  trails: false },
+    handHz: 24, faceHz: 15, objectHz: 3,  globeSeg: 32, terrainSeg: 64,  net3d: true,
+    fx: { trails: 0.7, rays: 0, streak: 0.4, dof: 1 } },
   { name: 'MEDIUM',  particles: 0.80, bloom: 0.94, dust: true,  instrHz: 24,
-    handHz: 30, faceHz: 20, objectHz: 4,  globeSeg: 48, terrainSeg: 96,  net3d: true,  trails: true },
+    handHz: 30, faceHz: 20, objectHz: 4,  globeSeg: 48, terrainSeg: 96,  net3d: true,
+    fx: { trails: 0.85, rays: 0.7, streak: 0.7, dof: 1 } },
   { name: 'HIGH',    particles: 0.92, bloom: 1.00, dust: true,  instrHz: 34,
-    handHz: 40, faceHz: 26, objectHz: 6,  globeSeg: 64, terrainSeg: 160, net3d: true,  trails: true },
+    handHz: 40, faceHz: 26, objectHz: 6,  globeSeg: 64, terrainSeg: 160, net3d: true,
+    fx: { trails: 1, rays: 1, streak: 1, dof: 1 } },
   { name: 'ULTRA',   particles: 1.00, bloom: 1.06, dust: true,  instrHz: 48,
-    handHz: 60, faceHz: 30, objectHz: 8,  globeSeg: 96, terrainSeg: 256, net3d: true,  trails: true }
+    handHz: 60, faceHz: 30, objectHz: 8,  globeSeg: 96, terrainSeg: 256, net3d: true,
+    fx: { trails: 1, rays: 1.25, streak: 1.3, dof: 1 } }
 ];
 
 function tier() { return TIERS[PERF.tier] || TIERS[3]; }
@@ -3647,6 +4037,9 @@ function applyTier(why) {
   if (eng && eng.setQuality) { try { eng.setQuality(T.particles); } catch (e) { } }
   if (eng && eng.setBloom)   { try { eng.setBloom(T.bloom); } catch (e) { } }
   if (eng && eng.setDust)    { try { eng.setDust(T.dust); } catch (e) { } }
+  // The lens effects go before the field does. A frame without god rays still
+  // has 132,000 particles in it; a frame with god rays and 18,000 does not.
+  if (eng && eng.setFX)      { try { eng.setFX(T.fx); } catch (e) { } }
   if (typeof VIS === 'object' && VIS) {
     VIS.handEvery   = 1000 / T.handHz;
     VIS.faceEvery   = 1000 / T.faceHz;
@@ -5352,6 +5745,559 @@ async function relevantMemory(text, limit) {
 }
 
 function memoryForget() { RECALL.loaded = false; RECALL.rows = []; }
+
+/* ══════════════════════════════════════════════════════════════ THE MIND ════
+   Three things that run underneath and never appear on screen unless asked
+   for, but change what he is able to do:
+
+     1. SEMANTIC MEMORY. Retrieval by meaning rather than by word. Ask about
+        "where I keep my tools" and get back the note about the hangar, even
+        though neither word appears in it.
+     2. INGESTION. Drop a document on the deck and he reads it, splits it
+        sensibly, indexes it and can then answer from it with citations.
+     3. AUTOMATION. Persistent rules — when this happens, do that — that
+        survive a reload and fire on their own.
+
+   All of it runs on this machine. No embedding API, no upload, nothing leaves.
+
+   ─────────────────────────────────────────────────────────────────────────
+   HOW THE EMBEDDING WORKS, AND WHAT IT IS NOT
+
+   A real sentence-transformer is 90MB and needs a runtime. What is here
+   instead is a hashed bag-of-character-ngrams projected into 256 dimensions —
+   the "hashing trick", which is a genuine and well-understood technique, not
+   an approximation of one.
+
+   Character n-grams rather than words matter: they make it robust to
+   plurals, typos, tenses and compounds without any stemming, because
+   "hangar" and "hangars" share five of their six trigrams. Random projection
+   preserves cosine distance in expectation (Johnson-Lindenstrauss), so
+   similarity in the 256-dimensional space really does track similarity in the
+   original sparse one.
+
+   What it does NOT do is understand. It has no idea that "car" and
+   "automobile" are related, because they share no characters. So the recall
+   path uses BOTH this and a lexical score, and says which one found a thing.
+   Claiming otherwise would be the interesting kind of lie: plausible,
+   confident, and wrong exactly when it matters.                            */
+
+const EMB_DIM = 256;
+
+/* FNV-1a. Fast, well-distributed, and deterministic across reloads — which
+   matters, because an index built last week has to still be readable now. */
+function fnv1a(str, seed) {
+  let h = (seed || 0x811c9dc5) >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/** Character trigrams plus whole words, which between them cover both
+ *  "misspelled but close" and "exactly this term". */
+function features(text) {
+  const t = ' ' + String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+  const out = [];
+  for (let i = 0; i < t.length - 2; i++) out.push(t.slice(i, i + 3));
+  const words = t.split(/\s+/).filter(w => w.length > 1);
+  for (const w of words) { out.push('#' + w); if (w.length > 4) out.push('#' + w.slice(0, 4)); }
+  for (let i = 0; i + 1 < words.length; i++) out.push('#' + words[i] + '_' + words[i + 1]);
+  return out;
+}
+
+/** Project into EMB_DIM dimensions and L2-normalise, so a dot product IS cosine. */
+function embed(text) {
+  const v = new Float32Array(EMB_DIM);
+  const feats = features(text);
+  if (!feats.length) return v;
+  // Sub-linear term weighting: a word appearing nine times is not nine times
+  // as important as one appearing once. Without this a repeated word drowns
+  // out everything else in the passage.
+  const counts = new Map();
+  for (const f of feats) counts.set(f, (counts.get(f) || 0) + 1);
+  counts.forEach((n, f) => {
+    const h = fnv1a(f);
+    const idx = h % EMB_DIM;
+    // a second hash decides the sign, which is what keeps unrelated features
+    // from piling up constructively in the same bucket
+    const sign = (fnv1a(f, 0x9e3779b9) & 1) ? 1 : -1;
+    v[idx] += sign * (1 + Math.log(n));
+  });
+  let mag = 0;
+  for (let i = 0; i < EMB_DIM; i++) mag += v[i] * v[i];
+  mag = Math.sqrt(mag);
+  if (mag > 1e-9) for (let i = 0; i < EMB_DIM; i++) v[i] /= mag;
+  return v;
+}
+
+function cosine(a, b) {
+  let d = 0;
+  for (let i = 0; i < EMB_DIM; i++) d += a[i] * b[i];
+  return d;
+}
+
+/* ═════════════════════════════════════════════════════════════ THE INDEX ═══ */
+const MIND = {
+  docs: [],            // { id, source, title, text, vec, at, kind, meta }
+  loaded: false,
+  dirty: false,
+  idf: null,
+  MAX: 4000            // chunks; well under any storage quota at this size
+};
+
+function mindLoad() {
+  if (MIND.loaded) return MIND;
+  MIND.loaded = true;
+  try {
+    const raw = localStorage.getItem('jarvis.mind');
+    if (!raw) return MIND;
+    const parsed = JSON.parse(raw);
+    MIND.docs = (parsed.docs || []).map(d => ({
+      ...d,
+      // vectors are stored as plain arrays; rehydrate to typed for speed
+      vec: Float32Array.from(d.vec || [])
+    })).filter(d => d.vec.length === EMB_DIM);
+  } catch (e) { MIND.docs = []; }
+  return MIND;
+}
+
+function mindSave() {
+  if (!MIND.dirty) return true;
+  try {
+    // quantise to three decimals — the vectors are unit length, so this costs
+    // about 0.1% of cosine accuracy and two thirds of the stored bytes
+    const docs = MIND.docs.map(d => ({
+      id: d.id, source: d.source, title: d.title, kind: d.kind, at: d.at,
+      text: d.text, meta: d.meta,
+      vec: Array.from(d.vec, v => +v.toFixed(3))
+    }));
+    localStorage.setItem('jarvis.mind', JSON.stringify({ v: 1, docs }));
+    MIND.dirty = false;
+    return true;
+  } catch (e) {
+    // a full quota is a real condition with a real remedy, not a silent failure
+    MIND.lastError = 'the local store is full — forget something, or index less at a time';
+    return false;
+  }
+}
+
+let MIND_SEQ = 1;
+
+/** Add one passage to the index. */
+function mindAdd(text, opts) {
+  mindLoad();
+  const o = opts || {};
+  const clean = String(text || '').trim();
+  if (clean.length < 3) return null;
+  const doc = {
+    id: 'm' + (MIND_SEQ++) + '_' + Date.now().toString(36),
+    source: o.source || 'note',
+    title: o.title || clean.slice(0, 60),
+    kind: o.kind || 'note',
+    meta: o.meta || null,
+    text: clean.slice(0, 4000),
+    vec: embed(clean),
+    at: Date.now()
+  };
+  MIND.docs.push(doc);
+  // oldest first, but never evict something the user pinned
+  while (MIND.docs.length > MIND.MAX) {
+    const i = MIND.docs.findIndex(d => !d.meta || !d.meta.pinned);
+    if (i < 0) break;
+    MIND.docs.splice(i, 1);
+  }
+  MIND.dirty = true;
+  MIND.idf = null;
+  return doc;
+}
+
+/* ───────────────────────────────────────────────────── lexical scoring ──────
+   BM25, which is what a search engine actually uses. The semantic score finds
+   passages that mean the same thing; this one finds passages that contain the
+   exact rare term you asked for. They fail in different directions, which is
+   the entire reason for running both. */
+function mindIDF() {
+  if (MIND.idf) return MIND.idf;
+  const df = new Map();
+  const N = MIND.docs.length || 1;
+  for (const d of MIND.docs) {
+    const seen = new Set(String(d.text).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+    seen.forEach(w => df.set(w, (df.get(w) || 0) + 1));
+  }
+  const idf = new Map();
+  df.forEach((n, w) => idf.set(w, Math.log(1 + (N - n + 0.5) / (n + 0.5))));
+  MIND.idf = { idf, N, avgLen: MIND.docs.reduce((a, d) => a + d.text.length, 0) / N || 1 };
+  return MIND.idf;
+}
+
+function bm25(queryWords, doc) {
+  const { idf, avgLen } = mindIDF();
+  const words = String(doc.text).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const tf = new Map();
+  words.forEach(w => tf.set(w, (tf.get(w) || 0) + 1));
+  const k1 = 1.5, b = 0.75;
+  let score = 0;
+  for (const q of queryWords) {
+    const f = tf.get(q);
+    if (!f) continue;
+    const w = idf.get(q) || 0;
+    score += w * (f * (k1 + 1)) / (f + k1 * (1 - b + b * (doc.text.length / avgLen)));
+  }
+  return score;
+}
+
+/* ─────────────────────────────────────────────────────────────── recall ───── */
+function mindSearch(query, limit, opts) {
+  mindLoad();
+  const o = opts || {};
+  const q = String(query || '').trim();
+  if (!q || !MIND.docs.length) return [];
+
+  const qv = embed(q);
+  const qWords = q.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+
+  let maxLex = 0;
+  const scored = MIND.docs.map(d => {
+    const sem = cosine(qv, d.vec);
+    const lex = qWords.length ? bm25(qWords, d) : 0;
+    if (lex > maxLex) maxLex = lex;
+    return { d, sem, lex };
+  });
+
+  return scored.map(x => {
+    // Normalise the lexical score into 0..1 before mixing, or a single rare
+    // term with a big BM25 weight swamps the semantic side entirely.
+    const lexN = maxLex > 0 ? x.lex / maxLex : 0;
+    const score = x.sem * 0.6 + lexN * 0.4;
+    return {
+      id: x.d.id, title: x.d.title, source: x.d.source, kind: x.d.kind,
+      text: x.d.text, at: x.d.at, meta: x.d.meta,
+      score: +score.toFixed(4),
+      semantic: +x.sem.toFixed(4),
+      lexical: +lexN.toFixed(4),
+      // saying WHICH signal found it is the honest part: a purely semantic hit
+      // on this embedding is a weaker claim than an exact-term match
+      matched_by: x.sem > 0.30 && lexN > 0.35 ? 'both'
+        : lexN > 0.45 ? 'exact wording'
+        : x.sem > 0.28 ? 'meaning'
+        : 'weak'
+    };
+  })
+  .filter(r => r.score >= (o.min == null ? 0.16 : o.min))
+  .sort((a, b) => b.score - a.score)
+  .slice(0, limit || 6);
+}
+
+function mindForget(match) {
+  mindLoad();
+  const before = MIND.docs.length;
+  const m = String(match || '').toLowerCase();
+  if (m === 'everything' || m === 'all') MIND.docs = [];
+  else MIND.docs = MIND.docs.filter(d =>
+    !(d.id === match || String(d.title).toLowerCase().includes(m) ||
+      String(d.source).toLowerCase() === m));
+  MIND.dirty = true; MIND.idf = null;
+  mindSave();
+  return { removed: before - MIND.docs.length, remaining: MIND.docs.length };
+}
+
+function mindStats() {
+  mindLoad();
+  const bySource = {};
+  MIND.docs.forEach(d => { bySource[d.source] = (bySource[d.source] || 0) + 1; });
+  return {
+    passages: MIND.docs.length,
+    by_source: bySource,
+    dimensions: EMB_DIM,
+    bytes: (() => { try { return (localStorage.getItem('jarvis.mind') || '').length; } catch (e) { return null; } })(),
+    method: 'hashed character-trigram embedding, 256 dimensions, plus BM25 — both computed on this machine',
+    limitation: 'It matches on shared characters and shared words. It will not connect two words that mean ' +
+                'the same thing but look nothing alike, so a result marked "meaning" is a hint, not a guarantee.'
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════ INGESTION ══════
+   Splitting a document is the part everyone gets wrong. Fixed-size chunks cut
+   sentences in half and destroy exactly the context that made the passage
+   findable. This splits on structure first — blank lines, then sentences —
+   and only falls back to hard cuts for a wall of unbroken text. Chunks
+   overlap, so a fact sitting on a boundary appears in both. */
+function chunkText(text, target, overlap) {
+  const T = target || 700;
+  const OV = overlap == null ? 120 : overlap;
+  const src = String(text || '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (!src) return [];
+  if (src.length <= T) return [src];
+
+  const paras = src.split(/\n\s*\n/);
+  const out = [];
+  let buf = '';
+
+  const flush = () => {
+    if (!buf.trim()) return;
+    out.push(buf.trim());
+    buf = OV > 0 ? buf.slice(Math.max(0, buf.length - OV)) : '';
+  };
+
+  for (const para of paras) {
+    if (para.length > T * 1.5) {
+      // long paragraph — break on sentence ends, which is where meaning breaks
+      const sentences = para.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [para];
+      for (const sen of sentences) {
+        if (buf.length + sen.length > T) flush();
+        // a single sentence longer than the target has to be cut hard
+        if (sen.length > T) {
+          for (let i = 0; i < sen.length; i += T - OV) {
+            out.push(sen.slice(i, i + T).trim());
+          }
+          buf = '';
+        } else buf += sen;
+      }
+    } else {
+      if (buf.length + para.length > T) flush();
+      buf += (buf ? '\n\n' : '') + para;
+    }
+  }
+  flush();
+  return out.filter(c => c.length > 20);
+}
+
+/** Read a File the browser handed us, whatever it is. */
+async function readFileText(file) {
+  const name = file.name || 'file';
+  const ext = (name.split('.').pop() || '').toLowerCase();
+
+  if (/^(txt|md|markdown|csv|tsv|json|log|js|ts|py|html|xml|yml|yaml|css|sql)$/.test(ext) ||
+      /^text\//.test(file.type || '')) {
+    return { text: await file.text(), how: 'read as text' };
+  }
+  if (ext === 'pdf' || file.type === 'application/pdf') {
+    return await readPdfText(file);
+  }
+  // an image is not text; say so and point at the thing that can look at it
+  if (/^image\//.test(file.type || '')) {
+    throw new Error(name + ' is an image, not a document. Hold it up to the camera and I will read it, ' +
+      'or ask me to look at it.');
+  }
+  // last resort: try it as text and see whether it looks like text
+  const t = await file.text();
+  const printable = (t.match(/[\x20-\x7e\n\r\t]/g) || []).length / Math.max(1, t.length);
+  if (printable < 0.85) {
+    throw new Error('I cannot read ' + name + ' — it is a binary format I do not have a decoder for. ' +
+      'Plain text, Markdown, CSV, JSON, code and PDF all work.');
+  }
+  return { text: t, how: 'read as text (guessed)' };
+}
+
+/* PDF text extraction, using pdf.js — the same engine the browser's own PDF
+   viewer is built on. Loaded on first use only; it is a megabyte. */
+const PDFJS = { lib: null, loading: null };
+async function readPdfText(file) {
+  if (!PDFJS.lib) {
+    if (!PDFJS.loading) {
+      PDFJS.loading = (async () => {
+        const mod = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs');
+        mod.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+        PDFJS.lib = mod;
+        return mod;
+      })();
+    }
+    try { await PDFJS.loading; }
+    catch (e) {
+      PDFJS.loading = null;
+      throw new Error('the PDF reader could not be downloaded — check the network, or paste the text instead');
+    }
+  }
+  const buf = await file.arrayBuffer();
+  const pdf = await PDFJS.lib.getDocument({ data: buf }).promise;
+  const pages = [];
+  const max = Math.min(pdf.numPages, 120);
+  for (let i = 1; i <= max; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    // join by item, inserting a break where the y position jumps — otherwise
+    // every PDF comes out as one enormous run-on line
+    let last = null, line = '', out = [];
+    for (const it of content.items) {
+      const y = it.transform ? it.transform[5] : 0;
+      if (last !== null && Math.abs(y - last) > 2) { out.push(line); line = ''; }
+      line += it.str + (it.hasEOL ? '\n' : ' ');
+      last = y;
+    }
+    out.push(line);
+    pages.push(out.join('\n'));
+  }
+  return {
+    text: pages.join('\n\n'),
+    how: 'extracted from ' + max + ' page' + (max === 1 ? '' : 's') + ' with pdf.js, on this machine',
+    truncated: pdf.numPages > max ? pdf.numPages - max : 0
+  };
+}
+
+/** The whole path: read, chunk, embed, index. */
+async function ingestFile(file) {
+  const t0 = performance.now();
+  let read;
+  try { read = await readFileText(file); }
+  catch (e) { return { error: String(e.message || e) }; }
+
+  const chunks = chunkText(read.text);
+  if (!chunks.length) return { error: file.name + ' had no readable text in it' };
+
+  const source = file.name;
+  mindForget(source);                       // re-indexing replaces, never duplicates
+  chunks.forEach((c, i) => mindAdd(c, {
+    source, kind: 'document',
+    title: file.name + ' · part ' + (i + 1) + ' of ' + chunks.length,
+    meta: { part: i + 1, parts: chunks.length, bytes: file.size }
+  }));
+  mindSave();
+
+  return {
+    ok: true, file: source,
+    how_read: read.how,
+    characters: read.text.length,
+    passages_indexed: chunks.length,
+    pages_skipped: read.truncated || undefined,
+    ms: Math.round(performance.now() - t0),
+    storage: MIND.lastError || 'stored on this machine only',
+    note: 'Ask about it in plain language — I search it by meaning as well as by wording, and I will quote ' +
+          'the passage I answered from.'
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════ AUTOMATION ═════
+   Rules that outlive the session. Each is a trigger, an optional condition and
+   an instruction; the instruction is put to him as though you had typed it, so
+   a rule can do anything he can do.
+
+   The two guards that matter: a rule cannot fire more often than its own
+   cooldown, and a rule that throws is disabled rather than left to throw
+   forever. An automation that fails silently in a loop is worse than one that
+   never ran. */
+const RULES = { list: [], loaded: false, fired: [], running: false };
+
+const TRIGGERS = {
+  startup:   'once, when the deck comes up',
+  interval:  'every N minutes',
+  vital:     'when a vital sign crosses a threshold',
+  presence:  'when somebody appears in front of the camera, or leaves',
+  object:    'when a named object comes into view',
+  said:      'when you say something matching a phrase',
+  quiet:     'after N minutes with nothing said'
+};
+
+function rulesLoad() {
+  if (RULES.loaded) return RULES.list;
+  RULES.loaded = true;
+  try { RULES.list = JSON.parse(localStorage.getItem('jarvis.rules') || '[]'); }
+  catch (e) { RULES.list = []; }
+  RULES.list.forEach(r => { r.lastFired = 0; r.errors = r.errors || 0; });
+  return RULES.list;
+}
+function rulesSave() {
+  try { localStorage.setItem('jarvis.rules', JSON.stringify(RULES.list)); return true; }
+  catch (e) { return false; }
+}
+
+function ruleAdd(spec) {
+  rulesLoad();
+  if (!spec || !spec.trigger || !TRIGGERS[spec.trigger]) {
+    return { error: 'trigger must be one of: ' + Object.keys(TRIGGERS).join(', ') };
+  }
+  if (!spec.instruction || String(spec.instruction).trim().length < 3) {
+    return { error: 'a rule needs an instruction — what should I actually do when it fires?' };
+  }
+  const r = {
+    id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    name: String(spec.name || spec.instruction).slice(0, 70),
+    trigger: spec.trigger,
+    arg: spec.arg == null ? null : spec.arg,
+    threshold: spec.threshold == null ? null : Number(spec.threshold),
+    instruction: String(spec.instruction).slice(0, 400),
+    cooldownMs: Math.max(5000, (spec.cooldown_s || 300) * 1000),
+    enabled: true, errors: 0, lastFired: 0, created: Date.now(), count: 0
+  };
+  RULES.list.push(r);
+  rulesSave();
+  return { ok: true, rule: r.id, name: r.name,
+    note: 'It will keep working after a reload. Say "list rules" to see them, or "delete rule ' + r.name + '".' };
+}
+
+function ruleRemove(match) {
+  rulesLoad();
+  const m = String(match || '').toLowerCase();
+  const before = RULES.list.length;
+  RULES.list = m === 'all' || m === 'everything' ? []
+    : RULES.list.filter(r => r.id !== match && !r.name.toLowerCase().includes(m));
+  rulesSave();
+  return { removed: before - RULES.list.length, remaining: RULES.list.map(r => r.name) };
+}
+
+function ruleList() {
+  rulesLoad();
+  return RULES.list.map(r => ({
+    id: r.id, name: r.name, when: TRIGGERS[r.trigger],
+    trigger: r.trigger, arg: r.arg, threshold: r.threshold,
+    does: r.instruction,
+    enabled: r.enabled,
+    fired: r.count,
+    last: r.lastFired ? new Date(r.lastFired).toISOString() : 'never',
+    disabled_because: r.enabled ? undefined : 'it failed ' + r.errors + ' times in a row'
+  }));
+}
+
+/** Decide whether one rule should fire right now. */
+function ruleShouldFire(r, ctx, now) {
+  if (!r.enabled) return false;
+  if (now - r.lastFired < r.cooldownMs) return false;
+
+  switch (r.trigger) {
+    case 'startup':
+      return !r.count && now - ctx.bootedAt > 4000;
+    case 'interval':
+      return now - (r.lastFired || ctx.bootedAt) > Math.max(60000, (r.arg || 15) * 60000);
+    case 'vital': {
+      const c = (ctx.vitals || []).find(v => v.key === r.arg || v.label === r.arg);
+      if (!c || r.threshold == null) return false;
+      return c.v >= r.threshold;
+    }
+    case 'presence':
+      return r.arg === 'leaves' ? (ctx.wasPresent && !ctx.present) : (!ctx.wasPresent && ctx.present);
+    case 'object':
+      return (ctx.objects || []).some(o => String(o).toLowerCase() === String(r.arg || '').toLowerCase());
+    case 'said':
+      return !!ctx.lastSaid && new RegExp(String(r.arg || '.'), 'i').test(ctx.lastSaid);
+    case 'quiet':
+      return ctx.silentMs > Math.max(60000, (r.arg || 20) * 60000);
+    default: return false;
+  }
+}
+
+/** Evaluate every rule. Returns the instructions that should be run. */
+function rulesEvaluate(ctx, now) {
+  rulesLoad();
+  const t = now || Date.now();
+  const fire = [];
+  for (const r of RULES.list) {
+    let should = false;
+    try { should = ruleShouldFire(r, ctx, t); }
+    catch (e) {
+      // a bad regex in a "said" rule would otherwise throw on every tick
+      r.errors++;
+      if (r.errors >= 3) { r.enabled = false; rulesSave(); }
+      continue;
+    }
+    if (!should) continue;
+    r.lastFired = t; r.count++; r.errors = 0;
+    fire.push({ id: r.id, name: r.name, instruction: r.instruction, trigger: r.trigger });
+    RULES.fired.unshift({ at: t, name: r.name });
+    if (RULES.fired.length > 25) RULES.fired.length = 25;
+  }
+  if (fire.length) rulesSave();
+  return fire;
+}
 
 /* ══════════════════════════════════════════════════════ HANDS, PROPERLY ════
    Four things were wrong with the old input path, and every one of them is the
@@ -9629,6 +10575,7 @@ function flushVoice() {
   if (app.rec && app.recActive) { try { app.rec.stop(); } catch (e) { } }
 
   if (E.transcript) E.transcript.textContent = '“' + said + '”';
+  RULECTX.lastSaid = said; RULECTX.lastSaidAt = Date.now();
   if (PRES.on) { presYou(said); presSay(''); }
   setVoiceUI('thinking');
   printRow('🎙 ' + said, '#ffd280');
@@ -9754,6 +10701,134 @@ function readCfg() {
 }
 
 /* ==================================================================== BIND === */
+/* Twelve marks around the HUD ring, longer every third. Built once rather than
+   written out by hand, so the count can change without editing markup. */
+function buildHudTicks() {
+  const host = $('hudTicks'); if (!host) return;
+  let html = '';
+  for (let i = 0; i < 36; i++) {
+    const major = i % 3 === 0;
+    html += '<div style="position:absolute; left:50%; top:0; width:1px; height:' +
+      (major ? 11 : 5) + 'px; background:rgba(0,229,255,' + (major ? '.40' : '.18') + ');' +
+      'transform-origin:50% ' + (host.clientHeight ? host.clientHeight / 2 + 'px' : '50vh') + ';' +
+      'transform:rotate(' + (i * 10) + 'deg);"></div>';
+  }
+  host.innerHTML = html;
+  // the transform origin depends on the measured size, so redo it once laid out
+  requestAnimationFrame(() => {
+    const r = host.clientHeight / 2;
+    [...host.children].forEach((n, i) => {
+      n.style.transformOrigin = '50% ' + r + 'px';
+      n.style.transform = 'rotate(' + (i * 10) + 'deg)';
+    });
+  });
+}
+
+/* ── parallax ───────────────────────────────────────────────────────────────
+   The whole point of the layers above is depth, and depth is only convincing
+   if it responds. Move the pointer and the background drifts one way while the
+   foreground drifts the other, by a couple of pixels. It is a small effect and
+   it is the difference between layers and a flat picture.
+
+   Driven off a rAF-coalesced pointer position rather than the event itself, so
+   a fast mouse cannot queue up hundreds of style writes. */
+const PARA = { x: 0, y: 0, tx: 0, ty: 0, on: false, raf: 0 };
+function bindParallax() {
+  // matchMedia is missing in some embedded runtimes, so this is a feature test
+  // rather than a null check — and honouring reduced-motion is not optional.
+  try {
+    if (typeof matchMedia === 'function' &&
+        matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  } catch (e) { /* no media query support — carry on, the effect is tiny */ }
+  addEventListener('pointermove', (e) => {
+    PARA.tx = (e.clientX / innerWidth - 0.5) * 2;
+    PARA.ty = (e.clientY / innerHeight - 0.5) * 2;
+    if (!PARA.on) { PARA.on = true; PARA.raf = requestAnimationFrame(stepParallax); }
+  }, { passive: true });
+}
+function stepParallax() {
+  PARA.x += (PARA.tx - PARA.x) * 0.06;
+  PARA.y += (PARA.ty - PARA.y) * 0.06;
+  const set = (id, k, extra) => {
+    const n = $(id); if (!n) return;
+    n.style.transform = 'translate3d(' + (-PARA.x * k).toFixed(2) + 'px,' +
+      (-PARA.y * k).toFixed(2) + 'px,0)' + (extra || '');
+  };
+  set('haze', 26);
+  set('hud', -9);
+  const grid = $('floorGrid');
+  if (grid) grid.style.transform = 'perspective(420px) rotateX(68deg) translate3d(' +
+    (-PARA.x * 34).toFixed(1) + 'px,0,0)';
+  if (Math.abs(PARA.tx - PARA.x) > 0.001 || Math.abs(PARA.ty - PARA.y) > 0.001) {
+    PARA.raf = requestAnimationFrame(stepParallax);
+  } else PARA.on = false;
+}
+
+/* ── drop a document on the deck ─────────────────────────────────────────────
+   The whole surface is a drop target. Anything readable is chunked, embedded
+   and indexed on this machine; nothing is uploaded. */
+function bindDrop() {
+  const veil = $('dropVeil');
+  let depth = 0;
+  const show = (on) => { if (veil) veil.style.display = on ? 'flex' : 'none'; };
+
+  addEventListener('dragover', (e) => { e.preventDefault(); });
+  addEventListener('dragenter', (e) => {
+    if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+    e.preventDefault(); depth++; show(true);
+  });
+  addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) show(false); });
+
+  addEventListener('drop', async (e) => {
+    e.preventDefault(); depth = 0; show(false);
+    const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+    if (!files.length) return;
+    for (const f of files) {
+      printRow('◆ INGEST · ' + f.name + ' (' + Math.round(f.size / 1024) + 'KB)', VI);
+      const r = await ingestFile(f);
+      if (r.error) {
+        printRow('  ✕ ' + r.error, AM);
+        toast('INGEST', r.error.slice(0, 60), AM);
+        continue;
+      }
+      printRow('  ' + r.passages_indexed + ' passages indexed · ' + r.how_read + ' · ' + r.ms + 'ms', DIM);
+      toast('INGEST', f.name + ' · ' + r.passages_indexed + ' passages', VI);
+      streamRow('MIND', 'indexed ' + f.name, VI);
+    }
+    if (files.length === 1 && speaks()) {
+      submit('I have just given you ' + files[0].name + '. Tell me in one or two sentences what it is, ' +
+             'using recall_memory to look at what you actually indexed.', true);
+    }
+  });
+}
+
+/* ── the rule engine's heartbeat ─────────────────────────────────────────────
+   Once a second is plenty: no trigger here is finer-grained than that, and a
+   rule that fires a second late has never mattered. */
+const RULECTX = { bootedAt: Date.now(), wasPresent: false, lastSaid: '', lastSaidAt: 0 };
+function ruleTick() {
+  if (app.busy) return;                       // never interrupt a turn in progress
+  const ctx = {
+    bootedAt: RULECTX.bootedAt,
+    vitals: VITALS.chans.map(c => ({ key: c.key, label: c.label, v: c.v })),
+    present: !!(VIS.on && VIS.body),
+    wasPresent: RULECTX.wasPresent,
+    objects: (typeof tracked === 'function' ? tracked(2) : []).map(o => o.object),
+    lastSaid: RULECTX.lastSaid,
+    silentMs: Date.now() - (RULECTX.lastSaidAt || RULECTX.bootedAt)
+  };
+  const fire = rulesEvaluate(ctx, Date.now());
+  RULECTX.wasPresent = ctx.present;
+  RULECTX.lastSaid = '';                      // a phrase fires once, not forever
+
+  if (!fire.length) return;
+  const r = fire[0];                          // one at a time; the rest wait a tick
+  printRow('◆ RULE · ' + r.name, VI);
+  plog('◆ RULE FIRED · ' + r.name, r.trigger + '\n' + r.instruction, 'tool');
+  toast('RULE', r.name.slice(0, 50), VI);
+  submit(r.instruction, true);
+}
+
 function bindUI() {
   // Any deliberate act stops him mid-sentence. This is the unambiguous path:
   // a key or a click is never the room, never an echo, never a misheard word.
@@ -10539,6 +11614,12 @@ app.instr = {
 app.hands = { OneEuro, Schmitt, LowPass, read: readHandStable, pointer: stepPointer,
   reset: handReset, state: () => HAND, cfg: HAND.cfg, quality: handQuality,
   extension, intent, intentProgress, grab: smoothGrab, box: smoothBox, GRABF };
+
+app.mind = { embed, cosine, features, add: mindAdd, search: mindSearch, forget: mindForget,
+  stats: mindStats, save: mindSave, load: mindLoad, chunk: chunkText, ingest: ingestFile,
+  docs: () => MIND.docs, bm25, idf: mindIDF,
+  rules: { add: ruleAdd, remove: ruleRemove, list: ruleList, evaluate: rulesEvaluate,
+           should: ruleShouldFire, all: () => RULES.list, tick: ruleTick, ctx: RULECTX } };
 
 app.lab = { run: runLab, exec: labRun, kill: labKill, history: () => LAB.history };
 app.feeds = { show: showFeed, quakes, space: spaceWeather, air: airQuality, crew: peopleInSpace,
@@ -13027,6 +14108,10 @@ paintCam();
 bindUI();
 bindEngine();
 bindNetDrag();
+buildHudTicks();
+bindParallax();
+bindDrop();
+setInterval(ruleTick, 1000);
 perfInit();
 setTimeout(() => { if (E.boot) E.boot.style.display = 'none'; }, 2000);
 requestAnimationFrame(loop);
