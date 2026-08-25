@@ -140,6 +140,10 @@
         <div id="perf" style="color:#7fe9ff; font-variant-numeric:tabular-nums;">— fps</div>
       </div>
       <div style="display:flex; flex-direction:column; gap:2px;">
+        <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">QUALITY</div>
+        <div id="perfTier" style="color:rgba(150,215,235,.7);">—</div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:2px;">
         <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">VAULT</div>
         <div id="vaultStat" style="color:rgba(150,215,235,.45);">NO VAULT</div>
       </div>
@@ -323,6 +327,10 @@
     <div id="ovlWx" style="position:absolute; inset:0; overflow:auto; padding:18px 22px;"></div>
     <div id="ovlCal" style="position:absolute; inset:0; overflow:auto; padding:18px 22px;"></div>
     <div id="ovlAudit" style="position:absolute; inset:0; overflow:auto; background:#04121c;"></div>
+    <div id="ovlGlobe" style="position:absolute; inset:0; overflow:hidden; background:#02090e;"></div>
+    <div id="ovlTerrain" style="position:absolute; inset:0; overflow:hidden; background:#02090e;"></div>
+    <div id="ovlFeed" style="position:absolute; inset:0; overflow:auto; background:#04121c;"></div>
+    <div id="ovlLab" style="position:absolute; inset:0; overflow:auto; background:#04121c;"></div>
     <iframe id="ovlEmbed" style="position:absolute; inset:0; width:100%; height:100%; border:0; background:#04121c;"
             referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
   </div>
@@ -697,10 +705,12 @@ const VERT = NOISE + `
 attribute vec3 aDir;
 attribute float aRad, aRand, aLayer, aSize, aSeed, aSeg, aBt;
 uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark, uVH, uHuman, uScatter;
-uniform vec3 uBoneA[18];
-uniform vec3 uBoneB[18];
-uniform float uBoneR[18];
-uniform float uBoneR2[18];
+uniform vec3 uBoneA[22];
+uniform vec3 uBoneB[22];
+// Both radii in one vec2. A float array still burns a whole vec4 slot per
+// element on most drivers, so packing them halves the cost of the taper and
+// leaves the 22-bone rig cheaper in uniform slots than the 18-bone one was.
+uniform vec2 uBoneR[22];
 uniform vec3 uShockDir, uMood;
 varying vec3 vCol;
 varying float vA;
@@ -776,8 +786,8 @@ void main(){
     vec3 A = vec3(0.0), B = vec3(0.0);
     float R = 0.05, R2 = 0.05;
     // constant-bounds loop with a constant index: valid on every GL target
-    for (int i = 0; i < 18; i++) {
-      if (i == si) { A = uBoneA[i]; B = uBoneB[i]; R = uBoneR[i]; R2 = uBoneR2[i]; }
+    for (int i = 0; i < 22; i++) {
+      if (i == si) { A = uBoneA[i]; B = uBoneB[i]; R = uBoneR[i].x; R2 = uBoneR[i].y; }
     }
     vec3 axis = B - A;
     float len = length(axis);
@@ -956,7 +966,12 @@ function init(canvas, opts = {}) {
   const aLayer = new Float32Array(COUNT), aSize = new Float32Array(COUNT), aSeed = new Float32Array(COUNT);
   const aSeg = new Float32Array(COUNT), aBt = new Float32Array(COUNT);
   // rough volume per limb, so the body fills evenly rather than pooling in the head
-  const SEG_W = [1.5, 0.5, 2.0, 2.6, 0.5, 0.5, 1.0, 1.0, 0.8, 0.8, 0.5, 0.5, 0.5, 0.5, 1.4, 1.4, 1.0, 1.0];
+  // 18 structural bones, then four for the face. The face gets about 5% of the
+  // field — enough for a jaw line and brows to read at a distance without
+  // stealing density from the torso, which is what actually carries the
+  // silhouette.
+  const SEG_W = [1.5, 0.5, 2.0, 2.6, 0.5, 0.5, 1.0, 1.0, 0.8, 0.8, 0.5, 0.5, 0.5, 0.5, 1.4, 1.4, 1.0, 1.0,
+                 0.34, 0.26, 0.11, 0.11];
   const SEG_CUM = []; let segTotal = 0;
   for (let i = 0; i < SEG_W.length; i++) { segTotal += SEG_W[i]; SEG_CUM.push(segTotal); }
   const GOLD = Math.PI * (3 - Math.sqrt(5));
@@ -1015,10 +1030,9 @@ function init(canvas, opts = {}) {
     uVH: { value: 1 },
     uHuman: { value: 0 },
     uScatter: { value: 0 },
-    uBoneA: { value: Array.from({ length: 18 }, () => new THREE.Vector3()) },
-    uBoneB: { value: Array.from({ length: 18 }, () => new THREE.Vector3()) },
-    uBoneR: { value: new Array(18).fill(0.06) },
-    uBoneR2: { value: new Array(18).fill(0.06) }
+    uBoneA: { value: Array.from({ length: 22 }, () => new THREE.Vector3()) },
+    uBoneB: { value: Array.from({ length: 22 }, () => new THREE.Vector3()) },
+    uBoneR: { value: Array.from({ length: 22 }, () => new THREE.Vector2(0.06, 0.06)) }
   };
   const mat = new THREE.ShaderMaterial({
     uniforms, vertexShader: VERT, fragmentShader: FRAG,
@@ -1140,9 +1154,13 @@ function init(canvas, opts = {}) {
 
     composer.render();
 
-    // adaptive particle cap
+    // adaptive particle cap. When an external governor is driving quality it
+    // owns this entirely — two controllers fighting over one number is how you
+    // get a deck that pulses between sharp and soft forever.
     fpsAcc += dt; fpsFrames++;
-    if (fpsAcc > 2 && !qualityLocked) {
+    if (api.externalQuality) {
+      if (fpsAcc > 1) { api.fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; }
+    } else if (fpsAcc > 2 && !qualityLocked) {
       const fps = fpsFrames / fpsAcc;
       if (fps < 32 && quality > 0.35) quality = Math.max(0.35, quality - 0.3);
       else if (fps < 46 && quality > 0.5) quality = Math.max(0.5, quality - 0.18);
@@ -1176,24 +1194,43 @@ function init(canvas, opts = {}) {
       shockT = 0; shockAmp = 1;
     },
     setPointer(nx, ny) { pointer.tx = nx; pointer.ty = ny; },
-    /* bones: flat [ax,ay,az, bx,by,bz, rA, rB] x 18, already in world units.
+    /* bones: flat [ax,ay,az, bx,by,bz, rA, rB] x 22, already in world units.
+       0-17 are the skeleton, 18-21 are jaw, mouth and the two brows.
        Two radii so limbs taper — the difference between a body and a balloon
        animal is entirely in the second number. */
     setPose(bones) {
-      const A = uniforms.uBoneA.value, B = uniforms.uBoneB.value;
-      const R = uniforms.uBoneR.value, R2 = uniforms.uBoneR2.value;
-      for (let i = 0; i < 18; i++) {
+      const A = uniforms.uBoneA.value, B = uniforms.uBoneB.value, R = uniforms.uBoneR.value;
+      for (let i = 0; i < 22; i++) {
         const o = i * 8;
         if (bones.length < o + 8) break;
         A[i].set(bones[o], bones[o + 1], bones[o + 2]);
         B[i].set(bones[o + 3], bones[o + 4], bones[o + 5]);
-        R[i] = bones[o + 6];
-        R2[i] = bones[o + 7];
+        R[i].set(bones[o + 6], bones[o + 7]);
       }
     },
     setHuman(w) { uniforms.uHuman.value = Math.max(0, Math.min(1, w)); },
     setScatter(w) { uniforms.uScatter.value = Math.max(0, w); },
     get human() { return uniforms.uHuman.value; },
+    /* ── external quality control ──────────────────────────────────────────
+       The governor measures the whole deck, not just this canvas, so it is the
+       one that knows whether there is room. Setting any of these hands over
+       control permanently for the session. */
+    externalQuality: false,
+    setQuality(q) {
+      api.externalQuality = true;
+      quality = Math.max(0.05, Math.min(1, q));
+      qualityLocked = true;
+      geo.setDrawRange(0, Math.floor(COUNT * quality));
+      uniforms.uPixel.value = 1 / Math.sqrt(quality);
+    },
+    setBloom(mult) {
+      api.externalQuality = true;
+      api.bloomBase = (opts.bloom || 1.05) * Math.max(0, Math.min(2, mult));
+    },
+    setDust(on) {
+      api.externalQuality = true;
+      if (dust) dust.visible = !!on;
+    },
     setMood(r, g, b, amt, dark) {
       uniforms.uMood.value.set(r, g, b);
       uniforms.uMoodAmt.value = amt || 0;
@@ -1204,7 +1241,9 @@ function init(canvas, opts = {}) {
   return api;
 }
 
-window.JARVIS_ENGINE = { init, STATES };
+// THREE itself is handed out so the globe and the terrain can share this one
+// copy of the library rather than pulling a second 600KB module down.
+window.JARVIS_ENGINE = { init, STATES, THREE };
 window.dispatchEvent(new Event('jarvis-engine-ready'));
 
 </script>
@@ -1271,7 +1310,7 @@ const E = {};
  'cNeural','cRadar','cWave','netStat','coreStat','neuralStat','threatStat','stream',
  'console','input','inputWrap','cog','state','part','mic','toasts','hint','boot',
  'voiceBtn','voiceDot','voiceLabel','voiceRing','mAuto','mDictate','mManual','modeHint',
- 'transcript','thinkBar','cfgVeil','cfgClose','cfgKey','cfgBase','cfgModel','cfgSys',
+ 'transcript','thinkBar','cfgVeil','cfgClose','cfgKey','cfgBase','cfgModel','cfgSys','perfTier',
  'cfgMsg','cfgSave','cfgTest','cfgWipe','rowKey','rowBase','personaChip','personaStat',
  'tFun','tSerious','tLight','tHeavy','cfgElKey','cfgVoice','cfgVoiceFor','cfgElModel',
  'cfgStab','cfgSim','cfgSpeed','cfgSysFor','cfgReset','cfgSpeak','cfgSbUrl','cfgSbKey',
@@ -1897,7 +1936,11 @@ function tick(dt, el) {
 
 function loop(now) {
   requestAnimationFrame(loop);
-  const dt = Math.min(0.05, (now - (app.last || now)) / 1000); app.last = now;
+  const dtMs = now - (app.last || now);
+  const dt = Math.min(0.05, dtMs / 1000); app.last = now;
+  perfBeginFrame();
+  perfFrame(dtMs);
+  stepFace(dt);
   tick(dt, now - app.t0);
 
   // The six gauge canvases only stop when something genuinely covers them — the
@@ -2086,8 +2129,28 @@ function saveLink() {
 
 /* -------------------------------------------------------------- persona --- */
 function personaSys(id) { return persona.sysOverride[id] || PERSONAS[id].sys; }
+/* What he needs to know about his own new faculties. Kept short and specific:
+   a directive that lists everything he can do is a directive he stops reading. */
+const DOCTRINE =
+  'HOW TO USE WHAT YOU HAVE:\n' +
+  '· Independent lookups are run at the same time — ask for all of them in one go rather than one per turn.\n' +
+  '· When a tool fails it may hand back "what_to_do_next". Follow it. Do not apologise and stop.\n' +
+  '· Never state a current fact you have not checked. web_search finds pages; read_page reads them; ' +
+  'only then is it something you know. Say where it came from.\n' +
+  '· For anything with arithmetic in it — totals, conversions, statistics, sequences — use run_code and ' +
+  'report what actually came out. Do not do sums in your head and present them as computed.\n' +
+  '· satellites_overhead and next_pass are real orbital mechanics from live element sets. show_terrain is ' +
+  'real elevation data. Say so; people assume these things are decorative.\n' +
+  '· identify_objects and profile_room run on their machine and never upload anything. look_at_me and ' +
+  'read_text are different: look_at_me sends one frame away, read_text does not. Be accurate about which.\n' +
+  '· You never estimate anyone\'s age, gender, mood or health from their face, and you say why if asked: ' +
+  'those readings are unreliable and being confidently wrong about a person is worse than declining.\n' +
+  '· remember_face only ever runs when they explicitly ask you to remember someone.\n' +
+  '· If the deck is struggling, performance_report says what tier it settled on and why.';
+
 function buildSystem() {
-  return personaSys(persona.id) + '\n\n' + TEMPERS[persona.humor] + '\n' + TEMPERS[persona.depth];
+  return personaSys(persona.id) + '\n\n' + TEMPERS[persona.humor] + '\n' + TEMPERS[persona.depth] +
+    '\n\n' + DOCTRINE;
 }
 function paintPersona() {
   const p = PERSONAS[persona.id];
@@ -2417,6 +2480,81 @@ const TOOLS = [
       query: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }
     }, required: [] } },
 
+  { name: 'run_code', description: 'Write JavaScript, run it, and show the user the result. Use for anything that needs actual computation rather than an assertion — arithmetic over many numbers, simulations, unit conversion chains, parsing, statistics, generating a sequence, checking your own working. It runs in an isolated worker with no DOM and no network, so it cannot touch the deck or send anything anywhere. Top-level await works. console.log to show working; return the answer. If it errors, read the fault and fix it — never report a number you did not actually get out of it.',
+    params: { type: 'object', properties: {
+      code: { type: 'string', description: 'JavaScript. It is wrapped in an async function, so you may await and you may return.' },
+      explain: { type: 'string', description: 'One line for the user about what this computes. Shown above the code.' },
+      timeout_ms: { type: 'number', description: 'Up to 20000. Default 5000.' }
+    }, required: ['code'] } },
+
+  { name: 'show_feed', description: 'Open a live feed from a public scientific instrument. "earthquakes" is every quake on Earth from the USGS. "space_weather" is the solar wind and the planetary K index from NOAA, which is what decides whether there will be aurora. "air_quality" is particulates and ozone where the user is. "crew" is who is currently off the planet, by name. All real measurements, all attributed.',
+    params: { type: 'object', properties: {
+      feed: { type: 'string', enum: ['earthquakes', 'space_weather', 'air_quality', 'crew'] },
+      min_magnitude: { type: 'number', description: 'Earthquakes only. Default 4.5.' },
+      window: { type: 'string', enum: ['hour', 'day', 'week'], description: 'Earthquakes only. Default day.' },
+      lat: { type: 'number' }, lon: { type: 'number' }
+    }, required: ['feed'] } },
+
+  { name: 'web_search', description: 'Search the live web. Returns titles and URLs — these are search results, not facts. Use whenever you need something current, specific, or that you are not sure about, then call read_page on the results that matter before stating anything as true. Never answer from a search snippet alone.',
+    params: { type: 'object', properties: {
+      query: { type: 'string', description: 'What to search for. Be specific — this is a real search engine, not a question box.' },
+      limit: { type: 'number', description: 'How many results. Default 8.' }
+    }, required: ['query'] } },
+
+  { name: 'read_page', description: 'Fetch a web page and read its text. Use after web_search on the results worth reading, or directly when the user gives you a URL and asks what is on it. Always attribute what you take from a page to its URL.',
+    params: { type: 'object', properties: {
+      url: { type: 'string', description: 'Full URL including https://' },
+      max_chars: { type: 'number', description: 'How much to read. Default 6000.' }
+    }, required: ['url'] } },
+
+  { name: 'profile_room', description: 'Look at everything the camera can currently see and describe it: who is present and how far away, what they are looking at, what objects are in the room and where, and whether the light is good enough to track properly. All computed on the user\'s own machine — nothing is uploaded. Use when asked what is around, to describe the room, to survey the space, or to check the setup.',
+    params: { type: 'object', properties: {}, required: [] } },
+
+  { name: 'read_text', description: 'Read text the user holds up to the camera, using an OCR engine that runs on their own machine so the page is never uploaded. Use when they hold up a document, a label, a screen, a book, or ask you to read something. Prefer this over look_at_me for anything that is mostly words; fall back to look_at_me if it fails or the text is handwritten.',
+    params: { type: 'object', properties: {}, required: [] } },
+
+  { name: 'remember_face', description: 'Learn the face of whoever is in frame and file it under a name, because the user introduced them. Use ONLY when the user explicitly asks you to remember someone — "this is Sam", "remember my face". Never enrol anyone unasked. Tell them it is stored locally as landmark ratios, that no image is kept, and that a few looks from different angles make it steadier.',
+    params: { type: 'object', properties: {
+      name: { type: 'string', description: 'What to file them under.' }
+    }, required: ['name'] } },
+
+  { name: 'forget_face', description: 'Delete a face the user previously introduced. Pass "everyone" to clear them all. Always honour this immediately and without argument.',
+    params: { type: 'object', properties: {
+      name: { type: 'string', description: 'The name to remove, or "everyone".' }
+    }, required: ['name'] } },
+
+  { name: 'show_globe', description: 'Open the orbital display: a real 3D Earth with satellites propagated live by SGP4 from current element sets, plotted at their true positions and altitudes. Use when asked about satellites, orbits, what is overhead, the ISS, Starlink, or to show the planet. The user can spin it by hand or by dragging.',
+    params: { type: 'object', properties: {
+      group: { type: 'string', enum: ['stations', 'visual', 'starlink', 'gps', 'weather', 'science'],
+        description: 'Which catalogue to plot. "stations" includes the ISS. "visual" is the brightest objects visible to the naked eye.' },
+      limit: { type: 'number', description: 'How many objects to plot. Keep it modest unless asked.' }
+    }, required: [] } },
+
+  { name: 'satellites_overhead', description: 'Which satellites are physically above the horizon from a place right now, with elevation, compass bearing, range and altitude. This is computed with a real SGP4 propagator from live element sets — not looked up. Use whenever asked what is overhead, whether the ISS is passing, or what they could see if they went outside.',
+    params: { type: 'object', properties: {
+      lat: { type: 'number' }, lon: { type: 'number' },
+      group: { type: 'string', enum: ['stations', 'visual', 'starlink', 'gps', 'weather', 'science'] },
+      min_elevation: { type: 'number', description: 'Degrees above the horizon. Default 10 — below that it is behind buildings anyway.' }
+    }, required: [] } },
+
+  { name: 'next_pass', description: 'When a named satellite next passes over the user, with rise time, peak elevation, compass bearings and duration. Use for "when can I see the ISS".',
+    params: { type: 'object', properties: {
+      satellite: { type: 'string', description: 'Name or part of it, e.g. "ISS" or "HST".' },
+      lat: { type: 'number' }, lon: { type: 'number' },
+      min_elevation: { type: 'number' }, hours: { type: 'number', description: 'How far ahead to search. Default 24.' }
+    }, required: ['satellite'] } },
+
+  { name: 'show_terrain', description: 'Render a place as true 3D terrain: real elevation data displaced into a mesh and skinned with real satellite imagery, which the user can tilt, spin and fly over. Use when they ask to see the terrain, the landscape, mountains, what somewhere looks like from above, or for a 3D view of anywhere. Much better than the flat map for anything with relief.',
+    params: { type: 'object', properties: {
+      place: { type: 'string', description: 'Place name. Or give lat and lon.' },
+      lat: { type: 'number' }, lon: { type: 'number' },
+      zoom: { type: 'number', description: '6 (a whole region) to 14 (a few streets). Default 11.' },
+      exaggeration: { type: 'number', description: 'Vertical scale. 1 is true to life; 1.6 is the default and reads better on screen. Say which you used.' }
+    }, required: [] } },
+
+  { name: 'performance_report', description: 'Read the deck\'s own performance: which quality tier it settled on, the measured frame time, what GPU it found, and the cost of each optional subsystem. Use when the user says it is slow, stuttering, or asks what their machine is doing.',
+    params: { type: 'object', properties: {}, required: [] } },
+
   { name: 'set_temper', description: 'Adjust how you carry yourself. humor: fun or serious. depth: light for short answers, heavy for full analysis. Use when the user asks you to lighten up, be serious, keep it short, or go deeper.',
     params: { type: 'object', properties: {
       humor: { type: 'string', enum: ['fun', 'serious'] },
@@ -2503,7 +2641,11 @@ function runTool(name, a) {
       return SB.rest('jarvis_memory', {
         method: 'POST', body: [{ key: a.key, value: String(a.value) }],
         headers: { prefer: 'resolution=merge-duplicates,return=representation' }
-      }).then(() => { streamRow('MEM', 'stored · ' + a.key, VI); return { ok: true, key: a.key }; });
+      }).then(() => {
+        streamRow('MEM', 'stored · ' + a.key, VI);
+        memoryForget();          // the recall cache is now stale by definition
+        return { ok: true, key: a.key };
+      });
     case 'recall':
       return SB.rest('jarvis_memory?select=key,value' + (a.key ? '&key=eq.' + encodeURIComponent(a.key) : '') + '&limit=200')
         .then(rows => ({ ok: true, memories: rows }));
@@ -2587,6 +2729,90 @@ function runTool(name, a) {
       if (a.to) q += '&starts_at=lte.' + encodeURIComponent(a.to);
       if (a.query) q += '&title=ilike.*' + encodeURIComponent(a.query) + '*';
       return SB.rest(q).then(rows => ({ ok: true, count: rows ? rows.length : 0, events: rows }));
+    }
+
+    case 'run_code':
+      return runLab(a);
+
+    case 'show_feed':
+      return showFeed(a);
+
+    case 'web_search':
+      return webSearch(a.query, a.limit);
+
+    case 'read_page':
+      return readPage(a.url, a.max_chars);
+
+    case 'profile_room':
+      return profileRoom(a);
+
+    case 'read_text':
+      return readText(a);
+
+    case 'remember_face': {
+      if (!VIS.on || !VIS.ready) {
+        return camStart().then(r => (r && r.error) ? r
+          : new Promise(res => setTimeout(() => res(enrolFace(a.name, VIS.lastFaceLandmarks)), 1500)));
+      }
+      return enrolFace(a.name, VIS.lastFaceLandmarks);
+    }
+
+    case 'forget_face':
+      return forgetPerson(a.name);
+
+    case 'show_globe':
+      return openGlobe(a);
+
+    case 'show_terrain':
+      return openTerrain(a);
+
+    case 'performance_report':
+      return perfReport();
+
+    case 'satellites_overhead': {
+      const lat = a.lat != null ? a.lat : (app.pos && app.pos.lat);
+      const lon = a.lon != null ? a.lon : (app.pos && app.pos.lon);
+      if (lat == null || lon == null) {
+        return { error: 'I do not know where you are yet. Ask me to locate you first, or give me a latitude and longitude.' };
+      }
+      return loadCatalog(a.group || 'visual', 220).then(cat => {
+        const seen = overhead(cat, lat, lon, 0, a.min_elevation);
+        const deep = cat.filter(c => c.deepSpace).length;
+        return {
+          from: { lat: +Number(lat).toFixed(3), lon: +Number(lon).toFixed(3) },
+          computed: 'SGP4 from Celestrak element sets, at ' + new Date().toISOString(),
+          catalogue: (a.group || 'visual') + ' · ' + cat.length + ' objects',
+          above_horizon: seen.length,
+          satellites: seen.slice(0, 12),
+          excluded_deep_space: deep ? deep + ' objects are in orbits too high for this propagator and were skipped' : undefined,
+          note: seen.length ? undefined : 'Nothing above ' + (a.min_elevation == null ? 10 : a.min_elevation) +
+            '° right now. That is normal — most of the sky is empty most of the time.'
+        };
+      }).catch(e => ({ error: String(e.message || e) }));
+    }
+
+    case 'next_pass': {
+      const lat = a.lat != null ? a.lat : (app.pos && app.pos.lat);
+      const lon = a.lon != null ? a.lon : (app.pos && app.pos.lon);
+      if (lat == null || lon == null) return { error: 'I need to know where you are first.' };
+      const want = String(a.satellite || '').toUpperCase();
+      return loadCatalog('stations', 220)
+        .then(cat => cat.find(c => c.name.toUpperCase().includes(want)) ? cat : loadCatalog('visual', 220))
+        .then(cat => {
+          const sat = cat.find(c => c.name.toUpperCase().includes(want));
+          if (!sat) return { error: 'No object matching "' + a.satellite + '" in the catalogues I have loaded.' };
+          const pass = nextPass(sat, lat, lon, 0, a.min_elevation, a.hours);
+          if (!pass) {
+            return { satellite: sat.name, none: 'No pass above ' + (a.min_elevation == null ? 10 : a.min_elevation) +
+              '° in the next ' + (a.hours || 24) + ' hours from there.' };
+          }
+          pass.element_age_days = +((jdFromDate(new Date()) - sat.epochJD)).toFixed(1);
+          if (pass.element_age_days > 7) {
+            pass.accuracy_warning = 'These element sets are ' + pass.element_age_days +
+              ' days old. Predictions drift by roughly a second of timing per day of element age.';
+          }
+          return pass;
+        }).catch(e => ({ error: String(e.message || e) }));
     }
 
     case 'set_temper':
@@ -2821,11 +3047,25 @@ async function converse(userText) {
   autoOrb('thinking');
   setVoiceUI('thinking');
 
-  const sys = buildSystem() + '\n\nLIVE DECK TELEMETRY (this turn):\n' + JSON.stringify(telemetry());
+  agentReset();
+  let sys = buildSystem() + '\n\nLIVE DECK TELEMETRY (this turn):\n' + JSON.stringify(telemetry());
+
+  // Anything already known that bears on what was just said, put in front of
+  // him without being asked for. This is the difference between a system that
+  // stores facts and one that remembers them.
+  try {
+    const mem = await relevantMemory(userText, 4);
+    if (mem.length) {
+      sys += '\n\nWHAT YOU ALREADY KNOW THAT BEARS ON THIS:\n' + JSON.stringify(mem) +
+             '\nUse it naturally if it helps. Do not announce that you looked it up.';
+      plog('◆ RECALLED', mem.map(m => m.key + ' → ' + m.value).join('\n'), 'result');
+    }
+  } catch (e) { /* memory is a convenience, never a blocker */ }
+
   let spoken = '';
 
   try {
-    for (let hop = 0; hop < 5; hop++) {
+    for (let hop = 0; hop < 8; hop++) {
       let row = null, started = false;
       const onText = (chunk) => {
         if (!started) {
@@ -2845,25 +3085,36 @@ async function converse(userText) {
 
       if (res.tools.length) {
         history.push({ role: 'assistant', text: res.text, tools: res.tools });
-        for (const t of res.tools) {
+        AGENT.hops++;
+
+        const together = canParallel(res.tools);
+        res.tools.forEach(t => {
           const arg = JSON.stringify(t.input || {});
-          printRow('  ⟐ ' + t.name + (arg !== '{}' ? ' · ' + arg.slice(0, 90) : ''), 'rgba(160,107,255,.75)');
-          plog('⟐ TOOL · ' + t.name, JSON.stringify(t.input || {}, null, 2), 'tool');
-          let out;
-          try {
-            out = await runTool(t.name, t.input);
-          } catch (e) {
-            const msg = String((e && e.message) || e);
-            out = { error: msg };
-            printRow('  ⚠ ' + t.name + ' — ' + msg, AM);
-            plog('✕ TOOL FAULT · ' + t.name, msg, 'error');
-            ovlFail(msg);
+          printRow('  ⟐ ' + t.name + (arg !== '{}' ? ' · ' + arg.slice(0, 90) : '') +
+                   (together ? '  ⇉' : ''), 'rgba(160,107,255,.75)');
+          plog('⟐ TOOL · ' + t.name + (together ? '  (concurrent)' : ''),
+               JSON.stringify(t.input || {}, null, 2), 'tool');
+        });
+
+        // Independent reads go at once; anything that changes state goes in
+        // the order it was asked for.
+        const outs = await runBatch(res.tools, (t, out) => {
+          if (out && out.error) {
+            printRow('  ⚠ ' + t.name + ' — ' + out.error, AM);
+            plog('✕ TOOL FAULT · ' + t.name, String(out.error), 'error');
+            if (out.what_to_do_next) printRow('    ↳ ' + out.what_to_do_next, 'rgba(150,215,235,.6)');
+            ovlFail(out.error);
           }
           const outStr = JSON.stringify(out, null, 2);
           plog('◂ RESULT · ' + t.name, outStr.length > 4000 ? outStr.slice(0, 4000) + '\n… truncated' : outStr,
                out && out.error ? 'error' : 'result');
-          history.push({ role: 'tool', id: t.id, name: t.name, output: JSON.stringify(out) });
-        }
+        });
+
+        // Results are pushed strictly in call order regardless of the order
+        // they finished in — the API requires each result behind its own call.
+        res.tools.forEach((t, i) => {
+          history.push({ role: 'tool', id: t.id, name: t.name, output: JSON.stringify(outs[i]) });
+        });
         // every tool_result for this block is written — now the frame can land
         if (app.pendingShot) {
           const shot = app.pendingShot; app.pendingShot = null;
@@ -3043,7 +3294,9 @@ async function elSpeak(text) {
   autoOrb('speaking');
   app.speaking = true;
   app.lastSpoken = String(text || '');
-  deafen(1200);
+  // the analyser is live, so the face is driven by the waveform itself
+  faceSpeakStart(String(text || ''), !!EL.restore);
+  deafen(BARGE.on ? 420 : 1200);
   await new Promise((resolve) => {
     audio.onended = resolve;
     audio.onerror = resolve;
@@ -3054,6 +3307,7 @@ async function elSpeak(text) {
   if (EL.url) { URL.revokeObjectURL(EL.url); EL.url = null; }
   EL.busy = false;
   app.speaking = false;
+  faceSpeakEnd();
   // A short tail: the last syllable is still in the air, and through speakers
   // it lands in the microphone about a quarter of a second later.
   deafen(600);
@@ -3067,6 +3321,7 @@ function stopSpeech() {
   try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { }
   elStop();
   app.speaking = false;
+  if (typeof faceSpeakEnd === 'function') faceSpeakEnd();
 }
 function speak(text) {
   if (!speaks() || !text) {
@@ -3108,9 +3363,14 @@ function browserSpeak(text) {
     autoOrb('speaking');
     app.speaking = true;
     app.lastSpoken = clean;
-    deafen(1200);
+    // no waveform is available here, so the mouth runs off a viseme schedule
+    // synchronised to real word-boundary events
+    faceSpeakStart(clean, false);
+    u.onboundary = (ev) => { if (ev.name === 'word' || ev.charIndex != null) faceWordBoundary(ev.charIndex || 0); };
+    deafen(BARGE.on ? 420 : 1200);
     u.onend = u.onerror = () => {
       app.speaking = false;
+      faceSpeakEnd();
       deafen(600);
       if (app.engine && app.engine.state === 'speaking') autoOrb('idle');
       if (app.mode === 'auto' && app.autoLoop) setTimeout(startVoice, 700);
@@ -3189,6 +3449,254 @@ async function selftest() {
 
   printRow('▸ SELF TEST COMPLETE — a ⟐ show_weather line above means tools work; ' +
     'no ⟐ line means he replied without calling one.', accentNow());
+}
+
+/* ═══════════════════════════════════════════════════ ADAPTIVE PERFORMANCE ══
+   Everything in this deck is optional except the frame rate.
+
+   The rule is simple and absolute: work is only ever added when there is
+   measured headroom for it, and it is taken away again the moment there is
+   not. Nothing here asks the user to choose a quality level, because the user
+   cannot know what their machine will do with 132,000 particles, three neural
+   nets, a globe and a terrain mesh all at once. The deck finds out.
+
+   Three mechanisms, in order of how quickly they act:
+
+     1. A GPU probe at boot picks a starting tier, so a weak machine never has
+        to survive even one bad second to be recognised as weak.
+     2. A rolling frame-time budget moves between tiers within about a second.
+     3. Per-subsystem cadences (the neural nets, the feeds, the globe) are
+        handed a slice of the remaining budget and asked to fit inside it.
+
+   The reason this is a governor and not a settings menu: a settings menu is a
+   guess made once, and this is a measurement made continuously.            */
+
+const PERF = {
+  tier: 3,                  // 0 minimal · 1 low · 2 medium · 3 high · 4 ultra
+  tierName: 'HIGH',
+  auto: true,
+  gpu: '',                  // what the driver calls itself
+  score: 0,                 // 0-100 from the boot probe
+  fps: 60,
+  frameMs: 16.7,
+  budgetMs: 16.7,           // one frame at 60Hz
+  spentMs: 0,               // measured cost of optional work this frame
+  samples: [],
+  lastShift: 0,
+  shifts: 0,
+  locked: null,             // a tier the user pinned by hand
+  reasons: [],
+  // measured cost of each optional subsystem, exponentially smoothed
+  cost: {}
+};
+
+/* Tier definitions. Each is a complete description of what the deck is allowed
+   to do at that level — no scattered magic numbers anywhere else. */
+const TIERS = [
+  { name: 'MINIMAL', particles: 0.14, bloom: 0.45, dust: false, post: false,
+    handHz: 20, faceHz: 12, objectHz: 2,  globeSeg: 24, terrainSeg: 48,  shadows: false, trails: false },
+  { name: 'LOW',     particles: 0.28, bloom: 0.65, dust: false, post: true,
+    handHz: 24, faceHz: 15, objectHz: 3,  globeSeg: 32, terrainSeg: 64,  shadows: false, trails: false },
+  { name: 'MEDIUM',  particles: 0.50, bloom: 0.85, dust: true,  post: true,
+    handHz: 30, faceHz: 20, objectHz: 4,  globeSeg: 48, terrainSeg: 96,  shadows: false, trails: true },
+  { name: 'HIGH',    particles: 0.78, bloom: 1.00, dust: true,  post: true,
+    handHz: 40, faceHz: 26, objectHz: 6,  globeSeg: 64, terrainSeg: 160, shadows: true,  trails: true },
+  { name: 'ULTRA',   particles: 1.00, bloom: 1.12, dust: true,  post: true,
+    handHz: 60, faceHz: 30, objectHz: 8,  globeSeg: 96, terrainSeg: 256, shadows: true,  trails: true }
+];
+
+function tier() { return TIERS[PERF.tier] || TIERS[3]; }
+
+/* ─────────────────────────────────────────────────────────── the boot probe ──
+   Ask the GPU what it is before asking it to do anything. WEBGL_debug_renderer_info
+   is not available everywhere and is deliberately masked in some browsers, so
+   this is a hint and never a verdict — the frame-time governor overrules it
+   within a second either way. */
+function probeGPU() {
+  let renderer = '', vendor = '', score = 50;
+  const reasons = [];
+  try {
+    const c = document.createElement('canvas');
+    const gl = c.getContext('webgl2') || c.getContext('webgl');
+    if (!gl) {
+      PERF.gpu = 'no webgl';
+      PERF.score = 0;
+      PERF.reasons = ['WebGL unavailable — the particle field cannot run at all'];
+      return 0;
+    }
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    if (dbg) {
+      renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '');
+      vendor = String(gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) || '');
+    }
+    PERF.gpu = (renderer || vendor || 'masked').slice(0, 90);
+
+    const r = (renderer + ' ' + vendor).toLowerCase();
+    // Software rasterisers announce themselves, and they cannot carry this.
+    if (/swiftshader|llvmpipe|software|basic render|microsoft basic/.test(r)) {
+      score = 5; reasons.push('software rendering — no GPU acceleration');
+    }
+    else if (/apple m[1-9]|apple gpu/.test(r))            { score = 88; reasons.push('Apple silicon GPU'); }
+    else if (/rtx\s*[45]0[6-9]|rtx\s*[45]0[89]0/.test(r)) { score = 99; reasons.push('high-end discrete GPU'); }
+    else if (/rtx|radeon rx|geforce gtx 1[6-9]/.test(r))  { score = 85; reasons.push('discrete GPU'); }
+    else if (/iris xe|iris plus|radeon vega|adreno 7/.test(r)) { score = 55; reasons.push('modern integrated GPU'); }
+    else if (/intel|uhd graphics|hd graphics|mali|adreno/.test(r)) { score = 35; reasons.push('integrated GPU'); }
+    else if (renderer) { score = 60; reasons.push('unrecognised GPU, assuming mid-range'); }
+    else { score = 55; reasons.push('GPU identity masked by the browser'); }
+
+    // A machine with very few cores will struggle with the neural nets even if
+    // the GPU is fine, and the nets are what actually stutter.
+    const cores = navigator.hardwareConcurrency || 4;
+    if (cores <= 2) { score -= 22; reasons.push(cores + ' CPU cores'); }
+    else if (cores <= 4) { score -= 10; reasons.push(cores + ' CPU cores'); }
+
+    // deviceMemory is Chromium-only and coarse, but 2GB is worth knowing about
+    const mem = navigator.deviceMemory;
+    if (mem && mem <= 2) { score -= 18; reasons.push(mem + 'GB memory'); }
+
+    // A very high pixel count costs the same everywhere
+    const px = (window.innerWidth || 1280) * (window.innerHeight || 800) *
+               Math.min(2, window.devicePixelRatio || 1);
+    if (px > 4200000) { score -= 12; reasons.push('large or high-DPI display'); }
+
+    try { const lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); } catch (e) { }
+  } catch (e) {
+    reasons.push('probe failed: ' + (e && e.message));
+  }
+  PERF.score = Math.max(0, Math.min(100, score));
+  PERF.reasons = reasons;
+  return PERF.score;
+}
+
+function tierFromScore(s) {
+  return s >= 90 ? 4 : s >= 70 ? 3 : s >= 45 ? 2 : s >= 20 ? 1 : 0;
+}
+
+function setTier(n, why) {
+  const t = Math.max(0, Math.min(TIERS.length - 1, n | 0));
+  if (t === PERF.tier) return false;
+  const from = PERF.tierName;
+  PERF.tier = t;
+  PERF.tierName = TIERS[t].name;
+  PERF.lastShift = performance.now();
+  PERF.shifts++;
+  applyTier(why || '');
+  if (typeof plog === 'function') {
+    plog('◆ PERFORMANCE', from + ' → ' + PERF.tierName + (why ? '  (' + why + ')' : '') +
+         '\nfps ' + PERF.fps.toFixed(0) + ' · frame ' + PERF.frameMs.toFixed(1) + 'ms', 'result');
+  }
+  return true;
+}
+
+/** Push the current tier out to everything that cares. */
+function applyTier(why) {
+  const T = tier();
+  const eng = app.engine;
+  if (eng && eng.setQuality) { try { eng.setQuality(T.particles); } catch (e) { } }
+  if (eng && eng.setBloom)   { try { eng.setBloom(T.bloom); } catch (e) { } }
+  if (eng && eng.setDust)    { try { eng.setDust(T.dust); } catch (e) { } }
+  if (typeof VIS === 'object' && VIS) {
+    VIS.handEvery   = 1000 / T.handHz;
+    VIS.faceEvery   = 1000 / T.faceHz;
+    VIS.objectEvery = 1000 / T.objectHz;
+  }
+  if (typeof GLOBE === 'object' && GLOBE && GLOBE.onTier) { try { GLOBE.onTier(T); } catch (e) { } }
+  app.perfTier = PERF.tierName;
+  const chip = typeof $ === 'function' && $('perfTier');
+  if (chip) chip.textContent = PERF.tierName;
+}
+
+/* ──────────────────────────────────────────────────────── the frame governor ──
+   Called once per frame with the real elapsed time. It works on a median of the
+   last 40 frames rather than a mean, because a mean is dragged around by the
+   single long frame that a garbage collection causes and the median is not. */
+function perfFrame(dtMs) {
+  if (!(dtMs > 0) || dtMs > 500) return;      // a backgrounded tab is not a slow one
+  const S = PERF.samples;
+  S.push(dtMs);
+  if (S.length > 40) S.shift();
+  if (S.length < 12) return;
+
+  const sorted = S.slice().sort((a, b) => a - b);
+  const med = sorted[sorted.length >> 1];
+  const p90 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9))];
+  PERF.frameMs = med;
+  PERF.fps = 1000 / med;
+
+  if (!PERF.auto || PERF.locked != null) return;
+  const now = performance.now();
+  // Do not thrash. A tier change is a visible event; earn it.
+  if (now - PERF.lastShift < 1400) return;
+
+  // Down fast, up slow. Dropping a tier is cheap and invisible; raising one
+  // that the machine cannot hold produces exactly the stutter we are avoiding.
+  if (med > 23 || p90 > 34) {
+    if (setTier(PERF.tier - 1, 'frame time ' + med.toFixed(1) + 'ms')) PERF.samples.length = 0;
+  } else if (med < 13.5 && p90 < 18 && now - PERF.lastShift > 5000) {
+    if (setTier(PERF.tier + 1, 'headroom at ' + med.toFixed(1) + 'ms')) PERF.samples.length = 0;
+  }
+}
+
+/* ───────────────────────────────────────────────── per-subsystem budgeting ──
+   Optional work declares what it costs. Anything that has grown more expensive
+   than the slice it was given gets skipped this frame rather than being allowed
+   to push the frame over budget. This is what lets the globe, the terrain and
+   the nets coexist: they are not competing, they are each capped.          */
+function afford(name, sliceMs) {
+  if (!PERF.auto) return true;
+  const c = PERF.cost[name];
+  if (c == null) return true;                        // never run — let it try once
+  if (PERF.spentMs + c > PERF.budgetMs * 0.72) return false;
+  if (sliceMs != null && c > sliceMs) return false;
+  return true;
+}
+
+/** Wrap a piece of optional work so its real cost is learned and charged. */
+function meter(name, fn) {
+  const t0 = performance.now();
+  let r;
+  try { r = fn(); } finally {
+    const ms = performance.now() - t0;
+    const prev = PERF.cost[name];
+    PERF.cost[name] = prev == null ? ms : prev * 0.85 + ms * 0.15;
+    PERF.spentMs += ms;
+  }
+  return r;
+}
+
+function perfBeginFrame() { PERF.spentMs = 0; }
+
+function perfReport() {
+  const T = tier();
+  return {
+    tier: PERF.tierName,
+    automatic: PERF.auto && PERF.locked == null,
+    fps: Math.round(PERF.fps),
+    frame_ms: +PERF.frameMs.toFixed(2),
+    gpu: PERF.gpu || 'unknown',
+    boot_score: PERF.score,
+    boot_reasons: PERF.reasons,
+    tier_changes_this_session: PERF.shifts,
+    particles: Math.round((app.engine && app.engine.count ? app.engine.count : 132000) * T.particles),
+    tracker_rates_hz: { hands: T.handHz, face: T.faceHz, objects: T.objectHz },
+    subsystem_cost_ms: Object.keys(PERF.cost).reduce((o, k) => (o[k] = +PERF.cost[k].toFixed(2), o), {})
+  };
+}
+
+function perfInit() {
+  probeGPU();
+  const t = tierFromScore(PERF.score);
+  PERF.tier = t; PERF.tierName = TIERS[t].name;
+  applyTier('boot probe');
+  // Boot is slow on every machine — shaders compile, models download, the first
+  // frames are always terrible. Judging the hardware on those frames would drop
+  // a capable machine to MINIMAL before it had drawn anything. Hold off.
+  PERF.lastShift = performance.now() + 1600;
+  if (typeof plog === 'function') {
+    plog('◆ PERFORMANCE', 'starting at ' + PERF.tierName + ' · score ' + PERF.score +
+         '\n' + (PERF.gpu || 'unknown GPU') +
+         (PERF.reasons.length ? '\n' + PERF.reasons.join('\n') : ''), 'result');
+  }
 }
 
 /* ================================================================ FORENSICS ==
@@ -4409,6 +4917,2607 @@ function auditExport() {
   toast('AUDIT', 'Report written', accentNow());
 }
 
+/* ═══════════════════════════════════════════════════ THINKING IN STEPS ═════
+   A model with tools and a five-hop loop can already do a lot. What it cannot
+   do, and what this adds:
+
+     1. RUN INDEPENDENT WORK AT ONCE. If he asks for the weather in three cities,
+        those three calls have nothing to say to each other and there is no
+        reason to wait for each in turn. Calls that read are run together; calls
+        that change something are run in order, because order is the whole point
+        of them.
+
+     2. RECOVER FROM A FAILED STEP. A tool that errors currently returns its
+        error and the model shrugs. Here a failure is classified, and the ones
+        with an obvious remedy — camera not started, position not known, a name
+        that needs geocoding first — carry that remedy back with them so the
+        next hop is a fix rather than an apology.
+
+     3. NOT LOOP FOREVER. The same call with the same arguments failing the same
+        way three times is not persistence, it is a stuck machine. It gets cut
+        off with an explanation.
+
+     4. READ THE LIVE WEB. Search, then actually fetch and read the pages, and
+        report where each claim came from.
+
+   None of this makes him cleverer. It makes him less wasteful, harder to get
+   stuck, and honest about where a fact came from.                           */
+
+const AGENT = {
+  plan: null,
+  hops: 0,
+  parallel: 0,
+  repaired: 0,
+  attempts: new Map(),          // signature → count, for loop detection
+  lastRun: [],
+  researchCache: new Map()
+};
+
+/* Tools that only read. Anything not on this list is assumed to change
+   something, and is therefore never run concurrently with anything else. The
+   default is deliberately the cautious one: a tool added later without being
+   thought about here runs in sequence, which is slower and safe. */
+const READ_ONLY = new Set([
+  'read_telemetry', 'show_weather', 'show_map', 'show_threat_map', 'show_calendar',
+  'vault_tables', 'vault_query', 'recall', 'audit_target', 'identify_objects',
+  'locate_me', 'satellites_overhead', 'next_pass', 'performance_report',
+  'profile_room', 'read_text', 'web_search', 'read_page'
+]);
+
+/* Failures with a known remedy. The point is not to hide the error — it is
+   still reported — but to hand back the specific next move rather than leaving
+   the model to guess at one. */
+const REMEDIES = [
+  { when: /camera unavailable|not tracking|camera is not running|the camera is not delivering/i,
+    fix: 'The camera is not up. Call set_camera with on=true, wait a moment, then try this again.' },
+  { when: /do not know where you are|I need to know where you are/i,
+    fix: 'Call locate_me first, then repeat this call — it will have coordinates by then.' },
+  { when: /could not find "|I could not find/i,
+    fix: 'That place name did not resolve. Try a larger nearby place, a different spelling, or give latitude and longitude directly.' },
+  { when: /deep space|SDP4/i,
+    fix: 'That object is too high for this propagator. Say so plainly and offer a low-orbit object instead — the ISS is in the stations group.' },
+  { when: /second WebGL context was refused/i,
+    fix: 'Close the other 3D pane with close_workspace, then open this one.' },
+  { when: /OCR engine could not be downloaded|did not register itself/i,
+    fix: 'Local OCR is unavailable. Use look_at_me instead and read the still yourself.' },
+  { when: /object detector did not load/i,
+    fix: 'Use look_at_me instead — a still frame will still answer the question.' },
+  { when: /PGRST205|does not exist|relation .* does not exist/i,
+    fix: 'That table is not in the vault. Call vault_tables to see what is actually there before trying again.' },
+  { when: /nothing to audit|does not look like a link/i,
+    fix: 'Ask them to paste the link again — what arrived was not a URL, domain or address.' }
+];
+
+function remedyFor(msg) {
+  const m = String(msg || '');
+  for (const r of REMEDIES) if (r.when.test(m)) return r.fix;
+  return null;
+}
+
+/** A stable signature for a call, so repeats can be spotted. */
+function callSig(name, input) {
+  let a = '';
+  try { a = JSON.stringify(input || {}); } catch (e) { a = String(input); }
+  return name + '|' + a;
+}
+
+/** Should this batch of calls be run at once? */
+function canParallel(tools) {
+  if (tools.length < 2) return false;
+  if (!tools.every(t => READ_ONLY.has(t.name))) return false;
+  // two calls to the same tool with the same arguments are a mistake, not a
+  // batch — running them together would just make the mistake faster
+  const sigs = new Set(tools.map(t => callSig(t.name, t.input)));
+  return sigs.size === tools.length;
+}
+
+/** Run one tool, catching and classifying whatever comes back. */
+async function runOne(t) {
+  const sig = callSig(t.name, t.input);
+  const tried = (AGENT.attempts.get(sig) || 0) + 1;
+  AGENT.attempts.set(sig, tried);
+
+  if (tried > 3) {
+    return { error: 'This is the ' + tried + 'th identical attempt at ' + t.name +
+      ' and the previous ones failed the same way. Stop repeating it — tell the user what is not working, ' +
+      'and either try a different approach or ask them for what is missing.', give_up: true };
+  }
+
+  const t0 = performance.now();
+  let out;
+  try {
+    out = await runTool(t.name, t.input);
+  } catch (e) {
+    out = { error: String((e && e.message) || e) };
+  }
+  const ms = Math.round(performance.now() - t0);
+
+  if (out && out.error) {
+    const fix = remedyFor(out.error);
+    if (fix) { out.what_to_do_next = fix; AGENT.repaired++; }
+    if (tried > 1) out.attempt = tried;
+  } else {
+    AGENT.attempts.delete(sig);      // success clears the record
+  }
+  AGENT.lastRun.push({ name: t.name, ms, ok: !(out && out.error) });
+  return out;
+}
+
+/** Run a block of tool calls, together where that is safe. */
+async function runBatch(tools, onEach) {
+  const par = canParallel(tools);
+  if (par) {
+    AGENT.parallel++;
+    const outs = await Promise.all(tools.map(t => runOne(t)));
+    tools.forEach((t, i) => onEach && onEach(t, outs[i], true));
+    return outs;
+  }
+  const outs = [];
+  for (const t of tools) {
+    const o = await runOne(t);
+    outs.push(o);
+    onEach && onEach(t, o, false);
+  }
+  return outs;
+}
+
+function agentReset() {
+  AGENT.attempts.clear();
+  AGENT.lastRun = [];
+  AGENT.hops = 0;
+}
+
+/* ═══════════════════════════════════════════════════════ LIVE WEB SEARCH ═══
+   Search through DuckDuckGo's HTML endpoint via a CORS reader, then fetch the
+   pages that matter and read them. Every claim that comes out of this carries
+   the URL it came from, because a summary of the web with no sources is just
+   an assertion with extra steps.                                            */
+const READERS = [
+  { name: 'jina', url: (u) => 'https://r.jina.ai/' + u, text: true },
+  { name: 'allorigins', url: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u), text: false }
+];
+
+function stripHTML(html) {
+  let s = String(html || '');
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, ' ')
+       .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+       .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
+       .replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
+       .replace(/<!--[\s\S]*?-->/g, ' ');
+  s = s.replace(/<\/(p|div|li|h[1-6]|tr|br)>/gi, '\n')
+       .replace(/<br\s*\/?>/gi, '\n')
+       .replace(/<[^>]+>/g, ' ');
+  s = s.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+       .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+       .replace(/&#(\d+);/g, (m, d) => String.fromCharCode(+d));
+  return s.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+async function fetchReadable(url, timeoutMs) {
+  let lastErr = '';
+  for (const r of READERS) {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), timeoutMs || 12000);
+      const res = await fetch(r.url(url), { signal: ctl.signal });
+      clearTimeout(timer);
+      if (!res.ok) { lastErr = r.name + ' returned ' + res.status; continue; }
+      const body = await res.text();
+      if (!body || body.length < 40) { lastErr = r.name + ' returned an empty page'; continue; }
+      return { text: r.text ? body : stripHTML(body), via: r.name, bytes: body.length };
+    } catch (e) {
+      lastErr = r.name + ': ' + String((e && e.message) || e);
+    }
+  }
+  throw new Error('could not read ' + url + ' — ' + lastErr);
+}
+
+/** Search. DuckDuckGo's lite HTML endpoint has no key and no quota. */
+async function webSearch(q, limit) {
+  const query = String(q || '').trim();
+  if (!query) return { error: 'nothing to search for' };
+  const key = 'q:' + query;
+  const hit = AGENT.researchCache.get(key);
+  if (hit && Date.now() - hit.at < 300000) return hit.value;
+
+  const url = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query);
+  let page;
+  try { page = await fetchReadable(url, 14000); }
+  catch (e) {
+    return { error: 'the search could not be reached: ' + String(e.message || e),
+      note: 'This runs from the browser through a public reader, so an extension, a firewall or an offline machine will all look like this.' };
+  }
+
+  const results = [];
+  const re = /<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  const raw = page.via === 'jina' ? '' : page.text;
+  // the jina reader hands back markdown, so links come out as [title](url)
+  if (page.via === 'jina') {
+    const mre = /\[([^\]]{6,140})\]\((https?:\/\/[^)]+)\)/g;
+    let k;
+    while ((k = mre.exec(page.text)) !== null && results.length < (limit || 8)) {
+      const u = k[2];
+      if (/duckduckgo\.com|\/y\.js|adservice/i.test(u)) continue;
+      if (results.some(r => r.url === u)) continue;
+      results.push({ title: k[1].trim(), url: u });
+    }
+  } else {
+    while ((m = re.exec(raw)) !== null && results.length < (limit || 8)) {
+      let u = m[1];
+      const dd = /uddg=([^&]+)/.exec(u);
+      if (dd) u = decodeURIComponent(dd[1]);
+      results.push({ title: stripHTML(m[2]).slice(0, 160), url: u });
+    }
+  }
+
+  const value = results.length
+    ? { query, results, source: 'DuckDuckGo via ' + page.via,
+        note: 'These are search results, not facts. Call read_page on the ones that matter before saying anything as though it were true.' }
+    : { query, results: [], error: 'the search returned nothing readable',
+        note: 'The endpoint answered but nothing parsed as a result. Try different words, or read a specific page directly.' };
+  AGENT.researchCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+/** Fetch a page and hand back its readable text, with its source. */
+async function readPage(url, maxChars) {
+  const u = String(url || '').trim();
+  if (!/^https?:\/\//i.test(u)) return { error: 'give me a full URL, starting with http:// or https://' };
+  const key = 'p:' + u;
+  const hit = AGENT.researchCache.get(key);
+  if (hit && Date.now() - hit.at < 300000) return hit.value;
+
+  let page;
+  try { page = await fetchReadable(u, 15000); }
+  catch (e) { return { error: String(e.message || e) }; }
+
+  const cap = Math.min(maxChars || 6000, 14000);
+  const text = page.text.slice(0, cap);
+  const value = {
+    url: u, via: page.via,
+    characters: page.text.length,
+    truncated: page.text.length > cap,
+    text,
+    cite_as: u,
+    note: 'Read as plain text through a public reader. Attribute anything you take from this to the URL, ' +
+          'and say if the page looked like it had not fully loaded.'
+  };
+  AGENT.researchCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+/* ═══════════════════════════════════════════════════ MEMORY THAT PERSISTS ══
+   The vault already holds facts. What was missing was retrieval that is not an
+   exact key match, and anything being recalled without being asked for. This
+   scores stored facts against the current turn and quietly puts the best few
+   in front of him, the way remembering actually works.                       */
+const RECALL = { rows: [], at: 0, loaded: false };
+
+async function memoryRows() {
+  if (RECALL.loaded && Date.now() - RECALL.at < 120000) return RECALL.rows;
+  try {
+    const r = await runTool('recall', {});
+    RECALL.rows = (r && (r.rows || r.memories || r.items)) || [];
+    if (!Array.isArray(RECALL.rows)) RECALL.rows = [];
+  } catch (e) { RECALL.rows = []; }
+  RECALL.loaded = true; RECALL.at = Date.now();
+  return RECALL.rows;
+}
+
+const STOP = new Set(['the','a','an','and','or','but','is','are','was','were','be','been','to','of','in','on',
+  'for','with','at','by','from','it','this','that','my','your','me','you','i','do','does','did','can','could',
+  'would','should','what','when','where','who','how','why','please','jarvis','tell','show','get','about']);
+
+function tokens(s) {
+  return String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2 && !STOP.has(w));
+}
+
+/** The few stored facts most likely to matter to what was just said. */
+async function relevantMemory(text, limit) {
+  const rows = await memoryRows();
+  if (!rows.length) return [];
+  const want = tokens(text);
+  if (!want.length) return [];
+  const scored = rows.map(r => {
+    const hay = tokens((r.key || '') + ' ' + (r.value || r.fact || ''));
+    if (!hay.length) return { r, s: 0 };
+    const set = new Set(hay);
+    let hit = 0;
+    want.forEach(w => { if (set.has(w)) hit += 1; });
+    // a key match is worth more than a body match — it is what they named it
+    const keyHit = tokens(r.key || '').some(k => want.includes(k)) ? 0.5 : 0;
+    return { r, s: hit / want.length + keyHit };
+  });
+  return scored.filter(x => x.s > 0.15)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, limit || 4)
+    .map(x => ({ key: x.r.key, value: x.r.value || x.r.fact, relevance: +x.s.toFixed(2) }));
+}
+
+function memoryForget() { RECALL.loaded = false; RECALL.rows = []; }
+
+/* ══════════════════════════════════════════════════ A FACE THAT SPEAKS ═════
+   Four extra bones — jaw, mouth, two brows — hung off the skull, driven by the
+   actual sound of his voice rather than a loop.
+
+   Two sources, because there are two ways he can speak:
+
+     · ElevenLabs audio runs through an AnalyserNode already, so the real
+       waveform is available. Amplitude opens the jaw; the spectral centroid
+       decides whether the mouth is wide (/ee/) or round (/oo/). That is not a
+       full phoneme recogniser, but it is measured from his real voice, and it
+       lands on the right syllables because it *is* the syllables.
+
+     · Browser speech gives no audio access at all. What it does give is
+       onboundary events at word starts. So the text is converted to a viseme
+       schedule in advance and driven off those boundaries — estimated, but
+       synchronised to real word timing rather than guessed wholesale.
+
+   The distinction matters and is reported honestly in the telemetry: one is
+   measured, the other is modelled.                                          */
+
+const FACE_ANIM = {
+  on: true,
+  open: 0, openT: 0,        // jaw, and where it is heading
+  wide: 0, wideT: 0,        // mouth width: +1 spread, -1 rounded
+  brow: 0, browT: 0,        // brow raise
+  tension: 0,               // held expression from persona and mood
+  source: 'idle',           // 'audio' · 'schedule' · 'idle'
+  sched: null,              // viseme schedule for browser speech
+  schedAt: 0,               // wall clock — barge-in cares about real elapsed speech
+  wordT: 0,                 // seconds since the current word began, from dt
+  peakCool: 0,              // seconds until another gesture beat is allowed
+  gesture: 0, gestureT: 0,  // co-speech hand beat
+  energy: 0
+};
+
+/* Vowel shapes. Only the mouth pose matters here, not the consonant, because a
+   particle mouth cannot show a /t/ — but it very clearly shows the difference
+   between "ah" and "oo", and that is most of what reads as speech. */
+const VISEME = {
+  a: [0.95, 0.10], e: [0.55, 0.75], i: [0.35, 0.85], o: [0.70, -0.80], u: [0.40, -0.95],
+  m: [0.05, 0.05], f: [0.22, 0.35], s: [0.20, 0.60], t: [0.28, 0.25], l: [0.42, 0.30],
+  r: [0.38, -0.25], k: [0.34, 0.15], n: [0.24, 0.20], w: [0.30, -0.85], y: [0.32, 0.70],
+  ' ': [0.04, 0.0]
+};
+
+/** Turn a word into a sequence of mouth shapes with relative durations. */
+function visemesFor(word) {
+  const out = [];
+  const w = String(word).toLowerCase();
+  for (let i = 0; i < w.length; i++) {
+    const c = w[i];
+    if (!/[a-z]/.test(c)) continue;
+    // digraphs that are one sound
+    const two = w.slice(i, i + 2);
+    if (two === 'th' || two === 'sh' || two === 'ch' || two === 'ph') {
+      out.push(VISEME[two === 'ph' ? 'f' : 's']); i++; continue;
+    }
+    if (two === 'oo' || two === 'ou') { out.push(VISEME.u); i++; continue; }
+    if (two === 'ee' || two === 'ea') { out.push(VISEME.i); i++; continue; }
+    const v = VISEME[c];
+    if (v) out.push(v);
+    else out.push(VISEME.t);
+  }
+  return out.length ? out : [VISEME.a];
+}
+
+/** Build a schedule of shapes for a whole utterance, keyed by character index
+ *  so onboundary events can seek into it. */
+function buildVisemeSchedule(text) {
+  const words = [];
+  const re = /\S+/g; let m;
+  while ((m = re.exec(String(text))) !== null) {
+    words.push({ at: m.index, len: m[0].length, v: visemesFor(m[0]) });
+  }
+  return { words, idx: 0, text: String(text) };
+}
+
+/** Called from a speechSynthesis boundary event. */
+function faceWordBoundary(charIndex) {
+  const S = FACE_ANIM.sched;
+  if (!S) return;
+  let best = 0;
+  for (let i = 0; i < S.words.length; i++) if (S.words[i].at <= charIndex) best = i;
+  S.idx = best;
+  FACE_ANIM.wordT = 0;
+  FACE_ANIM.source = 'schedule';
+}
+
+function faceSpeakStart(text, hasAudio) {
+  if (!FACE_ANIM.on) return;
+  FACE_ANIM.sched = hasAudio ? null : buildVisemeSchedule(text);
+  FACE_ANIM.source = hasAudio ? 'audio' : 'schedule';
+  FACE_ANIM.wordT = 0;
+  FACE_ANIM.schedAt = performance.now();
+}
+
+function faceSpeakEnd() {
+  FACE_ANIM.sched = null;
+  FACE_ANIM.source = 'idle';
+  FACE_ANIM.openT = 0; FACE_ANIM.wideT = 0;
+}
+
+/* ───────────────────────────────────────────────────────── the per-frame step ─ */
+function stepFace(dt) {
+  const F = FACE_ANIM;
+  const eng = app.engine;
+  const speaking = !!app.speaking || (eng && eng.state === 'speaking');
+
+  if (!speaking) {
+    F.openT = 0;
+    F.wideT = 0;
+    F.source = 'idle';
+  } else if (F.source === 'audio' && eng && eng.audio) {
+    // ── measured from his real voice ──────────────────────────────────────
+    const a = eng.audio;
+    const lvl = Math.max(0, Math.min(1, (a.level || 0) * 2.4));
+    F.openT = Math.pow(lvl, 0.75) * 0.95;
+
+    // spectral centroid over the low 32 bins: high energy up top means a
+    // spread mouth, energy pooled low means a rounded one
+    const fft = a.fft || [];
+    let sum = 0, wsum = 0;
+    for (let i = 2; i < Math.min(32, fft.length); i++) { sum += fft[i]; wsum += fft[i] * i; }
+    const centroid = sum > 0.0001 ? (wsum / sum) / 32 : 0.4;
+    F.wideT = Math.max(-1, Math.min(1, (centroid - 0.34) * 4.2));
+    F.energy = lvl;
+  } else if (F.source === 'schedule' && F.sched) {
+    // ── modelled from the text, synchronised to word boundaries ───────────
+    // Driven by accumulated frame time, not the wall clock. Those are the same
+    // thing when frames are landing and very much not the same thing when the
+    // tab is throttled — and a mouth that leaps three syllables after a stall
+    // is worse than one that lags.
+    F.wordT += dt;
+    const S = F.sched;
+    const w = S.words[S.idx];
+    if (w) {
+      const per = 0.165;                    // an English syllable, near enough
+      const k = Math.min(w.v.length - 1, Math.floor(F.wordT / per));
+      const shape = w.v[k] || VISEME.a;
+      const frac = (F.wordT % per) / per;
+      // ease within the shape so it opens and closes rather than sitting open
+      const env = Math.sin(Math.PI * Math.min(1, frac * 1.15));
+      F.openT = shape[0] * (0.42 + 0.58 * env);
+      F.wideT = shape[1];
+      F.energy = F.openT;
+      // if the boundary events stop arriving, walk forward on our own
+      if (F.wordT > per * (w.v.length + 1) && S.idx < S.words.length - 1) {
+        S.idx++; F.wordT = 0;
+      }
+    }
+  }
+
+  // ── expression that is not speech ────────────────────────────────────────
+  // Persona and temper hold the brows. This is a deliberate, constant bias,
+  // not an attempt to read or perform an emotion.
+  const heavy = (app.temper && app.temper.weight === 'heavy') ? 1 : 0;
+  const serious = (app.temper && app.temper.tone === 'serious') ? 1 : 0;
+  F.tension += (heavy * 0.45 + serious * 0.30 - F.tension) * Math.min(1, dt * 2);
+  let browWant = -F.tension * 0.55;
+  if (eng && eng.state === 'thinking') browWant += 0.30;
+  if (eng && eng.state === 'alert') browWant += 0.75;
+  if (eng && eng.state === 'listening') browWant += 0.18;
+  // a raised brow on the loud syllables — emphasis, the way people actually talk
+  if (speaking && F.energy > 0.55) browWant += (F.energy - 0.55) * 0.9;
+  F.browT = Math.max(-1, Math.min(1, browWant));
+
+  // ── co-speech gesture ────────────────────────────────────────────────────
+  // Hands beat on stressed syllables. People do this constantly and stop
+  // noticing it; its absence is what makes a talking figure look inert.
+  F.peakCool = Math.max(0, F.peakCool - dt);
+  if (speaking && F.energy > 0.62 && F.peakCool <= 0) {
+    F.peakCool = 0.38;
+    F.gestureT = 0.55 + Math.random() * 0.45;
+  }
+  F.gestureT *= Math.max(0, 1 - dt * 2.6);
+  F.gesture += (F.gestureT - F.gesture) * Math.min(1, dt * 12);
+
+  // Smoothing. The jaw is light and fast, the brows are slow — matching the
+  // real masses stops the face looking like a puppet.
+  F.open += (F.openT - F.open) * Math.min(1, dt * 26);
+  F.wide += (F.wideT - F.wide) * Math.min(1, dt * 16);
+  F.brow += (F.browT - F.brow) * Math.min(1, dt * 5.5);
+}
+
+/* ─────────────────────────────────────────────── the four bones themselves ──
+   Built in the skull's own frame, so they follow the head wherever it looks,
+   leans or walks without any extra bookkeeping. */
+function faceBones(J, out) {
+  const h = J.head, t = J.headTop;
+  const ax = t[0] - h[0], ay = t[1] - h[1], az = t[2] - h[2];
+  const F = FACE_ANIM;
+  const open = F.open, wide = F.wide, brow = F.brow;
+
+  // skull frame: a is up, r is right, f is forward
+  const rx = 1, ry = 0, rz = 0;
+  const fx = 0, fy = 0, fz = 1;
+  const P = (u, r, f) => [h[0] + ax * u + rx * r + fx * f,
+                          h[1] + ay * u + ry * r + fy * f,
+                          h[2] + az * u + rz * r + fz * f];
+
+  // 18 · jaw — hinges below the ear and swings the chin down and back
+  const hinge = P(0.36, 0, 0.012);
+  const chin  = P(0.13 - open * 0.15, 0, 0.074 - open * 0.016);
+
+  // 19 · the mouth line — widens for spread vowels, purses for rounded ones,
+  // and rides down with the jaw
+  const mw = 0.030 + wide * 0.012 - Math.max(0, -wide) * 0.008 + open * 0.004;
+  const my = 0.245 - open * 0.075;
+  const ml = P(my, -mw, 0.088);
+  const mr = P(my,  mw, 0.088);
+
+  // 20 · 21 — brows, inner to outer, raising at the inner end first
+  const bl0 = P(0.545 + brow * 0.055, -0.018, 0.076);
+  const bl1 = P(0.530 + brow * 0.030, -0.064, 0.062);
+  const br0 = P(0.545 + brow * 0.055,  0.018, 0.076);
+  const br1 = P(0.530 + brow * 0.030,  0.064, 0.062);
+
+  const put = (i, A, B, r1, r2) => {
+    const o = i * 8;
+    out[o] = A[0]; out[o + 1] = A[1]; out[o + 2] = A[2];
+    out[o + 3] = B[0]; out[o + 4] = B[1]; out[o + 5] = B[2];
+    out[o + 6] = r1; out[o + 7] = r2;
+  };
+  put(18, hinge, chin, 0.030, 0.020);
+  put(19, ml, mr, 0.011 + open * 0.010, 0.011 + open * 0.010);
+  put(20, bl0, bl1, 0.011, 0.008);
+  put(21, br0, br1, 0.011, 0.008);
+}
+
+/* ══════════════════════════════════════════════════════════ BARGE-IN ═══════
+   Talking over someone who will not stop talking is the single most infuriating
+   thing an assistant does. Three ways to cut him off, in descending order of
+   how certain they are:
+
+     1. A key, a click or a deliberate gesture. Unambiguous, always honoured.
+     2. Recognised speech that is demonstrably not his own echo.
+     3. Nothing else. In particular, a loud room does not stop him — level
+        alone is not evidence that anyone said anything.                     */
+const BARGE = { on: true, at: 0, count: 0, lastReason: '' };
+
+/** Overlap between what was heard and what he is currently saying. High
+ *  overlap means the microphone is hearing the speakers, not the user. */
+function echoOverlap(heard) {
+  const said = String(app.lastSpoken || '').toLowerCase();
+  if (!said) return 0;
+  const H = String(heard || '').toLowerCase().split(/\W+/).filter(w => w.length > 2);
+  if (!H.length) return 0;
+  let hit = 0;
+  for (const w of H) if (said.includes(w)) hit++;
+  return hit / H.length;
+}
+
+function bargeIn(reason) {
+  if (!app.speaking && !(window.speechSynthesis && window.speechSynthesis.speaking)) return false;
+  stopSpeech();
+  faceSpeakEnd();
+  BARGE.at = performance.now();
+  BARGE.count++;
+  BARGE.lastReason = reason || 'interrupted';
+  if (typeof printRow === 'function') printRow('  ⏹ ' + BARGE.lastReason, 'rgba(150,215,235,.55)');
+  if (app.engine && app.engine.state === 'speaking') autoOrb('idle');
+  return true;
+}
+
+/** Decide whether recognised speech during his own output is a real interruption. */
+function bargeCheck(heard) {
+  if (!BARGE.on || !app.speaking) return false;
+  const words = String(heard || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length < 2) return false;                   // one word is a cough
+  if (performance.now() - FACE_ANIM.schedAt < 500) return false;  // his first breath
+  const ov = echoOverlap(heard);
+  if (ov > 0.45) return false;                          // that is him, in the microphone
+  return bargeIn('you cut in — ' + words.slice(0, 6).join(' '));
+}
+
+/* ══════════════════════════════════════════════════ READING THE ROOM ═══════
+   Everything here runs on this machine. No frame is uploaded by any of it.
+
+   What it does:
+     · estimates how far away you and the things you hold are
+     · works out where you are looking, in three dimensions
+     · reads text you hold up to the camera
+     · remembers people you deliberately introduce him to
+     · keeps objects' identities as they move about
+     · assembles all of that into a description of the room
+
+   What it deliberately does not do, and will not be persuaded to:
+     · guess anyone's age, gender, ethnicity, health or mood from their face.
+       Those systems are unreliable in ways that fall hardest on the people
+       they misread, and a confident wrong answer about a person is worse than
+       no answer. Facial *movement* is reported — a brow raised, a mouth open —
+       because that is observation. What it means is not inferred.
+     · recognise anyone who has not been introduced on purpose. There is no
+       database, no lookup, and no identification of strangers.              */
+
+/* ─────────────────────────────────────────────────────────────── DISTANCE ──
+   The pinhole camera relation: apparent size in pixels is real size times focal
+   length over distance. Rearranged, a known real-world size gives distance.
+   Interpupillary distance is the standard anchor because it varies less between
+   adults than almost any other external measurement — roughly 63mm, with about
+   ±4mm covering most people. That ±6% is the honest floor on the accuracy here,
+   and it is reported rather than hidden behind a confident number. */
+const DIST = {
+  ipdMm: 63,
+  focalPx: null,        // learned from the first good look, if we can
+  fovDeg: 60,           // typical webcam horizontal field of view
+  lastFace: null,
+  lastAt: 0
+};
+
+/** Focal length in pixels from an assumed field of view. */
+function focalFromFov(widthPx, fovDeg) {
+  return (widthPx / 2) / Math.tan((fovDeg || 60) * Math.PI / 360);
+}
+
+/** How far away is the face in this frame? Metres. */
+function faceDistance(landmarks, vw, vh) {
+  if (!landmarks || landmarks.length < 470) return null;
+  // MediaPipe face mesh: 468 is the right iris centre, 473 the left, when
+  // refineLandmarks is on. Fall back to the outer eye corners otherwise.
+  const a = landmarks[468] || landmarks[33];
+  const b = landmarks[473] || landmarks[263];
+  if (!a || !b) return null;
+  const px = Math.hypot((a.x - b.x) * vw, (a.y - b.y) * vh);
+  if (px < 2) return null;
+  const f = DIST.focalPx || focalFromFov(vw, DIST.fovDeg);
+  const metres = (DIST.ipdMm / 1000) * f / px;
+  if (!(metres > 0.1 && metres < 8)) return null;
+  return metres;
+}
+
+/** How far away is a detected object? Only meaningful for things whose real
+ *  size is roughly known, so anything else returns null rather than a guess. */
+const KNOWN_WIDTH_M = {
+  person: 0.45, laptop: 0.33, 'cell phone': 0.072, book: 0.15, cup: 0.085,
+  bottle: 0.07, mouse: 0.062, keyboard: 0.43, 'tv': 1.1, chair: 0.5,
+  monitor: 0.6, remote: 0.05, banana: 0.04, apple: 0.08, orange: 0.08,
+  scissors: 0.08, 'teddy bear': 0.25, clock: 0.25, vase: 0.12
+};
+function objectDistance(label, boxWidthPx, vw) {
+  const real = KNOWN_WIDTH_M[label];
+  if (!real || !(boxWidthPx > 2)) return null;
+  const f = DIST.focalPx || focalFromFov(vw, DIST.fovDeg);
+  const m = real * f / boxWidthPx;
+  return (m > 0.05 && m < 20) ? m : null;
+}
+
+/* ──────────────────────────────────────────────────────────────── 3D GAZE ──
+   The face landmarker returns a 4x4 transformation matrix for the head when
+   asked for it. The third column is the head's forward axis, which is where
+   the face is pointing. Eye direction within the head is a smaller correction
+   taken from the iris landmarks relative to the eye corners. */
+const GAZE = { yaw: 0, pitch: 0, roll: 0, x: 0.5, y: 0.5, valid: false, at: 0 };
+
+function readGaze(fres, landmarks) {
+  const m = fres && fres.facialTransformationMatrixes && fres.facialTransformationMatrixes[0];
+  if (m && m.data && m.data.length === 16) {
+    const d = m.data;
+    // column-major 4x4: the rotation part is the first three columns
+    const yaw = Math.atan2(-d[8], Math.hypot(d[9], d[10]));
+    const pitch = Math.atan2(d[9], d[10]);
+    const roll = Math.atan2(d[4], d[0]);
+    GAZE.yaw = yaw; GAZE.pitch = pitch; GAZE.roll = roll;
+    GAZE.valid = true;
+  } else if (landmarks && landmarks.length > 300) {
+    // fallback: the nose relative to the mid-point of the eyes
+    const l = landmarks[33], r = landmarks[263], n = landmarks[1];
+    if (l && r && n) {
+      const mx = (l.x + r.x) / 2, my = (l.y + r.y) / 2;
+      const span = Math.hypot(r.x - l.x, r.y - l.y) || 0.001;
+      GAZE.yaw = Math.atan2((n.x - mx) / span, 1.4);
+      GAZE.pitch = Math.atan2((n.y - my) / span, 1.4);
+      GAZE.roll = Math.atan2(r.y - l.y, r.x - l.x);
+      GAZE.valid = true;
+    }
+  } else { GAZE.valid = false; }
+
+  if (GAZE.valid) {
+    // project onto the screen. Mirrored, because the camera is.
+    GAZE.x = Math.max(0, Math.min(1, 0.5 - GAZE.yaw * 1.35));
+    GAZE.y = Math.max(0, Math.min(1, 0.5 + GAZE.pitch * 1.5));
+    GAZE.at = performance.now();
+  }
+  return GAZE;
+}
+
+/* ═══════════════════════════════════════════════ OBJECT IDENTITY OVER TIME ══
+   The detector has no memory: every frame is a fresh opinion, and a cup that
+   moves ten pixels is a brand new cup as far as it is concerned. Tracking gives
+   each thing a stable identity, which is what makes "the cup you moved" a
+   sentence he can say.
+
+   Greedy IoU association. Not Hungarian-optimal, but the failure mode of greedy
+   matching — two identical adjacent objects swapping identities — is one nobody
+   can see, and it costs a fraction of the time. */
+const TRACKS = new Map();       // id → { label, box, score, id, first, last, still, moved }
+let TRACK_SEQ = 1;
+
+function iou(a, b) {
+  const ax2 = a.originX + a.width, ay2 = a.originY + a.height;
+  const bx2 = b.originX + b.width, by2 = b.originY + b.height;
+  const ix = Math.max(0, Math.min(ax2, bx2) - Math.max(a.originX, b.originX));
+  const iy = Math.max(0, Math.min(ay2, by2) - Math.max(a.originY, b.originY));
+  const inter = ix * iy;
+  const uni = a.width * a.height + b.width * b.height - inter;
+  return uni > 0 ? inter / uni : 0;
+}
+
+function trackObjects(dets, now, vw) {
+  const seen = new Set();
+  (dets || []).forEach(d => {
+    const cat = d.categories && d.categories[0];
+    if (!cat) return;
+    const box = d.boundingBox;
+    if (!box) return;
+    const label = cat.categoryName;
+
+    // best surviving track of the same label
+    let best = null, bestI = 0.24;
+    TRACKS.forEach(t => {
+      if (t.label !== label || seen.has(t.id)) return;
+      const i = iou(t.box, box);
+      if (i > bestI) { bestI = i; best = t; }
+    });
+
+    if (best) {
+      const dx = (box.originX + box.width / 2) - (best.box.originX + best.box.width / 2);
+      const dy = (box.originY + box.height / 2) - (best.box.originY + best.box.height / 2);
+      const moved = Math.hypot(dx, dy);
+      best.moved = best.moved * 0.8 + moved * 0.2;
+      best.still = moved < 4 ? best.still + 1 : 0;
+      best.box = box;
+      best.score = best.score * 0.7 + (cat.score || 0) * 0.3;
+      best.last = now;
+      best.frames++;
+      best.distM = objectDistance(label, box.width, vw || 640);
+      seen.add(best.id);
+    } else {
+      const id = TRACK_SEQ++;
+      TRACKS.set(id, { id, label, box, score: cat.score || 0, first: now, last: now,
+        frames: 1, still: 0, moved: 0, distM: objectDistance(label, box.width, vw || 640) });
+      seen.add(id);
+    }
+  });
+  // forget what has genuinely gone, not what blinked
+  TRACKS.forEach((t, id) => { if (now - t.last > 2000) TRACKS.delete(id); });
+}
+
+function tracked(minFrames) {
+  const out = [];
+  TRACKS.forEach(t => {
+    if (t.frames < (minFrames || 3)) return;
+    out.push({
+      id: t.id, object: t.label,
+      confidence: +t.score.toFixed(2),
+      held_for_ms: Math.round(t.last - t.first),
+      distance_m: t.distM ? +t.distM.toFixed(2) : null,
+      state: t.still > 8 ? 'stationary' : t.moved > 8 ? 'moving' : 'settling',
+      where: whereInFrame(t.box)
+    });
+  });
+  out.sort((a, b) => b.confidence - a.confidence);
+  return out;
+}
+
+function whereInFrame(box) {
+  // mirrored: the camera image is flipped, so what the detector calls left is
+  // on the user's right
+  const cx = 1 - (box.originX + box.width / 2);
+  const cy = box.originY + box.height / 2;
+  const h = cx < 0.34 ? 'left' : cx > 0.66 ? 'right' : '';
+  const v = cy < 0.34 ? 'top' : cy > 0.66 ? 'bottom' : '';
+  // "middle right" is not how anyone says it. Drop the uninformative axis so
+  // he can say "on your right" and "top left" rather than reading out a grid.
+  if (!h && !v) return 'centre';
+  return [v, h].filter(Boolean).join(' ');
+}
+
+/* ══════════════════════════════════════════════════════ PEOPLE HE KNOWS ════
+   Enrolment only. He learns a face because you told him to, by name, and the
+   signature never leaves this machine.
+
+   The signature is geometric: a set of distances between stable landmarks, each
+   divided by the interpupillary distance so it is invariant to how far away the
+   person is and how big the frame is. This is a 1990s technique and it is
+   nowhere near the accuracy of a modern embedding — good enough to tell apart
+   the handful of people who use a room, not good enough to be trusted with
+   anything that matters. It says so when it answers.                        */
+const PEOPLE = { known: [], loaded: false, lastMatch: null };
+
+const SIG_PAIRS = [
+  [33, 263], [133, 362], [1, 152], [61, 291], [10, 152], [70, 300],
+  [234, 454], [93, 323], [58, 288], [172, 397], [136, 365], [4, 152],
+  [468, 473], [159, 145], [386, 374], [78, 308], [13, 14], [127, 356]
+];
+
+function faceSignature(lm) {
+  if (!lm || lm.length < 468) return null;
+  const a = lm[33], b = lm[263];
+  if (!a || !b) return null;
+  const scale = Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+  if (!(scale > 0.0001)) return null;
+  const v = [];
+  for (const [i, j] of SIG_PAIRS) {
+    const p = lm[i], q = lm[j];
+    if (!p || !q) { v.push(0); continue; }
+    v.push(Math.hypot(p.x - q.x, p.y - q.y, (p.z || 0) - (q.z || 0)) / scale);
+  }
+  return v;
+}
+
+function sigDistance(a, b) {
+  if (!a || !b || a.length !== b.length) return Infinity;
+  let s = 0;
+  for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; s += d * d; }
+  return Math.sqrt(s / a.length);
+}
+
+function loadPeople() {
+  if (PEOPLE.loaded) return;
+  try {
+    const raw = localStorage.getItem('jarvis.people');
+    PEOPLE.known = raw ? JSON.parse(raw) : [];
+  } catch (e) { PEOPLE.known = []; }
+  PEOPLE.loaded = true;
+}
+function savePeople() {
+  try { localStorage.setItem('jarvis.people', JSON.stringify(PEOPLE.known)); } catch (e) { }
+}
+
+/** Enrol whoever is in frame under a name. Several samples are averaged, so
+ *  one unlucky frame does not define somebody forever. */
+function enrolFace(name, lm) {
+  loadPeople();
+  const sig = faceSignature(lm);
+  if (!sig) return { error: 'I cannot see a face clearly enough to learn it. Come closer and face the camera.' };
+  const clean = String(name || '').trim().slice(0, 40);
+  if (!clean) return { error: 'I need a name to file it under.' };
+
+  let rec = PEOPLE.known.find(p => p.name.toLowerCase() === clean.toLowerCase());
+  if (rec) {
+    // running average — more looks, better signature
+    rec.sig = rec.sig.map((v, i) => (v * rec.n + sig[i]) / (rec.n + 1));
+    rec.n++;
+    rec.at = Date.now();
+  } else {
+    rec = { name: clean, sig, n: 1, at: Date.now() };
+    PEOPLE.known.push(rec);
+  }
+  savePeople();
+  return { ok: true, learned: clean, samples: rec.n,
+    note: rec.n < 3 ? 'That is ' + rec.n + ' look' + (rec.n === 1 ? '' : 's') +
+      '. Introduce them again from a slightly different angle and I will be steadier about it.' : undefined,
+    privacy: 'Stored on this machine only, as a set of ratios between facial landmarks. No image is kept and nothing is sent anywhere.' };
+}
+
+function identifyFace(lm) {
+  loadPeople();
+  if (!PEOPLE.known.length) return { known: false, reason: 'nobody has been introduced to me yet' };
+  const sig = faceSignature(lm);
+  if (!sig) return { known: false, reason: 'no face clearly in frame' };
+  let best = null, bestD = Infinity, second = Infinity;
+  for (const p of PEOPLE.known) {
+    const d = sigDistance(sig, p.sig);
+    if (d < bestD) { second = bestD; bestD = d; best = p; }
+    else if (d < second) second = d;
+  }
+  // A match is only meaningful if it is clearly better than the runner-up.
+  // Absolute distance alone will happily "recognise" a stranger as whoever is
+  // closest, which is the classic failure of this whole family of methods.
+  const margin = isFinite(second) ? second / (bestD || 1e-6) : 99;
+  const confident = bestD < 0.055 && margin > 1.35;
+  return {
+    known: confident, name: confident ? best.name : null,
+    distance: +bestD.toFixed(4), margin: +margin.toFixed(2),
+    closest: best ? best.name : null,
+    caveat: 'Geometric landmark matching, not a real face-recognition model. Treat it as a strong hint about ' +
+            'someone I have met, never as proof of identity.'
+  };
+}
+
+function forgetPerson(name) {
+  loadPeople();
+  const before = PEOPLE.known.length;
+  const n = String(name || '').toLowerCase();
+  PEOPLE.known = n === 'everyone' || n === 'all'
+    ? [] : PEOPLE.known.filter(p => p.name.toLowerCase() !== n);
+  savePeople();
+  return { ok: true, removed: before - PEOPLE.known.length, remaining: PEOPLE.known.map(p => p.name) };
+}
+
+/* ═══════════════════════════════════════════════════════════════════ OCR ═══
+   Tesseract, fetched on first use and then cached by the browser. It is a real
+   OCR engine running locally, which means holding up a page does not send that
+   page anywhere. It is also several megabytes and slow on a cold start, so it
+   is never loaded until it is actually wanted. */
+const OCR = { lib: null, worker: null, loading: null, error: '' };
+
+async function ocrReady() {
+  if (OCR.worker) return OCR.worker;
+  if (OCR.loading) return OCR.loading;
+  OCR.loading = (async () => {
+    if (!window.Tesseract) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js';
+        s.onload = res;
+        s.onerror = () => rej(new Error('the OCR engine could not be downloaded — check the network'));
+        document.head.appendChild(s);
+      });
+    }
+    if (!window.Tesseract) throw new Error('the OCR engine loaded but did not register itself');
+    const w = await window.Tesseract.createWorker('eng');
+    OCR.worker = w;
+    return w;
+  })();
+  try { return await OCR.loading; }
+  catch (e) { OCR.error = String(e.message || e); OCR.loading = null; throw e; }
+}
+
+/** Grab the current camera frame at full resolution and read it. */
+async function readText(a) {
+  const v = E.camVideo;
+  if (!VIS.on || !v || v.readyState < 2) {
+    const r = await camStart();
+    if (r && r.error) return r;
+    await new Promise(res => setTimeout(res, 1200));
+  }
+  const vid = E.camVideo;
+  if (!vid || vid.readyState < 2) return { error: 'the camera is not delivering frames' };
+
+  const c = document.createElement('canvas');
+  const w = vid.videoWidth || 640, h = vid.videoHeight || 480;
+  // upscale a little — small text on a webcam is right at the edge of legible
+  const k = w < 1000 ? 2 : 1;
+  c.width = w * k; c.height = h * k;
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(vid, 0, 0, c.width, c.height);
+  // grey and stretch the contrast — OCR is far better on clean black on white
+  const img = g.getImageData(0, 0, c.width, c.height);
+  const px = img.data;
+  let lo = 255, hi = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    const y = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0;
+    px[i] = px[i + 1] = px[i + 2] = y;
+    if (y < lo) lo = y; if (y > hi) hi = y;
+  }
+  const span = Math.max(1, hi - lo);
+  for (let i = 0; i < px.length; i += 4) {
+    const y = Math.max(0, Math.min(255, ((px[i] - lo) / span) * 255));
+    px[i] = px[i + 1] = px[i + 2] = y;
+  }
+  g.putImageData(img, 0, 0);
+
+  let worker;
+  try { worker = await ocrReady(); }
+  catch (e) {
+    return { error: String(e.message || e),
+      fallback: 'Use look_at_me instead — that sends one still to be read properly, which works when the local engine will not load.' };
+  }
+
+  const res = await worker.recognize(c);
+  const text = ((res && res.data && res.data.text) || '').replace(/\n{3,}/g, '\n\n').trim();
+  const conf = (res && res.data && res.data.confidence) || 0;
+  if (!text) {
+    return { ok: true, text: '', note: 'Nothing legible. Hold it flatter, fill more of the frame, and get more light on it.' };
+  }
+  return {
+    ok: true, text: text.slice(0, 4000),
+    confidence: Math.round(conf),
+    lines: text.split('\n').filter(Boolean).length,
+    method: 'Tesseract, running on this machine — the page was not sent anywhere.',
+    note: conf < 60 ? 'Low confidence. Read it back to them but say you are unsure of it.' : undefined
+  };
+}
+
+/* ══════════════════════════════════════════════════════ THE WHOLE ROOM ═════ */
+function lighting() {
+  const v = E.camVideo;
+  if (!v || v.readyState < 2) return null;
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 48;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  try { g.drawImage(v, 0, 0, 64, 48); } catch (e) { return null; }
+  let sum = 0, sumSq = 0, n = 0;
+  const px = g.getImageData(0, 0, 64, 48).data;
+  for (let i = 0; i < px.length; i += 4) {
+    const y = px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114;
+    sum += y; sumSq += y * y; n++;
+  }
+  const mean = sum / n;
+  const sd = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
+  return {
+    brightness: Math.round(mean),
+    contrast: Math.round(sd),
+    verdict: mean < 42 ? 'very dim — tracking will be unreliable'
+      : mean < 75 ? 'dim' : mean > 218 ? 'blown out, likely backlit' : 'good',
+    tracking_risk: (mean < 55 || mean > 215 || sd < 14)
+  };
+}
+
+/** Everything he can currently observe, assembled into one answer. */
+function profileRoom(a) {
+  const run = () => {
+    const v = E.camVideo;
+    if (!VIS.on || !VIS.ready) {
+      return { error: 'the camera is not running — I cannot see the room' };
+    }
+    const vw = (v && v.videoWidth) || 640, vh = (v && v.videoHeight) || 480;
+    const objs = tracked(2);
+    const people = objs.filter(o => o.object === 'person');
+    const things = objs.filter(o => o.object !== 'person');
+    const light = lighting();
+
+    const out = {
+      people: {
+        faces_in_frame: VIS.faces,
+        bodies_detected: people.length,
+        distance_m: DIST.lastFace ? +DIST.lastFace.toFixed(2) : null,
+        distance_accuracy: DIST.lastFace
+          ? '±' + Math.round(DIST.lastFace * 0.09 * 100) + 'cm — derived from an assumed 63mm eye separation, ' +
+            'which varies by a few millimetres between people'
+          : undefined,
+        looking: GAZE.valid ? {
+          yaw_deg: +(GAZE.yaw * 180 / Math.PI).toFixed(1),
+          pitch_deg: +(GAZE.pitch * 180 / Math.PI).toFixed(1),
+          roll_deg: +(GAZE.roll * 180 / Math.PI).toFixed(1),
+          towards: gazeWords()
+        } : null
+      },
+      objects: things,
+      object_count: things.length,
+      hands_visible: VIS.handCount,
+      lighting: light,
+      identity: null,
+      limits: 'I do not estimate anyone\'s age, gender or mood from their face — those readings are unreliable and ' +
+              'I will not present a guess about a person as an observation. Everything above is measured or counted.'
+    };
+
+    if (VIS.lastFaceLandmarks) {
+      const who = identifyFace(VIS.lastFaceLandmarks);
+      out.identity = who.known
+        ? { recognised: who.name, caveat: who.caveat }
+        : { recognised: null, reason: who.reason || 'nobody in frame matches anyone introduced to me' };
+    }
+    if (!things.length && !VIS.faces) {
+      out.note = 'The frame is empty as far as I can tell — nothing recognisable and nobody in it.';
+    }
+    return out;
+  };
+  if (VIS.on && VIS.ready) return run();
+  return camStart().then(r => (r && r.error) ? r : new Promise(res => setTimeout(() => res(run()), 1500)));
+}
+
+function gazeWords() {
+  if (!GAZE.valid) return 'unknown';
+  const y = GAZE.yaw * 180 / Math.PI, p = GAZE.pitch * 180 / Math.PI;
+  const h = y > 14 ? 'their left' : y < -14 ? 'their right' : 'straight ahead';
+  const v = p > 12 ? 'downward' : p < -12 ? 'upward' : '';
+  return v ? h + ' and ' + v : h;
+}
+
+/** Called each frame from the camera loop, cheaply. */
+function stepPercept(fres, face, now, vw, vh) {
+  if (face) {
+    VIS.lastFaceLandmarks = face;
+    const d = faceDistance(face, vw, vh);
+    if (d) { DIST.lastFace = DIST.lastFace ? DIST.lastFace * 0.7 + d * 0.3 : d; DIST.lastAt = now; }
+    readGaze(fres, face);
+  } else if (now - DIST.lastAt > 1500) {
+    DIST.lastFace = null;
+    GAZE.valid = false;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════ ORBITAL MECHANICS ══
+   A real SGP4 propagator, not a lookup table and not an API call.
+
+   Two-line element sets are not positions. They are mean elements for a very
+   specific analytical theory, and feeding them to ordinary Keplerian maths
+   gives answers that are wrong by hundreds of kilometres within a day. SGP4 is
+   that theory: secular drift from Earth's oblateness (J2, J3, J4), atmospheric
+   drag through the B* term, and the long- and short-period periodic terms that
+   put the satellite where it actually is rather than where a circle says.
+
+   This is the near-Earth branch. Objects with a period at or beyond 225 minutes
+   need SDP4's lunar-solar resonance terms, which are a different and much
+   larger algorithm; those are detected and declined rather than propagated
+   badly and reported confidently. A geostationary satellite returned by
+   near-Earth SGP4 would be wrong by thousands of kilometres and look perfectly
+   plausible, which is the worst kind of wrong.
+
+   Constants are WGS-72 throughout, because that is the model the TLEs were
+   fitted with. Using WGS-84 numbers here is a common and quietly damaging
+   mistake — the elements and the constants have to match.                   */
+
+const ORB = {
+  MU: 398600.8,                       // km³/s², WGS-72
+  RE: 6378.135,                       // km
+  J2: 0.001082616,
+  J3: -0.00000253881,
+  J4: -0.00000165597,
+  X2O3: 2 / 3,
+  DEEP_MIN: 225                       // minutes — beyond this, SDP4 territory
+};
+ORB.XKE = 60 / Math.sqrt(ORB.RE * ORB.RE * ORB.RE / ORB.MU);
+ORB.J3OJ2 = ORB.J3 / ORB.J2;
+ORB.VKMPS = ORB.RE * ORB.XKE / 60;
+
+const TWOPI = Math.PI * 2;
+const DEG = Math.PI / 180;
+const fmod2p = (x) => { const r = x % TWOPI; return r < 0 ? r + TWOPI : r; };
+
+/* ─────────────────────────────────────────────────────────────── TLE parsing ─
+   The format is fixed-column, from punch cards, and every field has a trap in
+   it: implied decimal points, exponents written without an 'e', and a two-digit
+   year that has to be windowed. Parsing it by splitting on whitespace works
+   until a field is blank, and then it silently shifts every value by one. */
+function parseTLE(l1, l2, name) {
+  const a = String(l1 || ''), b = String(l2 || '');
+  if (a.length < 68 || b.length < 68) throw new Error('TLE lines are too short to be a TLE');
+  if (a[0] !== '1' || b[0] !== '2') throw new Error('TLE lines are not in order (line 1 then line 2)');
+
+  const num = (s, from, to) => {
+    const t = s.slice(from, to).trim();
+    if (!t) return 0;
+    const v = parseFloat(t);
+    if (!isFinite(v)) throw new Error('unreadable TLE field "' + t + '"');
+    return v;
+  };
+  /* "28098-4" means 0.28098e-4. The leading decimal point is implied and the
+     exponent sign is jammed against the digits with no 'e'. */
+  const expField = (s, from, to) => {
+    const t = s.slice(from, to).trim();
+    if (!t || /^[+-]?0+$/.test(t)) return 0;
+    const m = /^([+-]?)(\d+)([+-]\d)$/.exec(t.replace(/\s/g, ''));
+    if (!m) return 0;
+    return parseFloat((m[1] === '-' ? '-' : '') + '0.' + m[2] + 'e' + m[3]);
+  };
+
+  const epochYr = num(a, 18, 20);
+  const epochDay = num(a, 20, 32);
+  const year = epochYr < 57 ? 2000 + epochYr : 1900 + epochYr;
+
+  const el = {
+    name: (name || '').trim() || ('OBJECT ' + a.slice(2, 7).trim()),
+    satnum: a.slice(2, 7).trim(),
+    classification: a[7] || 'U',
+    intldesg: a.slice(9, 17).trim(),
+    epochYear: year,
+    epochDay,
+    ndot: num(a, 33, 43),
+    nddot: expField(a, 44, 52),
+    bstar: expField(a, 53, 61),
+    inclo: num(b, 8, 16) * DEG,
+    nodeo: num(b, 17, 25) * DEG,
+    ecco: parseFloat('0.' + b.slice(26, 33).trim().replace(/\D/g, '')),
+    argpo: num(b, 34, 42) * DEG,
+    mo: num(b, 43, 51) * DEG,
+    no_kozai: num(b, 52, 63) * TWOPI / 1440,      // rev/day → rad/min
+    revnum: num(b, 63, 68)
+  };
+  if (!(el.no_kozai > 0)) throw new Error('TLE mean motion is zero or unreadable');
+  if (!(el.ecco >= 0 && el.ecco < 1)) throw new Error('TLE eccentricity out of range: ' + el.ecco);
+  el.periodMin = TWOPI / el.no_kozai;
+  el.epochJD = jdFromYearDay(year, epochDay);
+  el.deepSpace = el.periodMin >= ORB.DEEP_MIN;
+  return el;
+}
+
+/** Julian date from a year and a fractional day-of-year. */
+function jdFromYearDay(year, day) {
+  // JD at Jan 0.0 of the year, then add the fractional day
+  const y = year - 1, a = Math.floor(y / 100), b = 2 - a + Math.floor(a / 4);
+  const jd0 = Math.floor(365.25 * y) + Math.floor(30.6001 * 14) + 1720994.5 + b;
+  return jd0 + day;
+}
+function jdFromDate(d) { return d.getTime() / 86400000 + 2440587.5; }
+
+/* ══════════════════════════════════════════════════════════ SGP4 INIT ══════ */
+function sgp4init(el) {
+  const { J2, J3OJ2, J4, XKE, X2O3, RE } = ORB;
+  const s = Object.assign({}, el);
+
+  const cosio = Math.cos(el.inclo), sinio = Math.sin(el.inclo);
+  const cosio2 = cosio * cosio, cosio4 = cosio2 * cosio2;
+  const eccsq = el.ecco * el.ecco;
+  const omeosq = 1 - eccsq;
+  const rteosq = Math.sqrt(omeosq);
+
+  // ── un-Kozai the mean motion ────────────────────────────────────────────
+  // The mean motion in a TLE is the "Kozai" value, which already contains part
+  // of the J2 effect. Feeding it straight in double-counts the oblateness.
+  const ak = Math.pow(XKE / el.no_kozai, X2O3);
+  const d1 = 0.75 * J2 * (3 * cosio2 - 1) / (rteosq * omeosq);
+  let del = d1 / (ak * ak);
+  const adel = ak * (1 - del * del - del * (1 / 3 + 134 * del * del / 81));
+  del = d1 / (adel * adel);
+  const no = el.no_kozai / (1 + del);
+  const ao = Math.pow(XKE / no, X2O3);
+
+  const con41 = 3 * cosio2 - 1;
+  const con42 = 1 - 5 * cosio2;
+  const x1mth2 = 1 - cosio2;
+  const x7thm1 = 7 * cosio2 - 1;
+
+  const rp = ao * (1 - el.ecco);
+  if (rp < 1) throw new Error('the orbit in this element set intersects the Earth');
+  const perigeeKm = (rp - 1) * RE;
+
+  // ── the atmospheric drag shell ──────────────────────────────────────────
+  // Below 156 km the model's fixed atmosphere boundary has to be lowered, or
+  // the drag term blows up. This is part of the theory, not a fudge.
+  let sfour = 78 / RE + 1;
+  let qzms24 = Math.pow((120 - 78) / RE, 4);
+  if (perigeeKm < 156) {
+    sfour = perigeeKm - 78;
+    if (perigeeKm < 98) sfour = 20;
+    qzms24 = Math.pow((120 - sfour) / RE, 4);
+    sfour = sfour / RE + 1;
+  }
+
+  const pinvsq = 1 / (ao * ao * omeosq * omeosq);
+  const tsi = 1 / (ao - sfour);
+  const eta = ao * el.ecco * tsi;
+  const etasq = eta * eta;
+  const eeta = el.ecco * eta;
+  const psisq = Math.abs(1 - etasq);
+  const coef = qzms24 * Math.pow(tsi, 4);
+  const coef1 = coef / Math.pow(psisq, 3.5);
+
+  const cc2 = coef1 * no * (ao * (1 + 1.5 * etasq + eeta * (4 + etasq)) +
+    0.375 * J2 * tsi / psisq * con41 * (8 + 3 * etasq * (8 + etasq)));
+  const cc1 = el.bstar * cc2;
+  let cc3 = 0;
+  if (el.ecco > 1e-4) cc3 = -2 * coef * tsi * J3OJ2 * no * sinio / el.ecco;
+  const cc4 = 2 * no * coef1 * ao * omeosq * (eta * (2 + 0.5 * etasq) + el.ecco * (0.5 + 2 * etasq) -
+    J2 * tsi / (ao * psisq) * (-3 * con41 * (1 - 2 * eeta + etasq * (1.5 - 0.5 * eeta)) +
+      0.75 * x1mth2 * (2 * etasq - eeta * (1 + etasq)) * Math.cos(2 * el.argpo)));
+  const cc5 = 2 * coef1 * ao * omeosq * (1 + 2.75 * (etasq + eeta) + eeta * etasq);
+
+  const temp1 = 1.5 * J2 * pinvsq * no;
+  const temp2 = 0.5 * temp1 * J2 * pinvsq;
+  const temp3 = -0.46875 * J4 * pinvsq * pinvsq * no;
+
+  const mdot = no + 0.5 * temp1 * rteosq * con41 + 0.0625 * temp2 * rteosq * (13 - 78 * cosio2 + 137 * cosio4);
+  const argpdot = -0.5 * temp1 * con42 + 0.0625 * temp2 * (7 - 114 * cosio2 + 395 * cosio4) +
+    temp3 * (3 - 36 * cosio2 + 49 * cosio4);
+  const xhdot1 = -temp1 * cosio;
+  const nodedot = xhdot1 + (0.5 * temp2 * (4 - 19 * cosio2) + 2 * temp3 * (3 - 7 * cosio2)) * cosio;
+
+  const omgcof = el.bstar * cc3 * Math.cos(el.argpo);
+  let xmcof = 0;
+  if (el.ecco > 1e-4) xmcof = -X2O3 * coef * el.bstar / eeta;
+
+  // near a polar orbit the long-period term divides by (1+cos i), which goes to
+  // zero — clamp it rather than returning infinity
+  const denom = Math.abs(cosio + 1) > 1.5e-12 ? (1 + cosio) : 1.5e-12;
+
+  Object.assign(s, {
+    no, ao, cosio, sinio, cosio2, con41, con42, x1mth2, x7thm1,
+    eta, etasq, eeta, sfour, tsi, perigeeKm,
+    cc1, cc4, cc5, omgcof, xmcof,
+    mdot, argpdot, nodedot,
+    nodecf: 3.5 * omeosq * xhdot1 * cc1,
+    t2cof: 1.5 * cc1,
+    xlcof: -0.25 * J3OJ2 * sinio * (3 + 5 * cosio) / denom,
+    aycof: -0.5 * J3OJ2 * sinio,
+    delmo: Math.pow(1 + eta * Math.cos(el.mo), 3),
+    sinmao: Math.sin(el.mo),
+    // below 220km of perigee the higher-order drag terms are dropped, exactly
+    // as the original theory specifies
+    isimp: (rp - 1) < (220 / RE),
+    d2: 0, d3: 0, d4: 0, t3cof: 0, t4cof: 0, t5cof: 0
+  });
+
+  if (!s.isimp) {
+    const cc1sq = cc1 * cc1;
+    s.d2 = 4 * ao * tsi * cc1sq;
+    const temp = s.d2 * tsi * cc1 / 3;
+    s.d3 = (17 * ao + sfour) * temp;
+    s.d4 = 0.5 * temp * ao * tsi * (221 * ao + 31 * sfour) * cc1;
+    s.t3cof = s.d2 + 2 * cc1sq;
+    s.t4cof = 0.25 * (3 * s.d3 + cc1 * (12 * s.d2 + 10 * cc1sq));
+    s.t5cof = 0.2 * (3 * s.d4 + 12 * cc1 * s.d3 + 6 * s.d2 * s.d2 + 15 * cc1sq * (2 * s.d2 + cc1sq));
+  }
+  return s;
+}
+
+/* ══════════════════════════════════════════════ SGP4 PROPAGATION ═══════════
+   t is minutes since the element set's epoch. Output is TEME — true equator,
+   mean equinox — which is the frame SGP4 works in and is NOT the same as J2000.
+   Converting to latitude and longitude needs GMST, below.                    */
+function sgp4(s, t) {
+  const { J2, XKE, X2O3, RE, VKMPS } = ORB;
+
+  const xmdf = s.mo + s.mdot * t;
+  const argpdf = s.argpo + s.argpdot * t;
+  const nodedf = s.nodeo + s.nodedot * t;
+  let argpm = argpdf, mm = xmdf;
+  const t2 = t * t;
+  let nodem = nodedf + s.nodecf * t2;
+  let tempa = 1 - s.cc1 * t;
+  let tempe = s.bstar * s.cc4 * t;
+  let templ = s.t2cof * t2;
+
+  if (!s.isimp) {
+    const delomg = s.omgcof * t;
+    const delmtemp = 1 + s.eta * Math.cos(xmdf);
+    const delm = s.xmcof * (delmtemp * delmtemp * delmtemp - s.delmo);
+    const temp = delomg + delm;
+    mm = xmdf + temp;
+    argpm = argpdf - temp;
+    const t3 = t2 * t, t4 = t3 * t;
+    tempa = tempa - s.d2 * t2 - s.d3 * t3 - s.d4 * t4;
+    tempe = tempe + s.bstar * s.cc5 * (Math.sin(mm) - s.sinmao);
+    templ = templ + s.t3cof * t3 + t4 * (s.t4cof + t * s.t5cof);
+  }
+
+  let nm = s.no, em = s.ecco;
+  const inclm = s.inclo;
+  const am = Math.pow(XKE / nm, X2O3) * tempa * tempa;
+  if (!(am > 0)) throw new Error('the satellite has decayed — semi-major axis went negative');
+  nm = XKE / Math.pow(am, 1.5);
+  em = em - tempe;
+  if (em >= 1 || em < -0.001) throw new Error('eccentricity left the physical range — element set is stale or decayed');
+  if (em < 1e-6) em = 1e-6;
+  mm = mm + s.no * templ;
+
+  let xlm = mm + argpm + nodem;
+  nodem = fmod2p(nodem);
+  argpm = fmod2p(argpm);
+  xlm = fmod2p(xlm);
+  mm = fmod2p(xlm - argpm - nodem);
+
+  const sinim = Math.sin(inclm), cosim = Math.cos(inclm);
+
+  // ── long period periodics ────────────────────────────────────────────────
+  const axnl = em * Math.cos(argpm);
+  let temp = 1 / (am * (1 - em * em));
+  const aynl = em * Math.sin(argpm) + temp * s.aycof;
+  const xl = mm + argpm + nodem + temp * s.xlcof * axnl;
+
+  // ── Kepler's equation, by Newton, with a step limiter ────────────────────
+  // The limiter matters: near e→1 an unconstrained Newton step overshoots into
+  // a different revolution and converges confidently to the wrong answer.
+  const u = fmod2p(xl - nodem);
+  let eo1 = u, tem5 = 9999.9, ktr = 1, sineo1 = 0, coseo1 = 0;
+  while (Math.abs(tem5) >= 1e-12 && ktr <= 10) {
+    sineo1 = Math.sin(eo1); coseo1 = Math.cos(eo1);
+    tem5 = 1 - coseo1 * axnl - sineo1 * aynl;
+    tem5 = (u - aynl * coseo1 + axnl * sineo1 - eo1) / tem5;
+    if (Math.abs(tem5) >= 0.95) tem5 = tem5 > 0 ? 0.95 : -0.95;
+    eo1 += tem5;
+    ktr++;
+  }
+
+  const ecose = axnl * coseo1 + aynl * sineo1;
+  const esine = axnl * sineo1 - aynl * coseo1;
+  const el2 = axnl * axnl + aynl * aynl;
+  const pl = am * (1 - el2);
+  if (pl < 0) throw new Error('semi-latus rectum went negative — the element set cannot be propagated this far');
+
+  const rl = am * (1 - ecose);
+  const rdotl = Math.sqrt(am) * esine / rl;
+  const rvdotl = Math.sqrt(pl) / rl;
+  const betal = Math.sqrt(1 - el2);
+  temp = esine / (1 + betal);
+  const sinu = am / rl * (sineo1 - aynl - axnl * temp);
+  const cosu = am / rl * (coseo1 - axnl + aynl * temp);
+  let su = Math.atan2(sinu, cosu);
+  const sin2u = (cosu + cosu) * sinu;
+  const cos2u = 1 - 2 * sinu * sinu;
+
+  temp = 1 / pl;
+  const temp1 = 0.5 * J2 * temp;
+  const temp2 = temp1 * temp;
+
+  // ── short period periodics ───────────────────────────────────────────────
+  const mrt = rl * (1 - 1.5 * temp2 * betal * s.con41) + 0.5 * temp1 * s.x1mth2 * cos2u;
+  su = su - 0.25 * temp2 * s.x7thm1 * sin2u;
+  const xnode = nodem + 1.5 * temp2 * cosim * sin2u;
+  const xinc = inclm + 1.5 * temp2 * cosim * sinim * cos2u;
+  const mvt = rdotl - nm * temp1 * s.x1mth2 * sin2u / XKE;
+  const rvdot = rvdotl + nm * temp1 * (s.x1mth2 * cos2u + 1.5 * s.con41) / XKE;
+
+  if (mrt < 1) throw new Error('the satellite has re-entered — propagated altitude is below the surface');
+
+  // ── orientation ──────────────────────────────────────────────────────────
+  const sinsu = Math.sin(su), cossu = Math.cos(su);
+  const snod = Math.sin(xnode), cnod = Math.cos(xnode);
+  const sini = Math.sin(xinc), cosi = Math.cos(xinc);
+  const xmx = -snod * cosi, xmy = cnod * cosi;
+  const ux = xmx * sinsu + cnod * cossu;
+  const uy = xmy * sinsu + snod * cossu;
+  const uz = sini * sinsu;
+  const vx = xmx * cossu - cnod * sinsu;
+  const vy = xmy * cossu - snod * sinsu;
+  const vz = sini * cossu;
+
+  return {
+    r: [mrt * ux * RE, mrt * uy * RE, mrt * uz * RE],
+    v: [(mvt * ux + rvdot * vx) * VKMPS, (mvt * uy + rvdot * vy) * VKMPS, (mvt * uz + rvdot * vz) * VKMPS],
+    elements: { a: am * RE, e: em, i: xinc, node: xnode, argp: argpm, m: mm, n: nm }
+  };
+}
+
+/* ══════════════════════════════════════════════════ FRAMES AND GEOMETRY ════ */
+
+/** Greenwich Mean Sidereal Time, IAU-82. Radians. */
+function gmst(jd) {
+  const tut1 = (jd - 2451545.0) / 36525.0;
+  let t = -6.2e-6 * tut1 * tut1 * tut1 + 0.093104 * tut1 * tut1 +
+    (876600.0 * 3600 + 8640184.812866) * tut1 + 67310.54841;
+  t = (t * DEG / 240.0) % TWOPI;
+  return t < 0 ? t + TWOPI : t;
+}
+
+/** TEME position → geodetic latitude, longitude and altitude.
+ *  Latitude is iterated because the Earth is an ellipsoid; one pass of the
+ *  spherical approximation is out by up to about 20 km at mid latitudes. */
+function eciToGeodetic(r, theta) {
+  const a = ORB.RE, f = 1 / 298.26, e2 = 2 * f - f * f;     // WGS-72 flattening
+  const [x, y, z] = r;
+  let lon = Math.atan2(y, x) - theta;
+  lon = ((lon + Math.PI) % TWOPI + TWOPI) % TWOPI - Math.PI;
+  const R = Math.sqrt(x * x + y * y);
+  let lat = Math.atan2(z, R), C = 1;
+  for (let i = 0; i < 20; i++) {
+    C = 1 / Math.sqrt(1 - e2 * Math.sin(lat) * Math.sin(lat));
+    const next = Math.atan2(z + a * C * e2 * Math.sin(lat), R);
+    if (Math.abs(next - lat) < 1e-12) { lat = next; break; }
+    lat = next;
+  }
+  const alt = R / Math.cos(lat) - a * C;
+  return { lat: lat / DEG, lon: lon / DEG, altKm: alt };
+}
+
+/** Where to point, from a place on the ground. */
+function lookAngles(obsLat, obsLon, obsAltKm, r, theta) {
+  const a = ORB.RE, f = 1 / 298.26, e2 = 2 * f - f * f;
+  const lat = obsLat * DEG, lon = obsLon * DEG;
+  const C = 1 / Math.sqrt(1 - e2 * Math.sin(lat) * Math.sin(lat));
+  const S = C * (1 - e2);
+  const gLat = lat, gTheta = theta + lon;
+  const ox = (a * C + obsAltKm) * Math.cos(gLat) * Math.cos(gTheta);
+  const oy = (a * C + obsAltKm) * Math.cos(gLat) * Math.sin(gTheta);
+  const oz = (a * S + obsAltKm) * Math.sin(gLat);
+
+  const dx = r[0] - ox, dy = r[1] - oy, dz = r[2] - oz;
+  const sinLat = Math.sin(gLat), cosLat = Math.cos(gLat);
+  const sinTh = Math.sin(gTheta), cosTh = Math.cos(gTheta);
+  const south = sinLat * cosTh * dx + sinLat * sinTh * dy - cosLat * dz;
+  const east = -sinTh * dx + cosTh * dy;
+  const zen = cosLat * cosTh * dx + cosLat * sinTh * dy + sinLat * dz;
+  const range = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  let az = Math.atan2(-east, south) + Math.PI;
+  if (az > TWOPI) az -= TWOPI;
+  // Clamp before asin. When a satellite is almost exactly overhead, zen/range
+  // rounds to fractionally more than 1 and asin returns NaN — which then
+  // silently propagates into every pass prediction as "no pass".
+  const sinEl = Math.max(-1, Math.min(1, zen / range));
+  return { azimuth: az / DEG, elevation: Math.asin(sinEl) / DEG, rangeKm: range };
+}
+
+/* ══════════════════════════════════════════════════════ THE PUBLIC PATH ════ */
+
+/** Propagate one satellite to a wall-clock date. */
+function propagate(sat, date) {
+  if (sat.deepSpace) {
+    throw new Error(sat.name + ' is in a ' + Math.round(sat.periodMin) + '-minute orbit. That is deep space, ' +
+      'which needs SDP4 lunar-solar terms this propagator does not have — I will not guess at it.');
+  }
+  const jd = jdFromDate(date);
+  const tMin = (jd - sat.epochJD) * 1440;
+  const out = sgp4(sat, tMin);
+  const th = gmst(jd);
+  const geo = eciToGeodetic(out.r, th);
+  return {
+    name: sat.name, satnum: sat.satnum,
+    tMin, jd, theta: th,
+    r: out.r, v: out.v,
+    lat: geo.lat, lon: geo.lon, altKm: geo.altKm,
+    speedKmS: Math.hypot(out.v[0], out.v[1], out.v[2]),
+    elementAgeDays: (jd - sat.epochJD)
+  };
+}
+
+/** Which of a catalogue are above the horizon from here, right now. */
+function overhead(cat, lat, lon, altKm, minEl, when) {
+  const date = when || new Date();
+  const out = [];
+  for (const sat of cat) {
+    if (sat.deepSpace) continue;
+    let p;
+    try { p = propagate(sat, date); } catch (e) { continue; }
+    const la = lookAngles(lat, lon, altKm || 0, p.r, p.theta);
+    if (la.elevation >= (minEl == null ? 10 : minEl)) {
+      out.push({
+        name: p.name, satnum: p.satnum,
+        elevation: +la.elevation.toFixed(1),
+        azimuth: +la.azimuth.toFixed(1),
+        compass: compassOf(la.azimuth),
+        range_km: Math.round(la.rangeKm),
+        altitude_km: Math.round(p.altKm),
+        speed_km_s: +p.speedKmS.toFixed(2),
+        lat: +p.lat.toFixed(2), lon: +p.lon.toFixed(2),
+        element_age_days: +p.elementAgeDays.toFixed(1)
+      });
+    }
+  }
+  out.sort((a, b) => b.elevation - a.elevation);
+  return out;
+}
+
+function compassOf(deg) {
+  const P = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+  return P[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+}
+
+/** Trace the ground track forward, for drawing on a globe or a map. */
+function groundTrack(sat, minutes, stepMin, from) {
+  const start = from || new Date();
+  const pts = [];
+  const step = stepMin || 1;
+  let stopped = '';
+  for (let m = 0; m <= (minutes || 95); m += step) {
+    try {
+      const p = propagate(sat, new Date(start.getTime() + m * 60000));
+      pts.push([p.lat, p.lon, p.altKm]);
+    } catch (e) { stopped = String(e.message || e); break; }
+  }
+  // An empty track means the element set could not be propagated at all —
+  // almost always because it is years stale and the object has decayed. Say so
+  // rather than handing back an empty array that reads as "nothing to draw".
+  pts.stoppedBecause = stopped;
+  return pts;
+}
+
+/** Next pass over a place, searched coarse then refined. */
+function nextPass(sat, lat, lon, altKm, minEl, hours) {
+  const start = new Date();
+  const horizon = (hours || 24) * 60;
+  const want = minEl == null ? 10 : minEl;
+  let rise = null, peak = null, set = null, best = -90;
+  for (let m = 0; m <= horizon; m += 0.5) {
+    const d = new Date(start.getTime() + m * 60000);
+    let p; try { p = propagate(sat, d); } catch (e) { break; }
+    const la = lookAngles(lat, lon, altKm || 0, p.r, p.theta);
+    if (la.elevation >= want) {
+      if (!rise) rise = { at: d, az: la.azimuth };
+      if (la.elevation > best) { best = la.elevation; peak = { at: d, el: la.elevation, az: la.azimuth }; }
+      set = { at: d, az: la.azimuth };
+    } else if (rise) break;
+  }
+  if (!rise) return null;
+  return {
+    satellite: sat.name,
+    rises: rise.at.toISOString(), rise_compass: compassOf(rise.az),
+    peak: peak.at.toISOString(), peak_elevation: +peak.el.toFixed(1), peak_compass: compassOf(peak.az),
+    sets: set.at.toISOString(), set_compass: compassOf(set.az),
+    duration_min: +((set.at - rise.at) / 60000).toFixed(1)
+  };
+}
+
+/* ─────────────────────────────────────────────────────── the live catalogue ─ */
+const CATALOG = { sats: [], at: 0, source: '', error: '' };
+
+/* Celestrak serves TLEs with permissive CORS. The groups are small and cached
+   here for ten minutes — element sets are refreshed once or twice a day at
+   source, so hammering it would be pointless as well as rude. */
+const TLE_GROUPS = {
+  stations: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=tle',
+  visual:   'https://celestrak.org/NORAD/elements/gp.php?GROUP=visual&FORMAT=tle',
+  starlink: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle',
+  gps:      'https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=tle',
+  weather:  'https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=tle',
+  science:  'https://celestrak.org/NORAD/elements/gp.php?GROUP=science&FORMAT=tle'
+};
+
+function parseCatalog(text, limit) {
+  const lines = String(text).split(/\r?\n/).map(l => l.replace(/\s+$/, ''));
+  const out = [];
+  for (let i = 0; i + 2 < lines.length + 1; i++) {
+    if (!/^1 /.test(lines[i + 1] || '')) continue;
+    const name = lines[i], l1 = lines[i + 1], l2 = lines[i + 2];
+    if (!/^2 /.test(l2 || '')) continue;
+    try {
+      const el = parseTLE(l1, l2, name);
+      out.push(sgp4init(el));
+    } catch (e) { /* one malformed entry must not lose the catalogue */ }
+    i += 2;
+    if (limit && out.length >= limit) break;
+  }
+  return out;
+}
+
+async function loadCatalog(group, limit) {
+  const g = TLE_GROUPS[group] ? group : 'stations';
+  if (CATALOG.source === g && Date.now() - CATALOG.at < 600000 && CATALOG.sats.length) return CATALOG.sats;
+  const res = await fetch(TLE_GROUPS[g]);
+  if (!res.ok) throw new Error('Celestrak returned ' + res.status + ' for the ' + g + ' group');
+  const text = await res.text();
+  const sats = parseCatalog(text, limit || 220);
+  if (!sats.length) throw new Error('Celestrak answered, but nothing in the reply parsed as a TLE');
+  CATALOG.sats = sats; CATALOG.at = Date.now(); CATALOG.source = g; CATALOG.error = '';
+  return sats;
+}
+
+/* ══════════════════════════════════════════════ THE GLOBE AND THE GROUND ═══
+   Two three.js scenes sharing the engine's copy of the library, each living
+   inside an ordinary floating pane so they move, resize and close like anything
+   else on the deck.
+
+     · GLOBE   — the Earth, with real satellites propagated by SGP4 and their
+                 ground tracks drawn ahead of them.
+     · TERRAIN — real elevation and real satellite imagery for a place, as a
+                 displaced mesh you can tilt and fly over.
+
+   Both are entirely optional work: the governor decides the mesh resolution and
+   how often they redraw, and both degrade to something honest and legible when
+   the tiles do not arrive rather than showing a blank sphere and saying nothing.
+
+   Tile sources, and why these ones:
+     · Elevation — AWS Open Data terrain tiles, Terrarium encoding. Public,
+       CORS-enabled, no key, and the encoding is documented and exact:
+       height = (R*256 + G + B/256) - 32768 metres.
+     · Imagery — Esri World Imagery, the same basemap most GIS front-ends use.
+
+   Neither is scraped and neither needs an account. If either refuses, the other
+   still works: elevation without imagery gives a shaded relief mesh, imagery
+   without elevation gives a flat photographic plane. Both are stated.        */
+
+const GLOBE = {
+  on: false, mode: null,            // 'globe' · 'terrain'
+  three: null, renderer: null, scene: null, camera: null,
+  earth: null, sats: null, tracks: null, terrain: null,
+  raf: 0, canvas: null, host: null,
+  spin: 0, tiltX: 0.35, dist: 3.2, targetDist: 3.2,
+  drag: null, seg: 64,
+  place: null, zoom: 11, exaggeration: 1.6,
+  status: '', sources: {}, error: '',
+  catalog: [], marks: [], lastStep: 0,
+  onTier(T) { GLOBE.seg = T.globeSeg; if (GLOBE.mode === 'globe') GLOBE.rebuildEarth(); }
+};
+
+const TILE = {
+  elevation: 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
+  imagery: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+};
+
+function tileURL(tpl, z, x, y) {
+  return tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+}
+/** Web Mercator tile indices for a coordinate. */
+function lonLatToTile(lon, lat, z) {
+  const n = Math.pow(2, z);
+  const x = Math.floor((lon + 180) / 360 * n);
+  const rad = lat * Math.PI / 180;
+  const y = Math.floor((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2 * n);
+  return { x: Math.max(0, Math.min(n - 1, x)), y: Math.max(0, Math.min(n - 1, y)), n };
+}
+/** Ground resolution in metres per pixel — needed to scale the displacement
+ *  correctly, or the mountains come out as either spikes or wallpaper. */
+function metresPerPixel(lat, z) {
+  return 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, z);
+}
+
+/** Load one image with CORS on, resolving to null rather than throwing so a
+ *  single missing tile leaves a hole instead of losing the whole mesh. */
+function loadTile(url, timeoutMs) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const done = (v) => { img.onload = img.onerror = null; resolve(v); };
+    const timer = setTimeout(() => done(null), timeoutMs || 9000);
+    img.onload = () => { clearTimeout(timer); done(img); };
+    img.onerror = () => { clearTimeout(timer); done(null); };
+    img.src = url;
+  });
+}
+
+/** Stitch a square of tiles into one canvas. Returns what actually arrived. */
+async function stitch(tpl, z, x0, y0, span, px) {
+  const size = px || 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size * span;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#05121a'; g.fillRect(0, 0, c.width, c.height);
+  const n = Math.pow(2, z);
+  const jobs = [];
+  for (let dy = 0; dy < span; dy++) {
+    for (let dx = 0; dx < span; dx++) {
+      const tx = ((x0 + dx) % n + n) % n, ty = y0 + dy;
+      if (ty < 0 || ty >= n) continue;
+      jobs.push(loadTile(tileURL(tpl, z, tx, ty)).then(img => {
+        if (img) g.drawImage(img, dx * size, dy * size, size, size);
+        return !!img;
+      }));
+    }
+  }
+  const got = await Promise.all(jobs);
+  const ok = got.filter(Boolean).length;
+  return { canvas: c, ctx: g, got: ok, wanted: got.length, size: c.width };
+}
+
+/* ═══════════════════════════════════════════════════════ SCENE PLUMBING ════ */
+function globeScene(host, w, h) {
+  const THREE = (window.JARVIS_ENGINE && window.JARVIS_ENGINE.THREE);
+  if (!THREE) throw new Error('the 3D library did not load — check the network, then reload');
+  GLOBE.three = THREE;
+
+  const canvas = document.createElement('canvas');
+  canvas.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; display:block;';
+  host.appendChild(canvas);
+
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: PERF.tier >= 3, alpha: true });
+  } catch (e) {
+    throw new Error('a second WebGL context was refused by the browser — close another pane and try again');
+  }
+  renderer.setPixelRatio(Math.min(PERF.tier >= 3 ? 2 : 1, window.devicePixelRatio || 1));
+  renderer.setSize(w, h, false);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(42, w / h, 0.01, 400);
+  scene.add(new THREE.AmbientLight(0x6699bb, 0.85));
+  const key = new THREE.DirectionalLight(0xffffff, 1.35);
+  key.position.set(4, 2.4, 3.2);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0x00e5ff, 0.55);
+  rim.position.set(-4, -1, -2);
+  scene.add(rim);
+
+  GLOBE.canvas = canvas; GLOBE.renderer = renderer; GLOBE.scene = scene; GLOBE.camera = camera;
+  GLOBE.host = host;
+  return { THREE, renderer, scene, camera };
+}
+
+function globeStop() {
+  if (GLOBE.raf) cancelAnimationFrame(GLOBE.raf);
+  GLOBE.raf = 0;
+  try {
+    if (GLOBE.scene) GLOBE.scene.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach(m => { if (m.map) m.map.dispose(); m.dispose(); });
+      }
+    });
+    if (GLOBE.renderer) GLOBE.renderer.dispose();
+  } catch (e) { }
+  if (GLOBE.canvas && GLOBE.canvas.parentNode) GLOBE.canvas.parentNode.removeChild(GLOBE.canvas);
+  GLOBE.on = false; GLOBE.mode = null;
+  GLOBE.renderer = GLOBE.scene = GLOBE.camera = GLOBE.earth = GLOBE.sats = GLOBE.terrain = null;
+  GLOBE.canvas = null;
+}
+
+/* ═══════════════════════════════════════════════════════════ THE GLOBE ═════ */
+GLOBE.rebuildEarth = function () {
+  const T = GLOBE.three;
+  if (!T || !GLOBE.earth) return;
+  const old = GLOBE.earth.geometry;
+  GLOBE.earth.geometry = new T.SphereGeometry(1, GLOBE.seg, Math.max(12, GLOBE.seg >> 1));
+  old.dispose();
+};
+
+/** A globe texture from real imagery at low zoom, or an honest graticule. */
+async function earthTexture(THREE) {
+  // z=2 is sixteen tiles: the whole planet at a resolution that still reads at
+  // pane size, and small enough to arrive quickly.
+  const s = await stitch(TILE.imagery, 2, 0, 0, 4, 256).catch(() => null);
+  if (s && s.got >= s.wanted * 0.6) {
+    GLOBE.sources.imagery = true;
+    const tex = new THREE.CanvasTexture(s.canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return { tex, real: true };
+  }
+  GLOBE.sources.imagery = false;
+
+  // Fallback: a drawn graticule. It is obviously not photography, which is the
+  // point — a plain blue sphere would look like imagery that simply failed to
+  // resolve, and quietly lie about what you are looking at.
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = '#03151f'; g.fillRect(0, 0, c.width, c.height);
+  g.strokeStyle = 'rgba(0,229,255,.30)'; g.lineWidth = 1;
+  for (let lon = 0; lon <= 360; lon += 15) {
+    g.beginPath(); g.moveTo(lon / 360 * c.width, 0); g.lineTo(lon / 360 * c.width, c.height); g.stroke();
+  }
+  for (let lat = 0; lat <= 180; lat += 15) {
+    g.beginPath(); g.moveTo(0, lat / 180 * c.height); g.lineTo(c.width, lat / 180 * c.height); g.stroke();
+  }
+  g.strokeStyle = 'rgba(0,229,255,.70)'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, c.height / 2); g.lineTo(c.width, c.height / 2); g.stroke();
+  g.fillStyle = 'rgba(255,179,0,.85)';
+  g.font = '20px monospace';
+  g.fillText('IMAGERY UNAVAILABLE — GRATICULE ONLY', 210, c.height / 2 - 16);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return { tex, real: false };
+}
+
+/** Geodetic → the globe's own unit sphere. */
+function latLonToVec3(THREE, lat, lon, r) {
+  const phi = (90 - lat) * Math.PI / 180, th = (lon + 180) * Math.PI / 180;
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(th),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(th));
+}
+
+async function openGlobe(a) {
+  const host = paneSurface('globe', 'ORBITAL DISPLAY');
+  if (!host) throw new Error('the globe pane could not be opened');
+  host.innerHTML = '';
+  host.style.position = 'relative';
+  host.style.background = '#02090e';
+
+  if (GLOBE.on) globeStop();
+  const w = host.clientWidth || 640, h = host.clientHeight || 460;
+  const { THREE, renderer, scene, camera } = globeScene(host, w, h);
+  GLOBE.on = true; GLOBE.mode = 'globe';
+  GLOBE.seg = tier().globeSeg;
+
+  const label = document.createElement('div');
+  label.style.cssText = 'position:absolute; left:12px; bottom:10px; font:10px/1.6 ui-monospace,monospace;' +
+    'color:rgba(150,215,235,.8); pointer-events:none; text-shadow:0 0 8px #000; z-index:2;';
+  label.textContent = 'ACQUIRING…';
+  host.appendChild(label);
+  GLOBE.label = label;
+
+  const sphere = new THREE.SphereGeometry(1, GLOBE.seg, Math.max(12, GLOBE.seg >> 1));
+  const { tex, real } = await earthTexture(THREE);
+  const earth = new THREE.Mesh(sphere, new THREE.MeshPhongMaterial({
+    map: tex, shininess: 6, specular: 0x113344
+  }));
+  scene.add(earth);
+  GLOBE.earth = earth;
+
+  // atmosphere: a slightly larger back-facing shell, additively blended
+  const atmo = new THREE.Mesh(new THREE.SphereGeometry(1.035, 48, 24), new THREE.ShaderMaterial({
+    transparent: true, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
+    uniforms: { uC: { value: new THREE.Color(0x2ea8ff) } },
+    vertexShader: 'varying vec3 vN; void main(){ vN = normalize(normalMatrix*normal);' +
+      'gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+    fragmentShader: 'uniform vec3 uC; varying vec3 vN;' +
+      'void main(){ float i = pow(0.62 - dot(vN, vec3(0.,0.,1.)), 2.4); gl_FragColor = vec4(uC, clamp(i,0.,1.)*0.85); }'
+  }));
+  scene.add(atmo);
+
+  const satGroup = new THREE.Group(); scene.add(satGroup); GLOBE.sats = satGroup;
+  const trackGroup = new THREE.Group(); scene.add(trackGroup); GLOBE.tracks = trackGroup;
+
+  // ── the satellites themselves ────────────────────────────────────────────
+  let note = '';
+  try {
+    const cat = await loadCatalog(a && a.group, (a && a.limit) || (PERF.tier >= 3 ? 160 : 60));
+    GLOBE.catalog = cat;
+    GLOBE.sources.tle = true;
+    note = cat.length + ' objects · ' + (a && a.group || 'stations');
+  } catch (e) {
+    GLOBE.sources.tle = false;
+    GLOBE.error = String(e.message || e);
+    note = 'no element sets — ' + GLOBE.error;
+  }
+
+  // where the user is, if we know
+  if (app.pos && app.pos.lat != null) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.014, 10, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffb300 }));
+    m.position.copy(latLonToVec3(THREE, app.pos.lat, app.pos.lon, 1.008));
+    scene.add(m);
+  }
+
+  const satGeo = new THREE.SphereGeometry(0.009, 6, 6);
+  const satMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff });
+  const hotMat = new THREE.MeshBasicMaterial({ color: 0xffb300 });
+  GLOBE.marks = GLOBE.catalog.map(() => {
+    const m = new THREE.Mesh(satGeo, satMat);
+    m.visible = false; satGroup.add(m); return m;
+  });
+
+  // ── the loop ─────────────────────────────────────────────────────────────
+  let lastPropagate = 0;
+  const step = () => {
+    if (!GLOBE.on || GLOBE.mode !== 'globe') return;
+    GLOBE.raf = requestAnimationFrame(step);
+    const now = performance.now();
+
+    if (!GLOBE.drag) GLOBE.spin += 0.0009;
+    GLOBE.dist += (GLOBE.targetDist - GLOBE.dist) * 0.10;
+    earth.rotation.y = GLOBE.spin;
+    atmo.rotation.y = GLOBE.spin;
+    satGroup.rotation.y = GLOBE.spin;
+    trackGroup.rotation.y = GLOBE.spin;
+    camera.position.set(0, Math.sin(GLOBE.tiltX) * GLOBE.dist, Math.cos(GLOBE.tiltX) * GLOBE.dist);
+    camera.lookAt(0, 0, 0);
+
+    // Propagation is charged against the frame budget like anything else. At a
+    // low tier it simply happens less often; the satellites drift smoothly
+    // between updates because they are moving in near-straight lines anyway.
+    const every = PERF.tier >= 3 ? 900 : 2200;
+    if (GLOBE.catalog.length && now - lastPropagate > every && afford('orbit', 6)) {
+      meter('orbit', () => {
+        const when = new Date();
+        let shown = 0;
+        for (let i = 0; i < GLOBE.catalog.length; i++) {
+          const m = GLOBE.marks[i];
+          try {
+            const p = propagate(GLOBE.catalog[i], when);
+            m.position.copy(latLonToVec3(THREE, p.lat, p.lon, 1 + p.altKm / 6371));
+            m.visible = true; shown++;
+          } catch (e) { m.visible = false; }
+        }
+        GLOBE.shown = shown;
+      });
+      lastPropagate = now;
+    }
+
+    label.textContent = (GLOBE.sources.imagery ? 'ESRI IMAGERY' : 'GRATICULE') +
+      ' · ' + note + (GLOBE.shown != null ? ' · ' + GLOBE.shown + ' plotted' : '') +
+      ' · SGP4 · ' + PERF.tierName;
+    renderer.render(scene, camera);
+  };
+  step();
+
+  bindGlobeDrag(host);
+  paneNote('globe', 'ORBITAL DISPLAY · ' + note);
+  return {
+    opened: true,
+    imagery: GLOBE.sources.imagery ? 'Esri World Imagery' : 'unavailable — graticule drawn instead',
+    element_sets: GLOBE.sources.tle ? GLOBE.catalog.length + ' objects from Celestrak' : 'unavailable: ' + GLOBE.error,
+    propagator: 'SGP4, near-Earth branch, WGS-72',
+    note: real ? undefined : 'The imagery tiles did not arrive, so the sphere shows a graticule. That is a network result, not a rendering fault.'
+  };
+}
+
+/* ══════════════════════════════════════════════════════════ THE TERRAIN ════ */
+async function openTerrain(a) {
+  const place = a && (a.place || a.query || '');
+  let lat = a && a.lat, lon = a && a.lon, label = place;
+
+  if (lat == null || lon == null) {
+    if (!place) throw new Error('give me somewhere to look at — a place name or a latitude and longitude');
+    const g = await geocode(place);
+    if (!g) throw new Error('I could not find "' + place + '" — try a larger nearby place, or give me coordinates');
+    lat = g.lat; lon = g.lon; label = g.label || place;
+  }
+  const zoom = Math.max(6, Math.min(14, (a && a.zoom) || 11));
+  const span = PERF.tier >= 3 ? 4 : 2;                 // tiles across
+  const exag = Math.max(0.4, Math.min(4, (a && a.exaggeration) || 1.6));
+
+  const host = paneSurface('terrain', 'TERRAIN · ' + String(label).toUpperCase().slice(0, 34));
+  if (!host) throw new Error('the terrain pane could not be opened');
+  host.innerHTML = '';
+  host.style.position = 'relative';
+  host.style.background = '#02090e';
+
+  if (GLOBE.on) globeStop();
+  const w = host.clientWidth || 640, h = host.clientHeight || 460;
+  const { THREE, renderer, scene, camera } = globeScene(host, w, h);
+  GLOBE.on = true; GLOBE.mode = 'terrain';
+  GLOBE.place = { lat, lon, label, zoom };
+
+  const label2 = document.createElement('div');
+  label2.style.cssText = 'position:absolute; left:12px; bottom:10px; font:10px/1.6 ui-monospace,monospace;' +
+    'color:rgba(150,215,235,.8); pointer-events:none; text-shadow:0 0 8px #000; z-index:2;';
+  label2.textContent = 'FETCHING ELEVATION…';
+  host.appendChild(label2);
+
+  const t = lonLatToTile(lon, lat, zoom);
+  const x0 = t.x - (span >> 1), y0 = t.y - (span >> 1);
+
+  // ── elevation and imagery, in parallel ───────────────────────────────────
+  const [elev, img] = await Promise.all([
+    stitch(TILE.elevation, zoom, x0, y0, span, 256).catch(() => null),
+    stitch(TILE.imagery, zoom, x0, y0, span, 256).catch(() => null)
+  ]);
+
+  const haveElev = elev && elev.got > 0;
+  const haveImg = img && img.got > 0;
+  GLOBE.sources = { elevation: !!haveElev, imagery: !!haveImg };
+  if (!haveElev && !haveImg) {
+    globeStop();
+    throw new Error('neither the elevation nor the imagery tiles could be fetched. ' +
+      'Both are public and CORS-enabled, so this is a network or extension block on your side, not a missing key.');
+  }
+
+  // ── decode Terrarium into a height field ─────────────────────────────────
+  const N = Math.min(tier().terrainSeg, haveElev ? elev.size : 128);
+  const heights = new Float32Array((N + 1) * (N + 1));
+  let minH = Infinity, maxH = -Infinity;
+  if (haveElev) {
+    const px = elev.ctx.getImageData(0, 0, elev.size, elev.size).data;
+    for (let j = 0; j <= N; j++) {
+      for (let i = 0; i <= N; i++) {
+        const sx = Math.min(elev.size - 1, Math.round(i / N * (elev.size - 1)));
+        const sy = Math.min(elev.size - 1, Math.round(j / N * (elev.size - 1)));
+        const o = (sy * elev.size + sx) * 4;
+        // Terrarium: height in metres = (R*256 + G + B/256) - 32768
+        const hgt = (px[o] * 256 + px[o + 1] + px[o + 2] / 256) - 32768;
+        heights[j * (N + 1) + i] = hgt;
+        if (hgt > -12000 && hgt < 9000) { if (hgt < minH) minH = hgt; if (hgt > maxH) maxH = hgt; }
+      }
+    }
+  }
+  if (!isFinite(minH)) { minH = 0; maxH = 0; }
+
+  // Scale so the mesh is geometrically honest: one unit of the plane is the
+  // real ground distance the tiles cover, and the vertical is the same unit
+  // times the stated exaggeration. A "3D map" with an arbitrary vertical scale
+  // is a picture, not a model.
+  const mpp = metresPerPixel(lat, zoom);
+  const groundM = mpp * 256 * span;
+  const planeSize = 2.4;
+  const vScale = (planeSize / groundM) * exag;
+
+  const geo = new THREE.PlaneGeometry(planeSize, planeSize, N, N);
+  const pos = geo.attributes.position;
+  for (let j = 0; j <= N; j++) {
+    for (let i = 0; i <= N; i++) {
+      const idx = j * (N + 1) + i;
+      pos.setZ(idx, (heights[idx] - minH) * vScale);
+    }
+  }
+  geo.computeVertexNormals();
+
+  let mat;
+  if (haveImg) {
+    const tex = new THREE.CanvasTexture(img.canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    mat = new THREE.MeshPhongMaterial({ map: tex, shininess: 2 });
+  } else {
+    // shaded relief from the elevation alone — legible, and clearly not a photo
+    mat = new THREE.MeshPhongMaterial({ color: 0x14607a, shininess: 4, wireframe: PERF.tier <= 1 });
+  }
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  scene.add(mesh);
+  GLOBE.terrain = mesh;
+
+  GLOBE.tiltX = 0.62; GLOBE.targetDist = GLOBE.dist = 2.6; GLOBE.spin = 0;
+
+  const relief = maxH - minH;
+  const note = (haveImg ? 'ESRI IMAGERY' : 'NO IMAGERY') + ' · ' +
+    (haveElev ? 'AWS TERRAIN' : 'NO ELEVATION') + ' · z' + zoom + ' · ' +
+    Math.round(groundM / 1000) + 'km across · relief ' + Math.round(relief) + 'm · ×' + exag;
+
+  const step = () => {
+    if (!GLOBE.on || GLOBE.mode !== 'terrain') return;
+    GLOBE.raf = requestAnimationFrame(step);
+    if (!GLOBE.drag) GLOBE.spin += 0.0016;
+    GLOBE.dist += (GLOBE.targetDist - GLOBE.dist) * 0.10;
+    mesh.rotation.z = GLOBE.spin;
+    camera.position.set(0, Math.sin(GLOBE.tiltX) * GLOBE.dist, Math.cos(GLOBE.tiltX) * GLOBE.dist);
+    camera.lookAt(0, 0, 0);
+    label2.textContent = note;
+    renderer.render(scene, camera);
+  };
+  step();
+  bindGlobeDrag(host);
+  paneNote('terrain', 'TERRAIN · ' + String(label).toUpperCase().slice(0, 34));
+
+  return {
+    place: label, lat: +lat.toFixed(4), lon: +lon.toFixed(4), zoom,
+    ground_width_km: +(groundM / 1000).toFixed(1),
+    elevation: haveElev
+      ? { source: 'AWS terrain tiles (Terrarium)', tiles: elev.got + '/' + elev.wanted,
+          lowest_m: Math.round(minH), highest_m: Math.round(maxH), relief_m: Math.round(relief),
+          vertical_exaggeration: exag }
+      : 'unavailable — the mesh is flat and the shading is not real relief',
+    imagery: haveImg ? { source: 'Esri World Imagery', tiles: img.got + '/' + img.wanted }
+                     : 'unavailable — shaded relief drawn instead of photography',
+    mesh: (N + 1) * (N + 1) + ' vertices at ' + PERF.tierName
+  };
+}
+
+/* ───────────────────────────────────────────── steering, mouse and hands ── */
+function bindGlobeDrag(host) {
+  host.onpointerdown = (e) => {
+    if (e.target.closest('[data-pane-head]')) return;
+    GLOBE.drag = { x: e.clientX, y: e.clientY };
+    host.setPointerCapture && host.setPointerCapture(e.pointerId);
+  };
+  host.onpointermove = (e) => {
+    if (!GLOBE.drag) return;
+    GLOBE.spin += (e.clientX - GLOBE.drag.x) * 0.006;
+    GLOBE.tiltX = Math.max(-1.2, Math.min(1.35, GLOBE.tiltX + (e.clientY - GLOBE.drag.y) * 0.005));
+    GLOBE.drag = { x: e.clientX, y: e.clientY };
+  };
+  host.onpointerup = host.onpointercancel = () => { GLOBE.drag = null; };
+  host.onwheel = (e) => {
+    e.preventDefault();
+    GLOBE.targetDist = Math.max(1.25, Math.min(9, GLOBE.targetDist + e.deltaY * 0.0022));
+  };
+}
+
+/** Hand control, called from the gesture loop when a globe is open. */
+function globeHand(dx, dy, scale) {
+  if (!GLOBE.on) return false;
+  if (dx || dy) {
+    GLOBE.spin += dx * 3.2;
+    GLOBE.tiltX = Math.max(-1.2, Math.min(1.35, GLOBE.tiltX - dy * 2.6));
+  }
+  if (scale && scale !== 1) GLOBE.targetDist = Math.max(1.25, Math.min(9, GLOBE.targetDist / scale));
+  return true;
+}
+
+/* ════════════════════════════════════════════════════════ THE LIVE WORLD ═══
+   Real measurements from public instruments. Every one of these is a genuine
+   scientific or operational feed with no key and no quota, and every one of
+   them is attributed in the answer, because "there was a magnitude 5.8 in Chile
+   an hour ago" is only worth saying if you can say who measured it.
+
+     · USGS      — every earthquake on Earth, updated within minutes.
+     · NOAA SWPC — the Sun: solar wind, the planetary K index, flares.
+     · Open-Meteo air quality — particulates and ozone where you are.
+     · Open Notify — who is currently in space, by name.
+
+   The deliberate omission is anything financial. A market feed that is a few
+   minutes stale, presented on a screen that looks authoritative, invites
+   decisions it cannot support — and I am not in a position to give anyone
+   investment information they might trade on.                                */
+
+const FEEDS = { cache: new Map(), ttl: 120000 };
+
+async function feedGet(key, url, ttl) {
+  const hit = FEEDS.cache.get(key);
+  if (hit && Date.now() - hit.at < (ttl || FEEDS.ttl)) return hit.value;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 13000);
+  let res;
+  try {
+    res = await fetch(url, { signal: ctl.signal });
+  } catch (e) {
+    clearTimeout(timer);
+    throw new Error('could not reach the feed — ' + String((e && e.message) || e));
+  }
+  clearTimeout(timer);
+  if (!res.ok) throw new Error('the feed answered ' + res.status);
+  const value = await res.json();
+  FEEDS.cache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+const km = (a, b, c, d) => {
+  // great-circle distance, for "how far from me was that"
+  const R = 6371, r = Math.PI / 180;
+  const dLat = (c - a) * r, dLon = (d - b) * r;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+};
+
+/* ───────────────────────────────────────────────────────────── EARTHQUAKES ── */
+async function quakes(a) {
+  const min = a && a.min_magnitude != null ? a.min_magnitude : 4.5;
+  const window = (a && a.window) || 'day';
+  const set = min >= 4.5 ? '4.5' : min >= 2.5 ? '2.5' : '1.0';
+  const url = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/' + set + '_' + window + '.geojson';
+  let j;
+  try { j = await feedGet('q' + set + window, url, 180000); }
+  catch (e) { return { error: 'USGS is not answering: ' + String(e.message || e) }; }
+
+  const lat = a && a.lat != null ? a.lat : (app.pos && app.pos.lat);
+  const lon = a && a.lon != null ? a.lon : (app.pos && app.pos.lon);
+
+  const list = (j.features || [])
+    .filter(f => f.properties && f.properties.mag >= min)
+    .map(f => {
+      const p = f.properties, g = f.geometry && f.geometry.coordinates;
+      const o = {
+        magnitude: +Number(p.mag).toFixed(1),
+        place: p.place,
+        at: new Date(p.time).toISOString(),
+        minutes_ago: Math.round((Date.now() - p.time) / 60000),
+        depth_km: g ? +Number(g[2]).toFixed(1) : null,
+        lat: g ? +Number(g[1]).toFixed(3) : null,
+        lon: g ? +Number(g[0]).toFixed(3) : null,
+        tsunami_flag: !!p.tsunami
+      };
+      if (lat != null && o.lat != null) o.distance_km = Math.round(km(lat, lon, o.lat, o.lon));
+      return o;
+    })
+    .sort((x, y) => x.minutes_ago - y.minutes_ago)
+    .slice(0, 15);
+
+  return {
+    source: 'United States Geological Survey, ' + set + '+ magnitude, past ' + window,
+    updated: j.metadata ? new Date(j.metadata.generated).toISOString() : null,
+    counted: list.length,
+    earthquakes: list,
+    note: list.length ? undefined : 'Nothing above magnitude ' + min + ' in that window. That is the normal state of things.'
+  };
+}
+
+/* ─────────────────────────────────────────────────────────── SPACE WEATHER ── */
+async function spaceWeather() {
+  const out = { source: 'NOAA Space Weather Prediction Center' };
+  const jobs = [
+    feedGet('kp', 'https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json', 600000)
+      .then(k => {
+        const rows = Array.isArray(k) ? k.slice(1) : [];
+        const last = rows[rows.length - 1];
+        if (!last) return;
+        const kp = parseFloat(last[1]);
+        out.planetary_k_index = {
+          value: kp, at: last[0],
+          means: kp >= 7 ? 'severe geomagnetic storm' : kp >= 5 ? 'geomagnetic storm — aurora possible well outside the polar regions'
+            : kp >= 4 ? 'unsettled' : 'quiet',
+          aurora_chance: kp >= 5 ? 'good, if your sky is dark and clear' : kp >= 4 ? 'possible at high latitudes' : 'unlikely'
+        };
+      }).catch(e => { out.planetary_k_index = 'unavailable: ' + String(e.message || e); }),
+
+    feedGet('wind', 'https://services.swpc.noaa.gov/products/solar-wind/plasma-1-day.json', 600000)
+      .then(w => {
+        const rows = Array.isArray(w) ? w.slice(1) : [];
+        const last = rows[rows.length - 1];
+        if (!last) return;
+        out.solar_wind = {
+          speed_km_s: Math.round(parseFloat(last[2])),
+          density_p_cm3: +parseFloat(last[1]).toFixed(1),
+          at: last[0],
+          means: parseFloat(last[2]) > 600 ? 'fast stream — geomagnetic activity likely to follow'
+            : parseFloat(last[2]) > 450 ? 'elevated' : 'ordinary'
+        };
+      }).catch(e => { out.solar_wind = 'unavailable: ' + String(e.message || e); })
+  ];
+  await Promise.all(jobs);
+  if (typeof out.planetary_k_index === 'string' && typeof out.solar_wind === 'string') {
+    return { error: 'NOAA is not answering for either measurement', detail: out };
+  }
+  out.note = 'These are real instrument readings from spacecraft at the L1 point and ground magnetometers, ' +
+             'not a forecast model.';
+  return out;
+}
+
+/* ─────────────────────────────────────────────────────────────── AIR ──────── */
+async function airQuality(a) {
+  const lat = a && a.lat != null ? a.lat : (app.pos && app.pos.lat);
+  const lon = a && a.lon != null ? a.lon : (app.pos && app.pos.lon);
+  if (lat == null || lon == null) return { error: 'I do not know where to look — locate you first, or give me coordinates.' };
+  const url = 'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + lat + '&longitude=' + lon +
+    '&current=pm10,pm2_5,ozone,nitrogen_dioxide,sulphur_dioxide,carbon_monoxide,european_aqi,us_aqi&timezone=auto';
+  let j;
+  try { j = await feedGet('air' + lat.toFixed(2) + lon.toFixed(2), url, 600000); }
+  catch (e) { return { error: 'the air quality service is not answering: ' + String(e.message || e) }; }
+  const cur = j.current || {};
+  const aqi = cur.us_aqi;
+  return {
+    source: 'Open-Meteo air quality, from the Copernicus atmosphere monitoring service',
+    at: cur.time,
+    us_aqi: aqi,
+    european_aqi: cur.european_aqi,
+    verdict: aqi == null ? null
+      : aqi <= 50 ? 'good' : aqi <= 100 ? 'moderate' : aqi <= 150 ? 'unhealthy for sensitive groups'
+      : aqi <= 200 ? 'unhealthy' : aqi <= 300 ? 'very unhealthy' : 'hazardous',
+    pm2_5: cur.pm2_5, pm10: cur.pm10, ozone: cur.ozone,
+    nitrogen_dioxide: cur.nitrogen_dioxide, sulphur_dioxide: cur.sulphur_dioxide,
+    carbon_monoxide: cur.carbon_monoxide,
+    units: 'µg/m³ except the AQI figures, which are index values',
+    note: 'Modelled from satellite and ground data at roughly 11km resolution, so it is the area rather than the street.'
+  };
+}
+
+/* ──────────────────────────────────────────────────────────── PEOPLE ALOFT ── */
+async function peopleInSpace() {
+  try {
+    const j = await feedGet('astros', 'https://api.open-notify.org/astros.json', 1800000);
+    const by = {};
+    (j.people || []).forEach(p => { (by[p.craft] = by[p.craft] || []).push(p.name); });
+    return {
+      source: 'Open Notify',
+      count: j.number,
+      by_spacecraft: by,
+      note: 'This list changes only when a crew launches or lands, so it is stable for months at a time.'
+    };
+  } catch (e) {
+    return { error: 'the crew list is not answering: ' + String(e.message || e) };
+  }
+}
+
+/* ───────────────────────────────────────────────────── THE PANE THEY LIVE IN ─ */
+function renderFeed(title, rows) {
+  const host = paneSurface('feed', String(title).toUpperCase().slice(0, 34));
+  if (!host) return;
+  const esc = (t) => String(t == null ? '' : t)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  host.innerHTML =
+    '<div style="padding:16px 20px; font:11px/1.75 ui-monospace,monospace; color:rgba(190,230,244,.9);">' +
+    rows.map(r => {
+      if (r.head) return '<div style="font-size:8px; letter-spacing:.34em; color:rgba(0,229,255,.6); ' +
+        'margin:16px 0 8px; border-bottom:1px solid rgba(0,229,255,.14); padding-bottom:5px;">' + esc(r.head) + '</div>';
+      if (r.big) return '<div style="font-size:26px; letter-spacing:.04em; color:' + (r.col || '#00e5ff') +
+        '; margin:2px 0 4px;">' + esc(r.big) + '<span style="font-size:10px; color:rgba(150,215,235,.6); ' +
+        'letter-spacing:.2em; margin-left:10px;">' + esc(r.unit || '') + '</span></div>';
+      return '<div style="display:flex; gap:14px; padding:2px 0;">' +
+        '<span style="flex:none; width:150px; color:rgba(150,215,235,.55);">' + esc(r.k) + '</span>' +
+        '<span style="color:' + (r.col || 'rgba(190,230,244,.92)') + ';">' + esc(r.v) + '</span></div>';
+    }).join('') + '</div>';
+}
+
+async function showFeed(a) {
+  const which = String((a && a.feed) || 'earthquakes').toLowerCase();
+  if (which.startsWith('quake') || which.startsWith('earth')) {
+    const q = await quakes(a);
+    if (q.error) { renderFeed('SEISMIC', [{ head: 'UNAVAILABLE' }, { k: 'reason', v: q.error, col: '#ffb300' }]); return q; }
+    renderFeed('SEISMIC · ' + q.counted + ' EVENTS', [
+      { head: q.source },
+      ...q.earthquakes.flatMap(e => [
+        { k: 'M' + e.magnitude.toFixed(1), v: e.place, col: e.magnitude >= 6 ? '#ff3b30' : e.magnitude >= 5 ? '#ffb300' : undefined },
+        { k: '', v: e.minutes_ago + ' min ago · ' + e.depth_km + 'km deep' +
+             (e.distance_km != null ? ' · ' + e.distance_km + 'km from you' : '') +
+             (e.tsunami_flag ? ' · TSUNAMI FLAG' : '') }
+      ])
+    ]);
+    return q;
+  }
+  if (which.startsWith('space') || which.startsWith('sun') || which.startsWith('solar') || which.startsWith('aurora')) {
+    const s = await spaceWeather();
+    if (s.error) { renderFeed('SOLAR', [{ head: 'UNAVAILABLE' }, { k: 'reason', v: s.error, col: '#ffb300' }]); return s; }
+    const kp = s.planetary_k_index;
+    renderFeed('SOLAR CONDITIONS', [
+      { head: s.source },
+      ...(typeof kp === 'object' ? [
+        { big: 'Kp ' + kp.value, unit: kp.means.toUpperCase(), col: kp.value >= 5 ? '#ffb300' : '#00e5ff' },
+        { k: 'aurora', v: kp.aurora_chance },
+        { k: 'measured', v: kp.at }
+      ] : [{ k: 'K index', v: String(kp), col: '#ffb300' }]),
+      { head: 'SOLAR WIND' },
+      ...(typeof s.solar_wind === 'object' ? [
+        { big: String(s.solar_wind.speed_km_s), unit: 'KM/S · ' + s.solar_wind.means.toUpperCase() },
+        { k: 'density', v: s.solar_wind.density_p_cm3 + ' protons/cm³' },
+        { k: 'measured', v: s.solar_wind.at }
+      ] : [{ k: 'solar wind', v: String(s.solar_wind), col: '#ffb300' }])
+    ]);
+    return s;
+  }
+  if (which.startsWith('air')) {
+    const q = await airQuality(a);
+    if (q.error) { renderFeed('AIR', [{ head: 'UNAVAILABLE' }, { k: 'reason', v: q.error, col: '#ffb300' }]); return q; }
+    renderFeed('AIR QUALITY', [
+      { head: q.source },
+      { big: String(q.us_aqi), unit: 'US AQI · ' + String(q.verdict || '').toUpperCase(),
+        col: q.us_aqi > 150 ? '#ff3b30' : q.us_aqi > 100 ? '#ffb300' : '#00e5ff' },
+      { k: 'PM2.5', v: q.pm2_5 + ' µg/m³' },
+      { k: 'PM10', v: q.pm10 + ' µg/m³' },
+      { k: 'ozone', v: q.ozone + ' µg/m³' },
+      { k: 'NO₂', v: q.nitrogen_dioxide + ' µg/m³' },
+      { k: 'measured', v: q.at }
+    ]);
+    return q;
+  }
+  if (which.startsWith('crew') || which.startsWith('astro') || which.startsWith('people')) {
+    const p = await peopleInSpace();
+    if (p.error) { renderFeed('CREW', [{ head: 'UNAVAILABLE' }, { k: 'reason', v: p.error, col: '#ffb300' }]); return p; }
+    renderFeed('OFF-WORLD CREW', [
+      { head: p.source },
+      { big: String(p.count), unit: 'PEOPLE NOT ON EARTH' },
+      ...Object.keys(p.by_spacecraft).flatMap(craft => [
+        { head: craft },
+        ...p.by_spacecraft[craft].map(n => ({ k: '', v: n }))
+      ])
+    ]);
+    return p;
+  }
+  return { error: 'I do not have a feed called "' + which + '". I have earthquakes, space weather, air quality and who is in space.' };
+}
+
+/* ══════════════════════════════════════════════════════════ THE LABORATORY ══
+   He writes code, runs it, and shows you what came out.
+
+   It runs in a Web Worker, which matters for three reasons and not for
+   decoration:
+
+     · A worker has no DOM. Code in here cannot touch the deck, read the
+       conversation, reach the vault, or alter anything you are looking at.
+     · Network is removed before any user code runs — fetch, XMLHttpRequest,
+       importScripts and WebSocket are deleted from the worker's own global
+       scope. Nothing computed in here can be sent anywhere.
+     · A worker can be terminated. An infinite loop on the main thread freezes
+       the page permanently; here it hits the timeout and dies.
+
+   This is a sandbox for arithmetic, not a security boundary against a
+   determined attacker — but the code being run is code he wrote, at your
+   request, and the containment is real enough that a mistake cannot damage
+   anything.                                                                  */
+
+const LAB = { worker: null, seq: 0, running: null, history: [] };
+
+const WORKER_SRC = `
+  // Strip everything that could reach outside this worker, before any user
+  // code exists to notice it was there.
+  self.fetch = undefined;
+  self.XMLHttpRequest = undefined;
+  self.importScripts = undefined;
+  self.WebSocket = undefined;
+  self.EventSource = undefined;
+  try { delete self.fetch; delete self.XMLHttpRequest; delete self.importScripts; } catch (e) {}
+
+  const LOG = [];
+  const fmt = (v) => {
+    if (typeof v === 'string') return v;
+    if (v instanceof Error) return v.name + ': ' + v.message;
+    try {
+      const s = JSON.stringify(v, (k, x) => typeof x === 'bigint' ? String(x) + 'n' : x, 2);
+      return s === undefined ? String(v) : s;
+    } catch (e) { return String(v); }
+  };
+  const CONSOLE = {
+    log: (...a) => LOG.push(a.map(fmt).join(' ')),
+    warn: (...a) => LOG.push('⚠ ' + a.map(fmt).join(' ')),
+    error: (...a) => LOG.push('✕ ' + a.map(fmt).join(' ')),
+    info: (...a) => LOG.push(a.map(fmt).join(' ')),
+    debug: (...a) => LOG.push(a.map(fmt).join(' ')),
+    table: (v) => LOG.push(fmt(v))
+  };
+  self.console = CONSOLE;
+
+  // Names that are shadowed as parameters of the wrapper below. Deleting the
+  // globals is the real containment; shadowing is the second lock, and it holds
+  // even where the global could not be removed.
+  const BLOCKED = ['fetch', 'XMLHttpRequest', 'importScripts', 'WebSocket', 'EventSource',
+                   'Worker', 'SharedWorker', 'BroadcastChannel', 'indexedDB', 'caches',
+                   'localStorage', 'sessionStorage', 'navigator', 'postMessage', 'close'];
+
+  self.onmessage = async (e) => {
+    const { id, code } = e.data;
+    LOG.length = 0;
+    const t0 = Date.now();
+    let value, error = null;
+    try {
+      // An async wrapper, so top-level await works the way anyone would expect.
+      // console is passed in so its output is captured rather than lost, and
+      // every networked name is shadowed to undefined for the duration.
+      const names = ['console'].concat(BLOCKED);
+      const args = [CONSOLE].concat(BLOCKED.map(() => undefined));
+      const fn = new Function(...names, 'return (async () => {' + code + '\n})()');
+      value = await fn(...args);
+    } catch (err) {
+      error = (err && err.name ? err.name + ': ' : '') + ((err && err.message) || String(err));
+      if (err && err.stack) {
+        const line = /<anonymous>:(\\d+):(\\d+)/.exec(err.stack);
+        if (line) error += '  (line ' + (Number(line[1]) - 2) + ')';
+      }
+    }
+    self.postMessage({
+      id, error,
+      output: LOG.join('\\n').slice(0, 20000),
+      value: value === undefined ? undefined : fmt(value).slice(0, 20000),
+      ms: Date.now() - t0
+    });
+  };
+`;
+
+function labWorker() {
+  if (LAB.worker) return LAB.worker;
+  const blob = new Blob([WORKER_SRC], { type: 'text/javascript' });
+  const url = URL.createObjectURL(blob);
+  const w = new Worker(url);
+  URL.revokeObjectURL(url);
+  w.onmessage = (e) => {
+    const job = LAB.running;
+    if (!job || job.id !== e.data.id) return;
+    LAB.running = null;
+    clearTimeout(job.timer);
+    job.resolve(e.data);
+  };
+  w.onerror = (e) => {
+    const job = LAB.running;
+    if (!job) return;
+    LAB.running = null;
+    clearTimeout(job.timer);
+    job.resolve({ id: job.id, error: 'the sandbox itself failed: ' + (e.message || 'unknown'), output: '', ms: 0 });
+  };
+  LAB.worker = w;
+  return w;
+}
+
+function labKill(why) {
+  if (LAB.worker) { try { LAB.worker.terminate(); } catch (e) { } }
+  LAB.worker = null;
+  const job = LAB.running;
+  LAB.running = null;
+  if (job) {
+    clearTimeout(job.timer);
+    job.resolve({ id: job.id, error: why || 'stopped', output: '', ms: Date.now() - job.at, killed: true });
+  }
+}
+
+function labRun(code, timeoutMs) {
+  if (LAB.running) return Promise.resolve({ error: 'something is already running in there — wait for it, or stop it.' });
+  const w = labWorker();
+  const id = ++LAB.seq;
+  const limit = Math.min(Math.max(500, timeoutMs || 5000), 20000);
+  return new Promise((resolve) => {
+    const job = { id, resolve, at: Date.now() };
+    job.timer = setTimeout(() => {
+      labKill('it ran for longer than ' + (limit / 1000) + ' seconds and was stopped. ' +
+        'That is almost always a loop with no exit — check the condition.');
+    }, limit);
+    LAB.running = job;
+    w.postMessage({ id, code });
+  });
+}
+
+/* ───────────────────────────────────────────────────────────── the display ── */
+function renderLab(code, res, note) {
+  const host = paneSurface('lab', 'LABORATORY');
+  if (!host) return;
+  const esc = (t) => String(t == null ? '' : t)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const ok = !res.error;
+
+  host.innerHTML =
+    '<div style="padding:14px 18px; font:11px/1.7 ui-monospace,monospace;">' +
+
+    (note ? '<div style="color:rgba(190,230,244,.85); margin-bottom:12px; font-size:11.5px;">' +
+      esc(note) + '</div>' : '') +
+
+    '<div style="font-size:8px; letter-spacing:.34em; color:rgba(0,229,255,.6); margin-bottom:6px;">SOURCE</div>' +
+    '<pre style="margin:0 0 14px; padding:11px 13px; background:rgba(0,20,32,.75); ' +
+      'border-left:2px solid rgba(0,229,255,.35); color:rgba(170,222,240,.92); ' +
+      'overflow:auto; max-height:230px; white-space:pre-wrap; word-break:break-word;">' + esc(code) + '</pre>' +
+
+    (res.output ? '<div style="font-size:8px; letter-spacing:.34em; color:rgba(0,229,255,.6); margin-bottom:6px;">OUTPUT</div>' +
+      '<pre style="margin:0 0 14px; padding:11px 13px; background:rgba(0,14,22,.85); ' +
+      'color:#cfeeff; overflow:auto; max-height:280px; white-space:pre-wrap; word-break:break-word;">' +
+      esc(res.output) + '</pre>' : '') +
+
+    (res.value !== undefined ? '<div style="font-size:8px; letter-spacing:.34em; color:rgba(0,229,255,.6); ' +
+      'margin-bottom:6px;">RETURNED</div>' +
+      '<pre style="margin:0 0 14px; padding:11px 13px; background:rgba(0,26,20,.7); ' +
+      'border-left:2px solid rgba(0,255,170,.4); color:#b8ffe6; overflow:auto; max-height:200px; ' +
+      'white-space:pre-wrap; word-break:break-word;">' + esc(res.value) + '</pre>' : '') +
+
+    (res.error ? '<div style="font-size:8px; letter-spacing:.34em; color:rgba(255,59,48,.8); margin-bottom:6px;">FAULT</div>' +
+      '<pre style="margin:0 0 14px; padding:11px 13px; background:rgba(40,6,6,.6); ' +
+      'border-left:2px solid rgba(255,59,48,.55); color:#ffb3ae; white-space:pre-wrap;">' +
+      esc(res.error) + '</pre>' : '') +
+
+    '<div style="border-top:1px solid rgba(0,229,255,.14); padding-top:9px; font-size:9.5px; ' +
+      'color:rgba(150,215,235,.55); letter-spacing:.06em;">' +
+      (ok ? '✓ ran' : '✕ failed') + ' in ' + res.ms + 'ms · isolated worker · no DOM, no network, no access to your data' +
+    '</div></div>';
+
+  paneNote('lab', (ok ? 'ran in ' : 'failed after ') + res.ms + 'ms');
+}
+
+async function runLab(a) {
+  const code = String((a && a.code) || '').trim();
+  if (!code) return { error: 'no code to run' };
+  if (code.length > 40000) return { error: 'that is too much code for one go — break it up' };
+
+  const res = await labRun(code, a && a.timeout_ms);
+  renderLab(code, res, a && a.explain);
+  LAB.history.push({ at: Date.now(), code, ok: !res.error });
+  if (LAB.history.length > 40) LAB.history.shift();
+
+  const out = {
+    ran: !res.error,
+    output: res.output || '',
+    returned: res.value,
+    ms: res.ms,
+    sandbox: 'Web Worker with no DOM and network removed. Nothing computed here can reach the deck or leave the machine.'
+  };
+  if (res.error) {
+    out.error = res.error;
+    out.what_to_do_next = res.killed
+      ? 'It hit the time limit. Look for a loop whose condition never becomes false, then run a smaller version.'
+      : 'Read the fault, fix the code and run it again. Do not present a result you did not actually get.';
+  }
+  if (!res.error && !res.output && res.value === undefined) {
+    out.note = 'It ran cleanly but produced nothing. Add a console.log, or return the value you want to see.';
+  }
+  return out;
+}
+
 
 /* ================================================================ GAUNTLET ===
    Repulsors. One additive 2D canvas over the whole deck, a handful of
@@ -4987,6 +8096,11 @@ function startVoice() {
         if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript;
       }
       app.recStamp = Date.now();
+      // Interrupting him is checked on the interim result, not the final one —
+      // waiting for the sentence to finish would mean he talks over you for the
+      // whole of it, which is the exact thing being fixed.
+      const heardNow = (final + ' ' + interim).trim();
+      if (heardNow && app.speaking) bargeCheck(heardNow);
       if (final.trim()) app.vBuf = ((app.vBuf || '') + ' ' + final.trim()).trim();
       if (final.trim() || interim.trim()) armHold(interim.trim());
     };
@@ -5221,6 +8335,13 @@ function readCfg() {
 
 /* ==================================================================== BIND === */
 function bindUI() {
+  // Any deliberate act stops him mid-sentence. This is the unambiguous path:
+  // a key or a click is never the room, never an echo, never a misheard word.
+  addEventListener('keydown', (e) => {
+    if (app.speaking && !e.metaKey && !e.ctrlKey && !e.altKey) bargeIn('stopped');
+  }, true);
+  addEventListener('pointerdown', () => { if (app.speaking) bargeIn('stopped'); }, true);
+
   E.mAuto.onclick = () => setMode('auto');
   E.mDictate.onclick = () => setMode('dictate');
   E.mManual.onclick = () => setMode('manual');
@@ -5524,8 +8645,27 @@ const PANE_KIND = {
   weather:   { host: 'ovlWx',    w: 660, h: 470, min: [340, 240], label: 'ATMOSPHERIC' },
   calendar:  { host: 'ovlCal',   w: 700, h: 560, min: [340, 260], label: 'CALENDAR' },
   embed:     { host: 'ovlEmbed', w: 820, h: 580, min: [320, 240], label: 'EXTERNAL VIEW' },
-  audit:     { host: 'ovlAudit', w: 760, h: 640, min: [380, 300], label: 'FORENSIC AUDIT' }
+  audit:     { host: 'ovlAudit', w: 760, h: 640, min: [380, 300], label: 'FORENSIC AUDIT' },
+  globe:     { host: 'ovlGlobe', w: 700, h: 620, min: [320, 300], label: 'ORBITAL DISPLAY' },
+  terrain:   { host: 'ovlTerrain', w: 760, h: 560, min: [340, 280], label: 'TERRAIN' },
+  feed:      { host: 'ovlFeed',  w: 720, h: 600, min: [340, 280], label: 'LIVE FEED' },
+  lab:       { host: 'ovlLab',   w: 820, h: 620, min: [360, 300], label: 'LABORATORY' }
 };
+
+/** Open a pane and hand back its content surface, ready to be filled. Used by
+ *  everything that draws its own thing rather than emitting markup. */
+function paneSurface(kind, title, sub) {
+  const p = ovlOpen(kind, title, sub);
+  const host = E[PANE_KIND[kind].host];
+  if (!host) return null;
+  if (host.parentNode !== p.bodyEl) p.bodyEl.appendChild(host);
+  host.style.display = 'block';
+  return host;
+}
+function paneNote(kind, sub) {
+  const p = OVL.panes[kind];
+  if (p) p.subEl.textContent = String(sub || '').slice(0, 120);
+}
 
 function paneCount() { return OVL.order.length; }
 function paneTop() { return OVL.order.length ? OVL.order[OVL.order.length - 1] : null; }
@@ -5644,6 +8784,9 @@ function closePane(p) {
   if (host) { host.style.display = 'none'; E.ovlStock && E.ovlStock.appendChild(host); }
   if (p.kind === 'embed' && E.ovlEmbed) E.ovlEmbed.src = 'about:blank';
   if (p.kind === 'map' && OVL.map) { try { OVL.map.remove(); } catch (e) {} OVL.map = null; OVL.layers = []; }
+  // a WebGL context is a scarce resource — browsers cap them at around sixteen
+  // and silently refuse the next one, so it has to be handed back on close
+  if ((p.kind === 'globe' || p.kind === 'terrain') && typeof globeStop === 'function') globeStop();
   p.el.remove();
   delete OVL.panes[p.kind];
   const i = OVL.order.indexOf(p);
@@ -5685,6 +8828,13 @@ function bindPaneMouse(p) {
 /** Anything that must be told its box changed. */
 function paneResized(p) {
   if (p.kind === 'map' && OVL.map) OVL.map.invalidateSize();
+  if ((p.kind === 'globe' || p.kind === 'terrain') && GLOBE.renderer && GLOBE.camera) {
+    const host = E[PANE_KIND[p.kind].host];
+    const w = host.clientWidth || 1, h = host.clientHeight || 1;
+    GLOBE.renderer.setSize(w, h, false);
+    GLOBE.camera.aspect = w / h;
+    GLOBE.camera.updateProjectionMatrix();
+  }
 }
 
 function ovlOpen(mode, title, sub) {
@@ -5915,6 +9065,63 @@ addEventListener('resize', () => { OVL.order.forEach(p => { paneClamp(p); paneRe
 app.hist = { all: () => history, toAnthropic: () => toAnthropic(history), trim: trimHistory,
   push: (m) => history.push(m), clear: () => { history.length = 0; } };
 app.see = { list: seeing, identify: identifyObjects, note: (d, t) => noteObjects(d, t), raw: () => VIS.dets };
+/* Test surface. Everything here is a read or a deliberate poke at one
+   subsystem in isolation — the parts that cannot be judged from a screenshot. */
+app.perf = {
+  state: perfReport, tiers: () => TIERS, frame: perfFrame, afford,
+  meter, cost: (k) => PERF.cost[k],
+  meterFake: (k, ms) => { PERF.cost[k] = ms; },
+  set: (n) => setTier(n, 'by hand'),
+  settle: () => { PERF.lastShift = performance.now() - 9000; PERF.samples.length = 0; },
+  lock: (n) => { PERF.locked = n; if (n != null) setTier(n, 'pinned'); }
+};
+app.mouth = {
+  state: () => ({ open: FACE_ANIM.open, wide: FACE_ANIM.wide, brow: FACE_ANIM.brow,
+                  gesture: FACE_ANIM.gesture, source: FACE_ANIM.source }),
+  step: stepFace, start: faceSpeakStart, end: faceSpeakEnd, boundary: faceWordBoundary,
+  visemes: visemesFor, bargeCheck, bargeIn, overlap: echoOverlap
+};
+app.rig = () => selfRig((performance.now() - (VIS.t0 || 0)) / 1000);
+app.stepBody = stepBody;
+app.walkTo = (x) => { WALK.tx = Math.max(-1, Math.min(1, x)); };
+app.setSpeaking = (on) => {
+  app.speaking = !!on;
+  if (app.engine) app.engine.setState(on ? 'speaking' : 'idle');
+  if (!on) faceSpeakEnd();
+};
+app.setLastSpoken = (t) => { app.lastSpoken = String(t || ''); };
+app.setAudio = (level, fftAt) => {
+  // With no WebGL there is no engine and therefore no analyser. Stand one up so
+  // the face path can still be exercised in isolation.
+  if (!app.engine) app.engine = { state: 'speaking', setState() {}, fallback: true };
+  const eng = app.engine;
+  if (!eng.audio) eng.audio = { level: 0, fft: new Uint8Array(32), wave: new Uint8Array(1024).fill(128) };
+  const a = eng.audio;
+  a.level = level;
+  if (!a.fft || a.fft.length < 32) a.fft = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) a.fft[i] = fftAt ? fftAt(i) : 0;
+};
+
+app.lab = { run: runLab, exec: labRun, kill: labKill, history: () => LAB.history };
+app.feeds = { show: showFeed, quakes, space: spaceWeather, air: airQuality, crew: peopleInSpace,
+  clear: () => FEEDS.cache.clear() };
+
+app.agent = { runBatch, runOne, canParallel, remedyFor, callSig, reset: agentReset,
+  state: () => ({ hops: AGENT.hops, parallel: AGENT.parallel, repaired: AGENT.repaired,
+                  attempts: AGENT.attempts.size, lastRun: AGENT.lastRun }),
+  search: webSearch, read: readPage, strip: stripHTML, relevant: relevantMemory,
+  forget: memoryForget, readOnly: READ_ONLY };
+
+app.percept = { profile: profileRoom, read: readText, enrol: enrolFace, identify: identifyFace,
+  forget: forgetPerson, signature: faceSignature, sigDistance, track: trackObjects, tracked,
+  iou, gaze: () => GAZE, dist: () => DIST, faceDistance, objectDistance, focalFromFov,
+  where: whereInFrame, step: stepPercept, people: () => PEOPLE.known.map(p => p.name) };
+
+app.orbit = { parseTLE, sgp4init, sgp4, propagate, gmst, eciToGeodetic, lookAngles,
+  jdFromDate, jdFromYearDay, groundTrack, parseCatalog, overhead, nextPass, ORB, compassOf };
+app.globe = { open: openGlobe, terrain: openTerrain, stop: globeStop, state: () => GLOBE,
+  tile: lonLatToTile, mpp: metresPerPixel, hand: globeHand };
+
 app.audit = { run: auditTarget, parse: parseTarget, structure: auditStructure,
   score: scoreFindings, last: () => AUDIT.last, exportMd: auditExport,
   correlate, redirects: auditRedirects, baseline: auditBaseline, hash: sha256,
@@ -7281,8 +10488,11 @@ function camStop() {
    them and hand it to the orb, which owns a bone per particle and turns itself
    into a body. Endpoints are smoothed so the figure breathes instead of jitters. */
 const RIG = {
-  bones: new Float32Array(18 * 8),
-  smooth: new Float32Array(18 * 8),
+  // 22 bones: 18 of skeleton, then jaw, mouth and two brows. These buffers must
+  // match selfRig's output exactly — a short one silently truncates the face,
+  // and Float32Array.set throws outright on a long one.
+  bones: new Float32Array(22 * 8),
+  smooth: new Float32Array(22 * 8),
   primed: false,
   human: 0,
   seen: 0
@@ -7302,11 +10512,21 @@ const BONE_R2 = [  0.086,  0.062, 0.140, 0.104, 0.052, 0.052, 0.047, 0.047,
    exactly the copying that had to go. Nothing reads your posture any more. */
 
 function pushRig(raw, dt) {
+  if (raw.length !== RIG.smooth.length) {
+    // Better a loud, findable fault than a body missing its lower half.
+    throw new Error('rig size mismatch: the skeleton produced ' + (raw.length / 8) +
+      ' bones but the buffer holds ' + (RIG.smooth.length / 8));
+  }
   if (!RIG.primed) { RIG.smooth.set(raw); RIG.primed = true; }
   else {
-    const k = Math.min(1, dt * 14);                 // critically damped enough to look alive
+    const kBody = Math.min(1, dt * 14);             // critically damped enough to look alive
+    // The face is smoothed already, and at a much higher rate. Running it
+    // through the body's damping again puts the mouth a syllable behind the
+    // voice, which reads as a badly dubbed film.
+    const kFace = Math.min(1, dt * 45);
     for (let i = 0; i < RIG.smooth.length; i++) {
       if (i % 8 >= 6) { RIG.smooth[i] = raw[i]; continue; }
+      const k = i >= 18 * 8 ? kFace : kBody;
       RIG.smooth[i] += (raw[i] - RIG.smooth[i]) * k;
     }
   }
@@ -7480,6 +10700,7 @@ function camLoop(now) {
     try {
       const o = VIS.objects.detectForVideo(v, Math.round(now));
       noteObjects(o && o.detections, now);
+      trackObjects(o && o.detections, now, v.videoWidth || 640);
     } catch (e) { }
   } else {
     SEEN.forEach((val, k) => { if (now - val.last > 1500) SEEN.delete(k); });
@@ -7501,6 +10722,7 @@ function camLoop(now) {
   VIS.handCount = hands.length;
   const shapes = (fres && fres.faceBlendshapes && fres.faceBlendshapes[0] && fres.faceBlendshapes[0].categories) || [];
   const face = (fres && fres.faceLandmarks && fres.faceLandmarks[0]) || null;
+  stepPercept(fres, face, now, v.videoWidth || 640, v.videoHeight || 480);
   VIS.faces = face ? 1 : 0;
   const shape = (n) => { const c = shapes.find(s => s.categoryName === n); return c ? c.score : 0; };
   VIS.body = (face || hands.length) ? 1 : 0;     // somebody is there — that is all
@@ -7830,6 +11052,20 @@ function selfRig(t) {
     ['pelvis', 'chest', 'neck', 'head', 'headTop', 'lsh', 'rsh'].forEach(k => lift(k, bob));
   }
 
+  // ── the hands beat while he talks ───────────────────────────────────────
+  // Small, asymmetric, and only on stressed syllables. Large enough to notice
+  // and too small to look like semaphore.
+  if (typeof FACE_ANIM === 'object' && FACE_ANIM.gesture > 0.004) {
+    const g = FACE_ANIM.gesture, gs = Math.sin(t * 2.7);
+    lift('rel',  g * 0.030, 0,  g * 0.045);
+    lift('rwr',  g * 0.062, g * 0.014, g * 0.098);
+    lift('rhand', g * 0.078, g * 0.020, g * 0.126);
+    lift('lel', -g * 0.020 * gs, 0, g * 0.028);
+    lift('lwr', -g * 0.042 * gs, -g * 0.010, g * 0.062);
+    lift('lhand', -g * 0.052 * gs, -g * 0.014, g * 0.080);
+    lift('chest', 0, 0, g * 0.014);
+  }
+
   // ── a pose, layered on top ──────────────────────────────────────────────
   if (POSE.w > 0.002 && POSE.name && POSES[POSE.name]) {
     const P = POSES[POSE.name], w = POSE.w;
@@ -7856,13 +11092,15 @@ function selfRig(t) {
     [J.lhip, J.lkn], [J.rhip, J.rkn],
     [J.lkn, J.lank], [J.rkn, J.rank]
   ];
-  const out = new Float32Array(18 * 8);
+  const out = new Float32Array(22 * 8);
   for (let i = 0; i < 18; i++) {
     const a = segs[i][0], b = segs[i][1];
     out[i * 8] = a[0]; out[i * 8 + 1] = a[1]; out[i * 8 + 2] = a[2];
     out[i * 8 + 3] = b[0]; out[i * 8 + 4] = b[1]; out[i * 8 + 5] = b[2];
     out[i * 8 + 6] = BONE_R[i]; out[i * 8 + 7] = BONE_R2[i];
   }
+  // 18-21: jaw, mouth and brows, in the skull's own frame
+  faceBones(J, out);
   return out;
 }
 const idleRig = selfRig;   // old name, same body
@@ -8331,6 +11569,7 @@ paintVault();
 paintCam();
 bindUI();
 bindEngine();
+perfInit();
 setTimeout(() => { if (E.boot) E.boot.style.display = 'none'; }, 2000);
 requestAnimationFrame(loop);
 bootGate();
