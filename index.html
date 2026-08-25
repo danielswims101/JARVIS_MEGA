@@ -1271,6 +1271,11 @@ const PRESET = {
 
   requireAccessCode: true,             // gate the session behind the code
   units:           'imperial',         // 'imperial' = degrees F / mph, 'metric' = C / km/h
+  quality:         'auto',             // 'auto' lets the deck measure your machine and pick.
+                                       // Pin it with 'ultra', 'high', 'medium', 'low' or
+                                       // 'minimal' — ULTRA is the full 132,000 particles and
+                                       // MINIMAL still keeps 72,600. Clicking the QUALITY chip
+                                       // in the header cycles it at any time.
   camera:          false,              // start with the optical bench live (C toggles it)
   speechHold:      2000,               // ms of silence before a spoken sentence is sent
   repulsors:       false,              // OFF by default. Hand-fired effects proved far too
@@ -1954,17 +1959,30 @@ function loop(now) {
   // the deck: freezing every instrument the moment you asked for the weather is
   // most of what "it goes dark" actually was.
   if (!PANEL.on) {
-    // Every panel is now a simulation being drawn, not a drawing pretending to
-    // be a simulation. They are stepped here, once, at the real frame time.
+    // The simulations are cheap — thirty microseconds for all four — so they
+    // step every frame and stay smooth. The DRAWING is what costs, and a gauge
+    // does not need sixty redraws a second. Rendering them on their own slower
+    // clock is most of the difference between this deck running at 60fps and
+    // running at 30.
     vitalsStep(dt, !!app.busy, NET3.nodes.length ? NET3.energy : 0);
     coreStep(dt, 0.42 + VITALS.chans[0].v / 190);
-    drawVitals2();
-    if (afford('net3d', 5)) meter('net3d', () => drawNet3D(dt)); 
-    drawCore2(dt);
-    drawNeural2(dt);
-    drawRadar(dt);
+
+    if (now - PERF.instrAt >= PERF.instrEvery) {
+      const gdt = Math.min(0.2, (now - PERF.instrAt) / 1000) || dt;
+      PERF.instrAt = now;
+      meter('instruments', () => {
+        drawVitals2();
+        if (tier().net3d && afford('net3d', 6)) meter('net3d', () => drawNet3D(gdt));
+        drawCore2(gdt);
+        drawNeural2(gdt);
+        drawRadar(gdt);
+      });
+    }
   }
   if (!PANEL.on) drawWave();
+
+  // The engine loads asynchronously; the moment it is real, hand it the tier.
+  if (!app.__perfBound && perfAttach()) app.__perfBound = true;
 }
 
 /* ================================================================ NEURAL LINK = */
@@ -3497,6 +3515,8 @@ const PERF = {
   frameMs: 16.7,
   budgetMs: 16.7,           // one frame at 60Hz
   spentMs: 0,               // measured cost of optional work this frame
+  instrEvery: 1000 / 34,    // how often the gauge panels redraw
+  instrAt: 0,
   samples: [],
   lastShift: 0,
   shifts: 0,
@@ -3506,19 +3526,34 @@ const PERF = {
   cost: {}
 };
 
-/* Tier definitions. Each is a complete description of what the deck is allowed
-   to do at that level — no scattered magic numbers anywhere else. */
+/* Tier definitions.
+   ────────────────────────────────────────────────────────────────────────────
+   ORDER OF SACRIFICE. This is the part the first version got badly wrong.
+
+   The particle field IS the deck. It is the thing you look at, and it is the
+   only thing on screen that cannot be replaced by a smaller version of itself
+   without the whole thing looking cheap. So it is the LAST thing given up, not
+   the first — and even at the bottom tier it keeps more than half its density.
+
+   What gets shed first is everything that is cheap to lose: how often the
+   gauges redraw, how detailed the topology is, how fast the trackers run. A
+   gauge redrawing at 12fps instead of 60 is very nearly invisible. A particle
+   field at 14% is a completely different object, and shedding it to protect
+   the frame budget of a gauge is exactly backwards.
+
+   The numbers below reflect that: particle share spans 0.55 to 1.00, while
+   instrument rate spans 10 to 60. The cheap lever has the wide range.       */
 const TIERS = [
-  { name: 'MINIMAL', particles: 0.14, bloom: 0.45, dust: false, post: false,
-    handHz: 20, faceHz: 12, objectHz: 2,  globeSeg: 24, terrainSeg: 48,  shadows: false, trails: false },
-  { name: 'LOW',     particles: 0.28, bloom: 0.65, dust: false, post: true,
-    handHz: 24, faceHz: 15, objectHz: 3,  globeSeg: 32, terrainSeg: 64,  shadows: false, trails: false },
-  { name: 'MEDIUM',  particles: 0.50, bloom: 0.85, dust: true,  post: true,
-    handHz: 30, faceHz: 20, objectHz: 4,  globeSeg: 48, terrainSeg: 96,  shadows: false, trails: true },
-  { name: 'HIGH',    particles: 0.78, bloom: 1.00, dust: true,  post: true,
-    handHz: 40, faceHz: 26, objectHz: 6,  globeSeg: 64, terrainSeg: 160, shadows: true,  trails: true },
-  { name: 'ULTRA',   particles: 1.00, bloom: 1.12, dust: true,  post: true,
-    handHz: 60, faceHz: 30, objectHz: 8,  globeSeg: 96, terrainSeg: 256, shadows: true,  trails: true }
+  { name: 'MINIMAL', particles: 0.55, bloom: 0.80, dust: false, instrHz: 10,
+    handHz: 20, faceHz: 12, objectHz: 2,  globeSeg: 24, terrainSeg: 48,  net3d: false, trails: false },
+  { name: 'LOW',     particles: 0.68, bloom: 0.88, dust: false, instrHz: 15,
+    handHz: 24, faceHz: 15, objectHz: 3,  globeSeg: 32, terrainSeg: 64,  net3d: true,  trails: false },
+  { name: 'MEDIUM',  particles: 0.80, bloom: 0.94, dust: true,  instrHz: 24,
+    handHz: 30, faceHz: 20, objectHz: 4,  globeSeg: 48, terrainSeg: 96,  net3d: true,  trails: true },
+  { name: 'HIGH',    particles: 0.92, bloom: 1.00, dust: true,  instrHz: 34,
+    handHz: 40, faceHz: 26, objectHz: 6,  globeSeg: 64, terrainSeg: 160, net3d: true,  trails: true },
+  { name: 'ULTRA',   particles: 1.00, bloom: 1.06, dust: true,  instrHz: 48,
+    handHz: 60, faceHz: 30, objectHz: 8,  globeSeg: 96, terrainSeg: 256, net3d: true,  trails: true }
 ];
 
 function tier() { return TIERS[PERF.tier] || TIERS[3]; }
@@ -3608,6 +3643,7 @@ function setTier(n, why) {
 function applyTier(why) {
   const T = tier();
   const eng = app.engine;
+  PERF.instrEvery = 1000 / T.instrHz;
   if (eng && eng.setQuality) { try { eng.setQuality(T.particles); } catch (e) { } }
   if (eng && eng.setBloom)   { try { eng.setBloom(T.bloom); } catch (e) { } }
   if (eng && eng.setDust)    { try { eng.setDust(T.dust); } catch (e) { } }
@@ -3618,8 +3654,7 @@ function applyTier(why) {
   }
   if (typeof GLOBE === 'object' && GLOBE && GLOBE.onTier) { try { GLOBE.onTier(T); } catch (e) { } }
   app.perfTier = PERF.tierName;
-  const chip = typeof $ === 'function' && $('perfTier');
-  if (chip) chip.textContent = PERF.tierName;
+  paintPerfChip();
 }
 
 /* ──────────────────────────────────────────────────────── the frame governor ──
@@ -3644,11 +3679,19 @@ function perfFrame(dtMs) {
   // Do not thrash. A tier change is a visible event; earn it.
   if (now - PERF.lastShift < 1400) return;
 
-  // Down fast, up slow. Dropping a tier is cheap and invisible; raising one
-  // that the machine cannot hold produces exactly the stutter we are avoiding.
-  if (med > 23 || p90 > 34) {
+  // Down slowly, up slowly. The first version dropped at 23ms — 43fps — which
+  // a deck doing real work touches constantly, so it cascaded all the way to
+  // the bottom within seconds and stayed there. 30ms is 33fps, which is a
+  // frame rate somebody would actually notice.
+  //
+  // And going below MEDIUM needs to be much harder to trigger than the step
+  // from ULTRA to HIGH: the top steps cost almost nothing to give up, the
+  // bottom ones are where the deck starts looking thin.
+  const floor = PERF.tier <= 2 ? 42 : 30;          // ms, median
+  const floor90 = PERF.tier <= 2 ? 58 : 44;
+  if (med > floor || p90 > floor90) {
     if (setTier(PERF.tier - 1, 'frame time ' + med.toFixed(1) + 'ms')) PERF.samples.length = 0;
-  } else if (med < 13.5 && p90 < 18 && now - PERF.lastShift > 5000) {
+  } else if (med < 14 && p90 < 19 && now - PERF.lastShift > 5000) {
     if (setTier(PERF.tier + 1, 'headroom at ' + med.toFixed(1) + 'ms')) PERF.samples.length = 0;
   }
 }
@@ -3682,6 +3725,40 @@ function meter(name, fn) {
 
 function perfBeginFrame() { PERF.spentMs = 0; }
 
+/* Click the QUALITY chip to take it off automatic and pin a level. Cycles
+   AUTO → ULTRA → HIGH → MEDIUM → LOW → MINIMAL → AUTO. The governor is a
+   measurement, not an authority; if it judges wrong the user overrules it. */
+function perfCycle() {
+  if (PERF.locked == null) PERF.locked = TIERS.length - 1;
+  else if (PERF.locked > 0) PERF.locked--;
+  else PERF.locked = null;
+
+  if (PERF.locked == null) {
+    PERF.auto = true;
+    PERF.lastShift = performance.now();
+    PERF.samples.length = 0;
+    if (typeof toast === 'function') toast('QUALITY', 'Back on automatic', CY);
+  } else {
+    PERF.auto = false;
+    setTier(PERF.locked, 'pinned by hand');
+    if (typeof toast === 'function') {
+      toast('QUALITY', 'Pinned to ' + PERF.tierName + ' · ' +
+        Math.round(132000 * tier().particles).toLocaleString() + ' particles', CY);
+    }
+  }
+  paintPerfChip();
+}
+
+function paintPerfChip() {
+  const chip = typeof $ === 'function' && $('perfTier');
+  if (!chip) return;
+  chip.textContent = (PERF.locked == null ? '' : '▣ ') + PERF.tierName;
+  chip.style.color = PERF.locked == null ? 'rgba(150,215,235,.7)' : '#00e5ff';
+  chip.style.cursor = 'pointer';
+  chip.title = (PERF.locked == null ? 'Automatic. ' : 'Pinned. ') +
+    Math.round(132000 * tier().particles).toLocaleString() + ' particles. Click to change.';
+}
+
 function perfReport() {
   const T = tier();
   return {
@@ -3699,11 +3776,34 @@ function perfReport() {
   };
 }
 
+/* The particle engine is a module fetched from a CDN, so at boot time app.engine
+   is either missing or the 2D reserve orb. Whatever tier was chosen has to be
+   pushed again once the real one turns up, or it runs at whatever its own
+   internal loop decides and the governor is talking to nothing. */
+function perfAttach() {
+  const eng = app.engine;
+  if (!eng || eng.reserve || eng.fallback || !eng.setQuality) return false;
+  if (eng.__perfAttached) return true;
+  eng.__perfAttached = true;
+  applyTier('engine online');
+  // and give it a clean run at the new load before judging the machine
+  PERF.lastShift = performance.now() + 1200;
+  PERF.samples.length = 0;
+  return true;
+}
+
 function perfInit() {
   probeGPU();
   const t = tierFromScore(PERF.score);
   PERF.tier = t; PERF.tierName = TIERS[t].name;
+  // A pinned level in the preset wins over anything measured.
+  if (PRESET.quality && PRESET.quality !== 'auto') {
+    const i = TIERS.findIndex(x => x.name === String(PRESET.quality).toUpperCase());
+    if (i >= 0) { PERF.tier = i; PERF.tierName = TIERS[i].name; PERF.locked = i; PERF.auto = false; }
+  }
   applyTier('boot probe');
+  const chip = typeof $ === 'function' && $('perfTier');
+  if (chip) chip.onclick = perfCycle;
   // Boot is slow on every machine — shaders compile, models download, the first
   // frames are always terrible. Judging the hardware on those frames would drop
   // a capable machine to MINIMAL before it had drawn anything. Hold off.
@@ -6431,6 +6531,43 @@ function drawCore2(dt) {
   }
 }
 
+/* ─────────────────────────────────────────── the raster, drawn the cheap way ──
+   The first version of this redrew every spike of the last four seconds, every
+   frame: about 3,700 fillRect calls each preceded by building a colour string
+   with toFixed(3) on it. That is a quarter of a million CSS colour parses a
+   second, on the main thread, competing with the particle field for exactly the
+   milliseconds the particle field needed. The frame rate collapsed, the
+   governor did as it was told and shed quality, and the deck ended up looking
+   worse than before any of this was added.
+
+   A raster is a scrolling image. Draw only the newest column into an offscreen
+   buffer — about ten dots — and blit the buffer. Two fillStyle assignments per
+   frame instead of three thousand seven hundred. */
+const RAST = { cv: null, ctx: null, w: 260, h: 160, head: 0,
+               exc: 'rgba(0,229,255,.92)', inh: 'rgba(255,120,90,.92)' };
+
+function rasterColumn(fired) {
+  if (!RAST.cv) {
+    RAST.cv = document.createElement('canvas');
+    RAST.cv.width = RAST.w; RAST.cv.height = RAST.h;
+    RAST.ctx = RAST.cv.getContext('2d');
+  }
+  const g = RAST.ctx, x = RAST.head;
+  g.clearRect(x, 0, 2, RAST.h);
+  if (fired && fired.length) {
+    // two passes, so fillStyle is assigned exactly twice however many spiked
+    g.fillStyle = RAST.exc;
+    for (let i = 0; i < fired.length; i++) {
+      if (!SNN.inhib[fired[i]]) g.fillRect(x, (fired[i] / SNN.n) * RAST.h, 1.6, 1.8);
+    }
+    g.fillStyle = RAST.inh;
+    for (let i = 0; i < fired.length; i++) {
+      if (SNN.inhib[fired[i]]) g.fillRect(x, (fired[i] / SNN.n) * RAST.h, 1.6, 1.8);
+    }
+  }
+  RAST.head = (RAST.head + 1) % RAST.w;
+}
+
 function drawNeural2(dt) {
   const f = fit(E.cNeural); if (!f) return;
   const { ctx, w, h } = f;
@@ -6442,31 +6579,23 @@ function drawNeural2(dt) {
   // thinking pushes it well up it.
   const drive = 0.62 + (app.busy ? 0.26 : 0) + lvl * 0.35 +
                 (typeof VITALS === 'object' ? VITALS.chans[0].v / 500 : 0);
-  meter('snn', () => snnStep(Math.min(0.05, dt), drive));
+  const fired = snnStep(Math.min(0.05, dt), drive);
+  rasterColumn(fired);
 
   const rasterH = h * 0.62;
 
-  // ── raster: one dot per spike, neuron on Y, time on X ────────────────────
-  const R = SNN.raster;
-  const span = 220;
-  for (let k = 0; k < R.length; k++) {
-    const x = (k / (span - 1)) * w;
-    const age = 1 - k / Math.max(1, R.length);
-    const ids = R[k].ids;
-    for (let m = 0; m < ids.length; m++) {
-      const id = ids[m];
-      const y = (id / SNN.n) * rasterH;
-      ctx.fillStyle = SNN.inhib[id]
-        ? 'rgba(255,120,90,' + (0.85 - age * 0.55).toFixed(3) + ')'
-        : 'rgba(0,229,255,' + (0.9 - age * 0.55).toFixed(3) + ')';
-      ctx.fillRect(x, y, 1.6, 1.6);
-    }
+  // one blit, in two pieces, so the newest column lands at the right edge
+  if (RAST.cv) {
+    const hd = RAST.head, rest = RAST.w - hd;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(RAST.cv, hd, 0, rest, RAST.h, 0, 0, w * rest / RAST.w, rasterH);
+    if (hd > 0) ctx.drawImage(RAST.cv, 0, 0, hd, RAST.h, w * rest / RAST.w, 0, w * hd / RAST.w, rasterH);
   }
 
-  // ── population rate underneath ───────────────────────────────────────────
   ctx.strokeStyle = 'rgba(0,229,255,.10)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, rasterH + 1); ctx.lineTo(w, rasterH + 1); ctx.stroke();
 
+  // ── population rate underneath ───────────────────────────────────────────
   const rateH = h - rasterH - 10;
   let peak = 1;
   for (let i = 0; i < 160; i++) peak = Math.max(peak, SNN.rateHist[i]);
@@ -10368,6 +10497,7 @@ app.perf = {
   meter, cost: (k) => PERF.cost[k],
   meterFake: (k, ms) => { PERF.cost[k] = ms; },
   set: (n) => setTier(n, 'by hand'),
+  cycle: perfCycle, attach: perfAttach,
   settle: () => { PERF.lastShift = performance.now() - 9000; PERF.samples.length = 0; },
   lock: (n) => { PERF.locked = n; if (n != null) setTier(n, 'pinned'); }
 };
@@ -10399,7 +10529,8 @@ app.setAudio = (level, fftAt) => {
 };
 
 app.instr = {
-  net: NET3, netHand, bindNetDrag, netBuild, netLayout, netRoute, netPath, netAdj, netTraffic, netProject,
+  net: NET3, netHand, bindNetDrag, netBuild, drawNeural: () => drawNeural2(1/60),
+  raster: () => RAST, netLayout, netRoute, netPath, netAdj, netTraffic, netProject,
   vitals: VITALS, vitalsStep, vitalsHistory,
   core: CORE2, coreStep,
   snn: SNN, snnBuild, snnStep
