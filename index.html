@@ -125,7 +125,10 @@
             inset 0 0 34px rgba(0,120,170,.07),
             0 28px 70px rgba(0,0,0,.62),
             0 0 90px rgba(0,140,200,.07);
-          backdrop-filter:blur(14px) saturate(1.25);
+          /* backdrop-filter re-samples everything behind the pane, every frame,
+             per pane. Six panes open used to mean six full-area blurs. 5px reads
+             as glass; 14px reads as glass and costs three times as much. */
+          backdrop-filter:blur(5px) saturate(1.12);
           animation:panelIn .5s cubic-bezier(.16,1,.3,1) both; }
 
   /* the powered top edge */
@@ -178,23 +181,30 @@
   <!-- 1 · volumetric haze. Two enormous off-centre radial gradients drifting
           against each other, so the background is a lit space rather than a
           flat colour. -->
-  <div id="haze" style="position:absolute; inset:-25%; z-index:0; pointer-events:none; opacity:.85;
+  <!-- No blur filter here. A radial gradient is ALREADY soft; putting a 30px
+       CSS blur over a screen-and-a-half-sized element and then animating it
+       forever costs a full-screen convolution every frame for no visible
+       difference. That single line was a meaningful part of why this felt
+       laggy. -->
+  <div id="haze" style="position:absolute; inset:-25%; z-index:0; pointer-events:none; opacity:.55;
        background:
          radial-gradient(48% 38% at 22% 28%, rgba(0,150,220,.16), transparent 62%),
          radial-gradient(42% 34% at 78% 72%, rgba(90,60,200,.13), transparent 60%),
          radial-gradient(60% 50% at 50% 50%, rgba(0,200,255,.05), transparent 70%);
-       filter:blur(30px); animation:hazeDrift 44s ease-in-out infinite alternate;"></div>
+       animation:hazeDrift 44s ease-in-out infinite alternate;
+       will-change:transform;"></div>
 
   <!-- 2 · the floor grid, in perspective. A horizon does more for a sense of
           space than any amount of parallax. -->
   <div id="floorGrid" style="position:absolute; left:-50%; right:-50%; bottom:-8%; height:52%; z-index:0;
-       pointer-events:none; opacity:.24; transform:perspective(420px) rotateX(68deg);
+       pointer-events:none; opacity:.16; transform:perspective(420px) rotateX(68deg);
        transform-origin:50% 100%; mask-image:linear-gradient(to top, #000 4%, transparent 78%);
        -webkit-mask-image:linear-gradient(to top, #000 4%, transparent 78%);
        background-image:
          linear-gradient(to right, rgba(0,229,255,.30) 1px, transparent 1px),
          linear-gradient(to top,   rgba(0,229,255,.22) 1px, transparent 1px);
-       background-size:70px 70px; animation:gridRun 9s linear infinite;"></div>
+       background-size:70px 70px; animation:gridRun 14s linear infinite;
+       will-change:background-position;"></div>
 
   <!-- 3 · the HUD ring. Three concentric arcs around the core, counter-
           rotating at unrelated rates so they never line up twice. -->
@@ -218,8 +228,8 @@
   <!-- 4 · scanlines and a faint vignette over everything -->
   <div id="scan" style="position:absolute; inset:0; z-index:4; pointer-events:none; opacity:.5;
        background:
-         repeating-linear-gradient(to bottom, rgba(0,0,0,.16) 0 1px, transparent 1px 3px),
-         radial-gradient(120% 100% at 50% 50%, transparent 52%, rgba(0,0,0,.42) 100%);
+         repeating-linear-gradient(to bottom, rgba(0,0,0,.20) 0 1px, transparent 1px 3px),
+         radial-gradient(120% 100% at 50% 50%, transparent 46%, rgba(0,0,0,.58) 100%);
        mix-blend-mode:multiply;"></div>
 
   <div id="moodVeil" style="position:absolute; inset:0; z-index:1; pointer-events:none; background:#000; opacity:0; transition:opacity .8s ease;"></div>
@@ -248,6 +258,10 @@
       <div style="display:flex; flex-direction:column; gap:2px;">
         <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">QUALITY</div>
         <div id="perfTier" style="color:rgba(150,215,235,.7);">—</div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:2px;">
+        <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">LOOK</div>
+        <div id="lookChip" style="color:rgba(150,215,235,.7);">BALANCED</div>
       </div>
       <div style="display:flex; flex-direction:column; gap:2px;">
         <div style="font-size:8px; letter-spacing:.3em; color:rgba(0,229,255,.5);">VAULT</div>
@@ -1043,7 +1057,10 @@ void main(){
   // separates bokeh from a blurry smudge.
   float core = pow(1.0 - d*2.0, mix(2.4, 1.1, vBlur));
   float rim = smoothstep(0.34, 0.5, d) * vBlur * 0.55;
-  float a = core + rim;
+  // Blend towards the rim rather than adding it. Adding gave an out-of-focus
+  // point MORE total light than a sharp one, which is backwards: defocusing
+  // spreads the same energy, it does not create any.
+  float a = mix(core, max(core, rim), vBlur * 0.6);
   gl_FragColor = vec4(vCol * a, a * vA);
 }`;
 
@@ -1058,7 +1075,7 @@ const GODRAY = {
     tDiffuse: { value: null },
     uCentre: { value: new THREE.Vector2(0.5, 0.5) },
     uDensity: { value: 0.62 }, uWeight: { value: 0.22 },
-    uDecay: { value: 0.955 }, uExposure: { value: 0.42 }, uSamples: { value: 24 }
+    uDecay: { value: 0.93 }, uExposure: { value: 0.16 }, uSamples: { value: 10 }
   },
   vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
   fragmentShader: `
@@ -1067,17 +1084,20 @@ const GODRAY = {
   varying vec2 vUv;
   void main(){
     vec4 base = texture2D(tDiffuse, vUv);
-    vec2 delta = (vUv - uCentre) * (uDensity / 24.0);
+    vec2 delta = (vUv - uCentre) * (uDensity / 10.0);
     vec2 uv = vUv;
     float illum = 1.0;
     vec3 acc = vec3(0.0);
-    for (int i = 0; i < 24; i++) {
+    // Ten taps, not twenty-four. Twenty-four taps at 1440p is ten million
+    // texture fetches for this pass alone, and the difference between ten and
+    // twenty-four is not visible through a bloom pass.
+    for (int i = 0; i < 10; i++) {
       if (i >= uSamples) break;
       uv -= delta;
       vec3 s = texture2D(tDiffuse, uv).rgb;
       // only genuinely bright pixels throw rays; everything else would just
       // smear the whole image towards the middle
-      float lum = max(0.0, dot(s, vec3(0.299, 0.587, 0.114)) - 0.42);
+      float lum = max(0.0, dot(s, vec3(0.299, 0.587, 0.114)) - 0.70);
       acc += s * lum * illum * uWeight;
       illum *= uDecay;
     }
@@ -1089,8 +1109,8 @@ const POST = {
   uniforms: {
     tDiffuse: { value: null }, uTime: { value: 0 }, uAmount: { value: 1 },
     uRes: { value: new THREE.Vector2(1, 1) },
-    uStreak: { value: 0.5 }, uGrain: { value: 0.045 }, uVignette: { value: 0.55 },
-    uScan: { value: 0.03 }, uSat: { value: 1.12 }
+    uStreak: { value: 0.22 }, uGrain: { value: 0.05 }, uVignette: { value: 0.72 },
+    uScan: { value: 0.045 }, uSat: { value: 1.06 }
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} `,
   fragmentShader: `
@@ -1124,22 +1144,25 @@ const POST = {
     // immediately as "cinema" rather than "canvas".
     if (uStreak > 0.01) {
       vec3 streak = vec3(0.0);
-      for (int i = 1; i <= 9; i++) {
-        float w = 1.0 - float(i) / 10.0;
-        float d = float(i) * 0.0075;
+      for (int i = 1; i <= 5; i++) {
+        float w = 1.0 - float(i) / 6.0;
+        float d = float(i) * 0.013;
         vec3 a = texture2D(tDiffuse, uv + vec2(d, 0.0)).rgb;
         vec3 b = texture2D(tDiffuse, uv - vec2(d, 0.0)).rgb;
         vec3 s = a + b;
-        float lum = max(0.0, dot(s, vec3(0.299,0.587,0.114)) - 1.1);
+        float lum = max(0.0, dot(s, vec3(0.299,0.587,0.114)) - 1.45);
         streak += s * lum * w * w;
       }
-      col += streak * vec3(0.28, 0.62, 1.0) * 0.055 * uStreak;
+      col += streak * vec3(0.28, 0.62, 1.0) * 0.022 * uStreak;
     }
 
     // ── grade ──────────────────────────────────────────────────────────────
     float lum = dot(col, vec3(0.299, 0.587, 0.114));
     col = mix(vec3(lum), col, uSat);                  // a little more colour
-    col = pow(max(col, 0.0), vec3(0.97));             // lift the shadows slightly
+    // Deepen the shadows rather than lift them. A lift raises the floor across
+    // the WHOLE frame, which is the least visible and most damaging way to make
+    // something too bright — nothing looks blown out, everything looks washed.
+    col = pow(max(col, 0.0), vec3(1.08));
 
     // ── film ───────────────────────────────────────────────────────────────
     float g = hash(uv*uRes + fract(uTime)*137.0);
@@ -1321,7 +1344,10 @@ function init(canvas, opts = {}) {
 
   /* post */
   const composer = new EffectComposer(renderer);
-  composer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+  // 1.75 on a retina display means rendering 3x the pixels of 1.0, and every
+  // full-screen pass pays for all of them. 1.25 is the point where the extra
+  // sharpness stops being worth what it costs.
+  composer.setPixelRatio(Math.min(devicePixelRatio, 1.25));
   composer.setSize(canvas.clientWidth, canvas.clientHeight);
   composer.addPass(new RenderPass(scene, camera));
 
@@ -1330,10 +1356,14 @@ function init(canvas, opts = {}) {
      single largest visual change in the whole pipeline and it costs one
      full-screen blend: the field stops looking like a cloud of dots and starts
      looking like something in motion. */
-  const trails = new AfterimagePass(0.86);
+  // Ten frames of persistence was the root of it. Four is still a clear streak
+  // and a quarter of the lit area.
+  const trails = new AfterimagePass(0.70);
   composer.addPass(trails);
 
-  const bloom = new UnrealBloomPass(new THREE.Vector2(canvas.clientWidth, canvas.clientHeight), 1.25, 0.62, 0.32);
+  // threshold raised from 0.32 to 0.62: only genuinely hot pixels bloom, rather
+  // than every mid-tone in the trail
+  const bloom = new UnrealBloomPass(new THREE.Vector2(canvas.clientWidth, canvas.clientHeight), 0.72, 0.58, 0.62);
   composer.addPass(bloom);
 
   const rays = new ShaderPass(GODRAY);
@@ -1343,15 +1373,38 @@ function init(canvas, opts = {}) {
      instead of clamping to flat white, which is most of the difference between
      an image that looks rendered and one that looks photographed. */
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.18;
+  renderer.toneMappingExposure = 0.92;      // below unity, on purpose
   composer.addPass(new OutputPass());
 
   const post = new ShaderPass(POST);
   post.renderToScreen = true;
   composer.addPass(post);
 
-  /* state */
-  const fx = { trails: 1, rays: 1, streak: 1, dof: 1 };
+  /* ══════════════════════════════════════════════════════ EXPOSURE ═══════
+     Every additive effect in this pipeline now hangs off ONE number, and this
+     comment exists because of how the last version went wrong.
+
+     Bloom, god rays, the anamorphic streak and the trail are all ADDITIVE, on
+     top of a particle field that is itself additively blended. Each was tuned
+     on its own and looked reasonable on its own. Together they multiplied:
+     the trail held every bright pixel near peak for ten frames, which gave the
+     bloom pass roughly ten times the lit area to work with, which fed the god
+     rays, which fed the streak, all of it then multiplied by an exposure above
+     unity and finished with a gamma lift that raised the floor as well.
+
+     Nobody chose that. It is what four independently sensible numbers do when
+     they are composed and nobody adds them up. So they are no longer
+     independent: `expo` scales the lot, and turning one up turns nothing else
+     up with it.
+
+     Default is deliberately below unity. A field of 132,000 additively
+     blended points does not need help being bright. */
+  const expo = { master: 0.72, user: 1 };
+  // Rays and streak are OFF by default. They are the two most expensive passes
+  // and the two brightest, and both complaints about this deck have been
+  // "too bright" and "too slow". The default should be the setting nobody has
+  // to complain about; the rest is one click away.
+  const fx = { trails: 1, rays: 0, streak: 0, dof: 1 };
   const weights = [1, 0, 0, 0, 0], target = [1, 0, 0, 0, 0];
   let stateName = 'idle';
   const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -1520,7 +1573,18 @@ function init(canvas, opts = {}) {
       Object.assign(fx, o || {});
       trails.enabled = fx.trails > 0;
       rays.enabled = fx.rays > 0;
+      trails.uniforms.damp.value = fx.trails > 0 ? Math.min(0.82, 0.55 + fx.trails * 0.18) : 0;
     },
+    /* One number for the whole additive chain. Everything that adds light is
+       scaled by it, so brightness can be dialled without any of the effects
+       drifting out of balance with each other again. */
+    setExposure(v) {
+      expo.user = Math.max(0.25, Math.min(2, v));
+      renderer.toneMappingExposure = 0.92 * expo.user;
+      api.bloomBase = (opts.bloom || 1.05) * expo.user;
+      post.uniforms.uVignette.value = 0.72 / Math.max(0.6, expo.user);
+    },
+    get exposure() { return expo.user; },
     get fx() { return Object.assign({}, fx); },
     setMood(r, g, b, amt, dark) {
       uniforms.uMood.value.set(r, g, b);
@@ -1562,6 +1626,11 @@ const PRESET = {
 
   requireAccessCode: true,             // gate the session behind the code
   units:           'imperial',         // 'imperial' = degrees F / mph, 'metric' = C / km/h
+  look:            'balanced',         // 'clean' · 'balanced' · 'rich' · 'max'.
+                                       // CLEAN has no full-screen effects at all and is both
+                                       // the dimmest and the fastest. MAX is everything.
+                                       // The LOOK chip in the header cycles it at any time
+                                       // and remembers what you chose.
   quality:         'auto',             // 'auto' lets the deck measure your machine and pick.
                                        // Pin it with 'ultra', 'high', 'medium', 'low' or
                                        // 'minimal' — ULTRA is the full 132,000 particles and
@@ -1606,7 +1675,7 @@ const E = {};
  'cNeural','cRadar','cWave','netStat','coreStat','neuralStat','threatStat','stream',
  'console','input','inputWrap','cog','state','part','mic','toasts','hint','boot',
  'voiceBtn','voiceDot','voiceLabel','voiceRing','mAuto','mDictate','mManual','modeHint',
- 'transcript','thinkBar','cfgVeil','cfgClose','cfgKey','cfgBase','cfgModel','cfgSys','perfTier',
+ 'transcript','thinkBar','cfgVeil','cfgClose','cfgKey','cfgBase','cfgModel','cfgSys','perfTier','lookChip',
  'cfgMsg','cfgSave','cfgTest','cfgWipe','rowKey','rowBase','personaChip','personaStat',
  'tFun','tSerious','tLight','tHeavy','cfgElKey','cfgVoice','cfgVoiceFor','cfgElModel',
  'cfgStab','cfgSim','cfgSpeed','cfgSysFor','cfgReset','cfgSpeak','cfgSbUrl','cfgSbKey',
@@ -3907,6 +3976,7 @@ const PERF = {
   shifts: 0,
   locked: null,             // a tier the user pinned by hand
   reasons: [],
+  look: 1,                  // BALANCED — see LOOKS below
   // measured cost of each optional subsystem, exponentially smoothed
   cost: {}
 };
@@ -4037,9 +4107,13 @@ function applyTier(why) {
   if (eng && eng.setQuality) { try { eng.setQuality(T.particles); } catch (e) { } }
   if (eng && eng.setBloom)   { try { eng.setBloom(T.bloom); } catch (e) { } }
   if (eng && eng.setDust)    { try { eng.setDust(T.dust); } catch (e) { } }
-  // The lens effects go before the field does. A frame without god rays still
-  // has 132,000 particles in it; a frame with god rays and 18,000 does not.
-  if (eng && eng.setFX)      { try { eng.setFX(T.fx); } catch (e) { } }
+  // The look owns which effects run; the tier only ever takes things AWAY when
+  // the machine is struggling, and never adds them back above what was chosen.
+  if (eng && eng.setFX && PERF.tier <= 1) {
+    try { eng.setFX({ trails: 0, rays: 0, streak: 0 }); } catch (e) { }
+  } else if (eng && eng.setFX) {
+    try { eng.setFX((LOOKS[PERF.look] || LOOKS[1]).fx); } catch (e) { }
+  }
   if (typeof VIS === 'object' && VIS) {
     VIS.handEvery   = 1000 / T.handHz;
     VIS.faceEvery   = 1000 / T.faceHz;
@@ -4152,6 +4226,52 @@ function paintPerfChip() {
     Math.round(132000 * tier().particles).toLocaleString() + ' particles. Click to change.';
 }
 
+/* ══════════════════════════════════════════════════════════════ THE LOOK ════
+   Four presets, from cheapest and calmest to most expensive and brightest.
+   This exists because I cannot see your screen and have now guessed wrong in
+   the same direction twice — too bright, then too slow. A dial you can turn
+   is worth more than a default I keep re-tuning by correspondence.
+
+   Each is a complete description: exposure AND the passes that cost frames,
+   moved together, because those are the same axis. The bright effects are the
+   expensive ones. */
+const LOOKS = [
+  { name: 'CLEAN',    expo: 0.62, fx: { trails: 0,    rays: 0, streak: 0,   dof: 0 },
+    note: 'no full-screen effects at all — the field and nothing else' },
+  { name: 'BALANCED', expo: 0.78, fx: { trails: 0.75, rays: 0, streak: 0,   dof: 1 },
+    note: 'trails and depth of field; no extra full-screen passes' },
+  { name: 'RICH',     expo: 0.95, fx: { trails: 1,    rays: 1, streak: 0.6, dof: 1 },
+    note: 'adds god rays and lens flare — two more passes' },
+  { name: 'MAX',      expo: 1.25, fx: { trails: 1.2,  rays: 1.4, streak: 1.2, dof: 1 },
+    note: 'everything, brightest — expect it to cost frames' }
+];
+
+function applyLook(i, announce) {
+  const L = LOOKS[Math.max(0, Math.min(LOOKS.length - 1, i))];
+  PERF.look = LOOKS.indexOf(L);
+  const eng = app.engine;
+  if (eng) {
+    if (eng.setExposure) { try { eng.setExposure(L.expo); } catch (e) { } }
+    if (eng.setFX) { try { eng.setFX(L.fx); } catch (e) { } }
+  }
+  try { localStorage.setItem('jarvis.look', String(PERF.look)); } catch (e) { }
+  paintLookChip();
+  if (announce && typeof toast === 'function') toast('LOOK', L.name + ' · ' + L.note, CY);
+  return L;
+}
+
+function lookCycle() { return applyLook((PERF.look + 1) % LOOKS.length, true); }
+
+function paintLookChip() {
+  const chip = typeof $ === 'function' && $('lookChip');
+  if (!chip) return;
+  const L = LOOKS[PERF.look] || LOOKS[1];
+  chip.textContent = L.name;
+  chip.style.color = PERF.look >= 2 ? '#00e5ff' : 'rgba(150,215,235,.7)';
+  chip.style.cursor = 'pointer';
+  chip.title = L.note + ' — click to change';
+}
+
 function perfReport() {
   const T = tier();
   return {
@@ -4179,6 +4299,7 @@ function perfAttach() {
   if (eng.__perfAttached) return true;
   eng.__perfAttached = true;
   applyTier('engine online');
+  applyLook(PERF.look, false);
   // and give it a clean run at the new load before judging the machine
   PERF.lastShift = performance.now() + 1200;
   PERF.samples.length = 0;
@@ -4197,6 +4318,17 @@ function perfInit() {
   applyTier('boot probe');
   const chip = typeof $ === 'function' && $('perfTier');
   if (chip) chip.onclick = perfCycle;
+  try {
+    const saved = parseInt(localStorage.getItem('jarvis.look'), 10);
+    if (saved >= 0 && saved < LOOKS.length) PERF.look = saved;
+  } catch (e) { }
+  if (PRESET.look) {
+    const i = LOOKS.findIndex(l => l.name === String(PRESET.look).toUpperCase());
+    if (i >= 0) PERF.look = i;
+  }
+  const lchip = typeof $ === 'function' && $('lookChip');
+  if (lchip) lchip.onclick = lookCycle;
+  paintLookChip();
   // Boot is slow on every machine — shaders compile, models download, the first
   // frames are always terrible. Judging the hardware on those frames would drop
   // a capable machine to MINIMAL before it had drawn anything. Hold off.
@@ -11573,6 +11705,7 @@ app.perf = {
   meterFake: (k, ms) => { PERF.cost[k] = ms; },
   set: (n) => setTier(n, 'by hand'),
   cycle: perfCycle, attach: perfAttach,
+  looks: () => LOOKS, look: applyLook, lookCycle, lookIndex: () => PERF.look,
   settle: () => { PERF.lastShift = performance.now() - 9000; PERF.samples.length = 0; },
   lock: (n) => { PERF.locked = n; if (n != null) setTier(n, 'pinned'); }
 };
