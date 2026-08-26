@@ -839,7 +839,7 @@ const VERT = NOISE + `
 attribute vec3 aDir;
 attribute float aRad, aRand, aLayer, aSize, aSeed, aSeg, aBt;
 uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark, uVH, uHuman, uScatter;
-uniform float uFocus, uAperture, uSpin;
+uniform float uFocus, uAperture, uSpin, uGlow;
 uniform vec3 uBoneA[22];
 uniform vec3 uBoneB[22];
 // Both radii in one vec2. A float array still burns a whole vec4 slot per
@@ -987,9 +987,16 @@ void main(){
   col = mix(col, vec3(0.55,0.24,1.0), wThink*0.85*(0.35+0.65*aRand));
   col = mix(col, vec3(1.0,0.20,0.07), wAlert*0.94);
   col = mix(col, vec3(1.0,0.66,0.20), wAlert*0.18*aRand);
-  vCol = col * (0.36 + energy*0.78 + shock*0.45) * (1.0 - wThink*0.44 - wAlert*0.14);
+  // Colour intensity. The 0.36 floor was the real fault behind three rounds of
+  // "too bright": with additive blending the dense core stacks ~22 particles
+  // per centre pixel, and 22 x (0.36 x 0.52^2) sums to ~2.2 — clipped to white
+  // before a single post effect ran. Everything downstream was tuning the glow
+  // around a core that was already blown out. A 0.16 floor keeps the same idle
+  // sum near 0.3, so the core reads as bright cyan rather than a white hole,
+  // and energy still drives it up when he actually does something.
+  vCol = col * (0.16 + energy*0.62 + shock*0.42) * (1.0 - wThink*0.40 - wAlert*0.12) * uGlow;
   float lum = dot(vCol, vec3(0.299, 0.587, 0.114));
-  vCol = mix(vCol, uMood * lum * 1.75, uMoodAmt);
+  vCol = mix(vCol, uMood * lum * 1.35, uMoodAmt);
   vCol *= (1.0 - uDark);
 
   // These points blend additively, so packing the same 132,000 of them from a
@@ -999,8 +1006,10 @@ void main(){
   // out entirely: four small reductions multiply into one invisible body.
   float pack = 1.0 - uHuman * 0.30;
 
-  float a = aLayer < 0.5 ? 0.52 : (aLayer < 1.5 ? 0.44 : 0.28);
-  vA = a * uBoot * (0.6 + 0.4*breath) * pack;
+  // Base alpha, roughly halved. The inner layer is the densest and so is thinned
+  // most: it is the one that stacks into a white core.
+  float a = aLayer < 0.5 ? 0.26 : (aLayer < 1.5 ? 0.30 : 0.24);
+  vA = a * uBoot * (0.62 + 0.38*breath) * pack;
 
   float size = aSize * (1.0 + energy*0.6 + shock*1.2) * uPixel * uVH * (1.0 - uHuman * 0.14);
 
@@ -1297,7 +1306,7 @@ function init(canvas, opts = {}) {
     uBoneA: { value: Array.from({ length: 22 }, () => new THREE.Vector3()) },
     uBoneB: { value: Array.from({ length: 22 }, () => new THREE.Vector3()) },
     uBoneR: { value: Array.from({ length: 22 }, () => new THREE.Vector2(0.06, 0.06)) },
-    uFocus: { value: 5.2 }, uAperture: { value: 3.4 }, uSpin: { value: 0.10 }
+    uFocus: { value: 5.2 }, uAperture: { value: 3.4 }, uSpin: { value: 0.10 }, uGlow: { value: 1.0 }
   };
   const mat = new THREE.ShaderMaterial({
     uniforms, vertexShader: VERT, fragmentShader: FRAG,
@@ -1580,8 +1589,13 @@ function init(canvas, opts = {}) {
        drifting out of balance with each other again. */
     setExposure(v) {
       expo.user = Math.max(0.25, Math.min(2, v));
-      renderer.toneMappingExposure = 0.92 * expo.user;
-      api.bloomBase = (opts.bloom || 1.05) * expo.user;
+      // The field's own brightness is the master. Sub-linear, so turning it up
+      // does not immediately re-blow the core: the whole point of the fix is
+      // that the light lives in the particles, so this is where the dial has to
+      // reach, not just the post passes on top of them.
+      uniforms.uGlow.value = 0.62 + expo.user * 0.55;
+      renderer.toneMappingExposure = 0.88 * expo.user;
+      api.bloomBase = (opts.bloom || 1.05) * (0.7 + expo.user * 0.4);
       post.uniforms.uVignette.value = 0.72 / Math.max(0.6, expo.user);
     },
     get exposure() { return expo.user; },
@@ -1626,7 +1640,7 @@ const PRESET = {
 
   requireAccessCode: true,             // gate the session behind the code
   units:           'imperial',         // 'imperial' = degrees F / mph, 'metric' = C / km/h
-  look:            'balanced',         // 'clean' · 'balanced' · 'rich' · 'max'.
+  look:            'clean',            // 'clean' · 'balanced' · 'rich' · 'max'.
                                        // CLEAN has no full-screen effects at all and is both
                                        // the dimmest and the fastest. MAX is everything.
                                        // The LOOK chip in the header cycles it at any time
@@ -1931,7 +1945,7 @@ function bindEngine() {
       app.engine = null;
       toast('RENDER', 'Particle engine online — reserve orb released', CY);
     }
-    app.engine = window.JARVIS_ENGINE.init(canvas, { count: 132000, bloom: 1.4 });
+    app.engine = window.JARVIS_ENGINE.init(canvas, { count: 132000, bloom: 0.9 });
     wireAudio();
     paintPersona();
     if (app.engine.fallback) toast('RENDER', 'WebGL unavailable — 2D fallback orb active', AM);
@@ -2539,6 +2553,9 @@ const DOCTRINE =
   'read_text are different: look_at_me sends one frame away, read_text does not. Be accurate about which.\n' +
   '· You never estimate anyone\'s age, gender, mood or health from their face, and you say why if asked: ' +
   'those readings are unreliable and being confidently wrong about a person is worse than declining.\n' +
+  '· scan_face runs a visible biometric scan and recognises only people who were introduced by name. ' +
+  'It reports what a face is DOING — never age, gender, ethnicity, health or mood, and you say why if asked: ' +
+  'those readings are unreliable and being confidently wrong about a person is worse than declining.\n' +
   '· remember_face only ever runs when they explicitly ask you to remember someone.\n' +
   '· If the deck is struggling, performance_report says what tier it settled on and why.';
 
@@ -2943,6 +2960,9 @@ const TOOLS = [
   { name: 'read_text', description: 'Read text the user holds up to the camera, using an OCR engine that runs on their own machine so the page is never uploaded. Use when they hold up a document, a label, a screen, a book, or ask you to read something. Prefer this over look_at_me for anything that is mostly words; fall back to look_at_me if it fails or the text is handwritten.',
     params: { type: 'object', properties: {}, required: [] } },
 
+  { name: 'scan_face', description: 'Run a visible biometric scan on whoever is in front of the camera: lock onto the face, sweep it, and read out who it is (if they have been introduced), how far away they are, their head pose, where they are looking, and what their face is doing — eyes, mouth, brows, a smile. This is dramatic on screen and honest underneath: it reports observations, and it recognises ONLY people who were enrolled by name. It never estimates age, gender, ethnicity, health or mood. All on this machine; no image is sent anywhere. Use when asked to scan someone, identify who is there, or analyse a face.',
+    params: { type: 'object', properties: {}, required: [] } },
+
   { name: 'remember_face', description: 'Learn the face of whoever is in frame and file it under a name, because the user introduced them. Use ONLY when the user explicitly asks you to remember someone — "this is Sam", "remember my face". Never enrol anyone unasked. Tell them it is stored locally as landmark ratios, that no image is kept, and that a few looks from different angles make it steadier.',
     params: { type: 'object', properties: {
       name: { type: 'string', description: 'What to file them under.' }
@@ -3223,16 +3243,21 @@ function runTool(name, a) {
     case 'read_text':
       return readText(a);
 
+    case 'scan_face':
+      return scanFace(a);
+
     case 'remember_face': {
+      // routed through the stronger pose-normalised descriptor, not the old
+      // raw-distance signature
       if (!VIS.on || !VIS.ready) {
         return camStart().then(r => (r && r.error) ? r
-          : new Promise(res => setTimeout(() => res(enrolFace(a.name, VIS.lastFaceLandmarks)), 1500)));
+          : new Promise(res => setTimeout(() => res(scanEnrol(a.name, VIS.lastFaceLandmarks)), 1500)));
       }
-      return enrolFace(a.name, VIS.lastFaceLandmarks);
+      return scanEnrol(a.name, VIS.lastFaceLandmarks);
     }
 
     case 'forget_face':
-      return forgetPerson(a.name);
+      return scanForget(a.name);
 
     case 'show_globe':
       return openGlobe(a);
@@ -3976,7 +4001,7 @@ const PERF = {
   shifts: 0,
   locked: null,             // a tier the user pinned by hand
   reasons: [],
-  look: 1,                  // BALANCED — see LOOKS below
+  look: 0,                  // CLEAN — three 'too bright' reports; the calm default is earned
   // measured cost of each optional subsystem, exponentially smoothed
   cost: {}
 };
@@ -4236,14 +4261,14 @@ function paintPerfChip() {
    moved together, because those are the same axis. The bright effects are the
    expensive ones. */
 const LOOKS = [
-  { name: 'CLEAN',    expo: 0.62, fx: { trails: 0,    rays: 0, streak: 0,   dof: 0 },
-    note: 'no full-screen effects at all — the field and nothing else' },
-  { name: 'BALANCED', expo: 0.78, fx: { trails: 0.75, rays: 0, streak: 0,   dof: 1 },
-    note: 'trails and depth of field; no extra full-screen passes' },
-  { name: 'RICH',     expo: 0.95, fx: { trails: 1,    rays: 1, streak: 0.6, dof: 1 },
-    note: 'adds god rays and lens flare — two more passes' },
-  { name: 'MAX',      expo: 1.25, fx: { trails: 1.2,  rays: 1.4, streak: 1.2, dof: 1 },
-    note: 'everything, brightest — expect it to cost frames' }
+  { name: 'CLEAN',    expo: 0.50, fx: { trails: 0,    rays: 0, streak: 0,   dof: 0 },
+    note: 'the field alone, dim and calm — no effects, dimmest and fastest' },
+  { name: 'BALANCED', expo: 0.70, fx: { trails: 0.6,  rays: 0, streak: 0,   dof: 1 },
+    note: 'gentle trails and depth of field; no bright passes' },
+  { name: 'RICH',     expo: 0.88, fx: { trails: 0.85, rays: 0.8, streak: 0.6, dof: 1 },
+    note: 'adds god rays and a lens flare — two more passes' },
+  { name: 'MAX',      expo: 1.10, fx: { trails: 1,    rays: 1.1, streak: 1,   dof: 1 },
+    note: 'everything on — brightest, and it will cost frames' }
 ];
 
 function applyLook(i, announce) {
@@ -8511,6 +8536,445 @@ function stepPercept(fres, face, now, vw, vh) {
   }
 }
 
+/* ══════════════════════════════════════════════════════ THE FACE SCANNER ═══
+   A biometric scan that looks like the films and is honest like a lab.
+
+   It does two separable things, and it is worth being precise about which is
+   which because they carry very different weight:
+
+     · OBSERVE. Distance, head pose, gaze, and facial actions (eyes open, mouth
+       open, brows up, a smile). These are measurements. A blendshape of 0.8 on
+       "jawOpen" means the jaw is open; there is nothing to infer.
+
+     · RECOGNISE. Whether this is someone you have introduced by name. This is
+       a genuine claim about identity, so it is held to a genuine bar: a
+       pose-normalised geometric descriptor, a margin test against the runner
+       up, and a stability requirement across frames before it will commit.
+
+   What it will not do, and cannot be talked into: guess age, gender, ethnicity,
+   health or mood. Those systems are unreliable in ways that land hardest on the
+   people they misread, and a confident wrong answer about a person is worse
+   than no answer. It will describe what a face is DOING. It will not pretend to
+   know what that means.
+
+   And it only ever recognises people who were enrolled on purpose. There is no
+   database of strangers, no lookup, nothing leaves this machine.            */
+
+/* ─────────────────────────────────────────── a pose-normalised descriptor ────
+   The old signature was eighteen raw distances between landmarks, divided by
+   the eye separation. That is scale-invariant but not pose-invariant: turn your
+   head twenty degrees and half those distances foreshorten, and you stop
+   matching yourself.
+
+   This aligns the face into a canonical frame first — a similarity transform
+   (translate, rotate, scale) that puts the two outer eye corners on a fixed
+   horizontal baseline — and then reads the normalised coordinates of a broad
+   set of stable landmarks. That is a Procrustes alignment, the standard way to
+   compare shapes independent of how they happen to be positioned, and it is
+   dramatically steadier under head rotation than raw distances are.          */
+
+// Stable landmarks in the MediaPipe 468 mesh. Twenty-nine was too few: two
+// different faces scored 0.98 against each other, which is not a descriptor,
+// it is a coincidence detector. The whole face silhouette and the mid-face
+// contours are added here — all of them expression-stable, none of them the
+// lips or eyelids that move when someone talks or blinks — which takes the
+// descriptor to roughly 150 dimensions and makes different faces actually
+// separate. More points is the only honest way to make a geometric matcher
+// discriminate; the alternative is a deep embedding this deck deliberately
+// does not ship.
+const SCAN_PTS = [
+  // eye corners (the alignment anchor) and brows
+  33, 133, 362, 263, 70, 105, 334, 300, 46, 276, 53, 283,
+  // nose bridge, tip, base, wings
+  168, 6, 197, 195, 5, 4, 1, 2, 98, 327, 129, 358,
+  // mouth frame (corners and outer ring, not the moving inner lips)
+  61, 291, 78, 308, 43, 273, 186, 410,
+  // cheeks and mid-face
+  234, 454, 50, 280, 101, 330, 205, 425, 116, 345, 123, 352,
+  // jaw line
+  172, 397, 136, 365, 150, 379, 149, 378, 176, 400, 148, 377,
+  // chin and forehead centre-line
+  152, 175, 10, 151, 9, 8,
+  // the face silhouette / temples
+  127, 356, 162, 389, 21, 251, 54, 284, 103, 332, 67, 297, 109, 338,
+  93, 323, 132, 361, 58, 288, 215, 435
+];
+
+/** Similarity transform that maps the two outer eye corners to (-1,0)-(1,0). */
+function alignFace(lm) {
+  const rE = lm[33], lE = lm[263];               // outer eye corners
+  if (!rE || !lE) return null;
+  const cx = (rE.x + lE.x) / 2, cy = (rE.y + lE.y) / 2;
+  const dx = lE.x - rE.x, dy = lE.y - rE.y;
+  const scale = Math.hypot(dx, dy);
+  if (!(scale > 1e-4)) return null;
+  const ang = Math.atan2(dy, dx);
+  const cos = Math.cos(-ang), sin = Math.sin(-ang);
+  return { cx, cy, scale, cos, sin };
+}
+
+/** The descriptor: aligned x,y of every stable landmark, L2-normalised. */
+function scanDescriptor(lm) {
+  if (!lm || lm.length < 468) return null;
+  const T = alignFace(lm);
+  if (!T) return null;
+  const v = [];
+  for (const idx of SCAN_PTS) {
+    const p = lm[idx];
+    if (!p) { v.push(0, 0); continue; }
+    // translate, rotate, scale into the canonical frame
+    let x = (p.x - T.cx) / T.scale, y = (p.y - T.cy) / T.scale;
+    const rx = x * T.cos - y * T.sin;
+    const ry = x * T.sin + y * T.cos;
+    v.push(rx, ry);
+  }
+  // centre and normalise so a dot product is a cosine similarity
+  let mean = 0; for (const x of v) mean += x; mean /= v.length;
+  for (let i = 0; i < v.length; i++) v[i] -= mean;
+  let mag = 0; for (const x of v) mag += x * x; mag = Math.sqrt(mag);
+  if (mag < 1e-6) return null;
+  const out = new Float32Array(v.length);
+  for (let i = 0; i < v.length; i++) out[i] = v[i] / mag;
+  return out;
+}
+
+function descCosine(a, b) {
+  if (!a || !b || a.length !== b.length) return -1;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d += a[i] * b[i];
+  return d;
+}
+
+/* ─────────────────────────────────────────────────────── who he has met ─────
+   Stored on this machine only, as descriptors plus a name. No image is kept.
+   Each person accumulates several samples; a query is matched against the mean
+   AND the nearest individual sample, which is what makes it robust to the one
+   odd angle you happened to enrol from. */
+const PEOPLE2 = { known: [], loaded: false };
+
+function peopleLoad() {
+  if (PEOPLE2.loaded) return PEOPLE2.known;
+  PEOPLE2.loaded = true;
+  try {
+    const raw = localStorage.getItem('jarvis.faces2');
+    const parsed = raw ? JSON.parse(raw) : [];
+    PEOPLE2.known = parsed.map(p => ({
+      name: p.name, n: p.n || 1, at: p.at || Date.now(),
+      mean: Float32Array.from(p.mean || []),
+      samples: (p.samples || []).map(s => Float32Array.from(s))
+    })).filter(p => p.mean.length > 0);
+  } catch (e) { PEOPLE2.known = []; }
+  return PEOPLE2.known;
+}
+
+function peopleSave() {
+  try {
+    const out = PEOPLE2.known.map(p => ({
+      name: p.name, n: p.n, at: p.at,
+      mean: Array.from(p.mean, v => +v.toFixed(4)),
+      // keep at most six samples per person — enough to cover angles, small
+      // enough to stay well under any storage quota
+      samples: p.samples.slice(-6).map(s => Array.from(s, v => +v.toFixed(4)))
+    }));
+    localStorage.setItem('jarvis.faces2', JSON.stringify(out));
+    return true;
+  } catch (e) { return false; }
+}
+
+function recomputeMean(p) {
+  const d = p.samples[0].length;
+  const m = new Float32Array(d);
+  for (const s of p.samples) for (let i = 0; i < d; i++) m[i] += s[i];
+  let mag = 0;
+  for (let i = 0; i < d; i++) { m[i] /= p.samples.length; mag += m[i] * m[i]; }
+  mag = Math.sqrt(mag) || 1;
+  for (let i = 0; i < d; i++) m[i] /= mag;
+  p.mean = m;
+}
+
+/** Enrol whoever is in frame, under a name. */
+function scanEnrol(name, lm) {
+  peopleLoad();
+  const clean = String(name || '').trim().slice(0, 40);
+  if (!clean) return { error: 'I need a name to file this face under.' };
+  const desc = scanDescriptor(lm);
+  if (!desc) return { error: 'I cannot see a face clearly enough to learn it. Come closer, face the camera, and hold still.' };
+
+  let rec = PEOPLE2.known.find(p => p.name.toLowerCase() === clean.toLowerCase());
+  if (!rec) { rec = { name: clean, n: 0, at: Date.now(), mean: desc, samples: [] }; PEOPLE2.known.push(rec); }
+  rec.samples.push(desc);
+  rec.n++;
+  rec.at = Date.now();
+  recomputeMean(rec);
+  peopleSave();
+
+  return {
+    ok: true, learned: clean, samples: rec.n,
+    quality: rec.n >= 3 ? 'good' : 'thin',
+    note: rec.n < 3
+      ? 'That is ' + rec.n + ' look' + (rec.n === 1 ? '' : 's') + '. Introduce them again from a slightly ' +
+        'different angle — three or four makes recognition much steadier.'
+      : undefined,
+    privacy: 'Stored on this machine only, as a set of numbers describing the face geometry. ' +
+             'No image is kept and nothing is sent anywhere.'
+  };
+}
+
+/** Identify a face. Returns a match only when it clears the bar. */
+function scanIdentify(lm) {
+  peopleLoad();
+  if (!PEOPLE2.known.length) return { known: false, reason: 'nobody has been introduced to me yet' };
+  const desc = scanDescriptor(lm);
+  if (!desc) return { known: false, reason: 'no face clearly in frame' };
+
+  const scored = PEOPLE2.known.map(p => {
+    // best of the mean and any individual sample — covers the odd angle
+    let best = descCosine(desc, p.mean);
+    for (const s of p.samples) best = Math.max(best, descCosine(desc, s));
+    return { p, s: best };
+  }).sort((a, b) => b.s - a.s);
+
+  const top = scored[0], second = scored[1];
+  const margin = second ? top.s - second.s : 1;
+  // A match must be both close in absolute terms AND clearly better than the
+  // runner-up. Absolute distance alone will "recognise" a stranger as whoever
+  // is nearest, which is the classic failure of this whole family of methods.
+  // The bar. A single enrolled person is the weakest case — there is no runner
+  // up to be clearly better than — so it needs a high absolute score. With two
+  // or more, the margin over the runner-up does most of the work. Even so, a
+  // coincidentally similar face CAN clear a geometric matcher; that is precisely
+  // why the caveat below never softens, and why the live scan votes over frames
+  // rather than trusting one.
+  const confident = PEOPLE2.known.length === 1
+    ? top.s > 0.95
+    : (top.s > 0.92 && margin > 0.02);
+
+  return {
+    known: confident, name: confident ? top.p.name : null,
+    similarity: +top.s.toFixed(4), margin: +margin.toFixed(4),
+    closest: top.p.name,
+    caveat: 'Pose-normalised geometric matching, not a deep face-recognition model. Treat a match as a ' +
+            'strong hint about someone I have met, never as proof of identity.'
+  };
+}
+
+function scanForget(name) {
+  peopleLoad();
+  const before = PEOPLE2.known.length;
+  const n = String(name || '').toLowerCase();
+  PEOPLE2.known = (n === 'everyone' || n === 'all') ? []
+    : PEOPLE2.known.filter(p => p.name.toLowerCase() !== n);
+  peopleSave();
+  return { ok: true, removed: before - PEOPLE2.known.length, remaining: PEOPLE2.known.map(p => p.name) };
+}
+
+/* ═══════════════════════════════════════════════════ THE LIVE SCAN STATE ════
+   A scan runs across several frames: it locks onto the face, sweeps it, settles
+   on an identity, and stabilises the readings. The drama is the honest part —
+   a scan that resolved instantly would be hiding how much averaging it takes to
+   be sure. */
+const SCAN = {
+  on: false, at: 0, sweep: 0, lock: 0,
+  idHist: [], idStable: null, idFrames: 0,
+  reading: null, lastFace: null
+};
+
+function scanStart() {
+  SCAN.on = true; SCAN.at = performance.now();
+  SCAN.sweep = 0; SCAN.lock = 0; SCAN.idHist = []; SCAN.idStable = null; SCAN.idFrames = 0;
+}
+function scanStop() { SCAN.on = false; SCAN.reading = null; }
+
+/** Read the facial action units from the blendshape list. Observations only. */
+function actionUnits(shape) {
+  const g = (n) => { const v = shape && shape.get ? shape.get(n) : (shape && shape[n]); return v || 0; };
+  return {
+    eyes: (g('eyeBlinkLeft') > 0.5 && g('eyeBlinkRight') > 0.5) ? 'closed'
+        : (g('eyeBlinkLeft') > 0.5 || g('eyeBlinkRight') > 0.5) ? 'one closed' : 'open',
+    mouth: g('jawOpen') > 0.35 ? 'open' : 'closed',
+    brows: Math.max(g('browInnerUp'), g('browOuterUpLeft'), g('browOuterUpRight')) > 0.45 ? 'raised' : 'neutral',
+    smile: (g('mouthSmileLeft') + g('mouthSmileRight')) / 2 > 0.35 ? 'smiling' : 'neutral',
+    gaze_h: g('eyeLookOutLeft') > g('eyeLookInLeft') ? 'left' : g('eyeLookOutRight') > g('eyeLookInRight') ? 'right' : 'centre'
+  };
+}
+
+/** Advance the scan a frame and, when it has settled, produce a reading. */
+function scanStep(lm, shape, pose, dist, now) {
+  if (!SCAN.on) return null;
+  const dt = Math.min(0.05, (now - (SCAN.lastAt || now)) / 1000); SCAN.lastAt = now;
+  SCAN.lastFace = lm;
+
+  if (!lm) { SCAN.lock = Math.max(0, SCAN.lock - dt * 2); SCAN.reading = null; return null; }
+
+  SCAN.sweep = (SCAN.sweep + dt * 0.9) % 1;      // the moving scan line
+  SCAN.lock = Math.min(1, SCAN.lock + dt * 1.4); // the reticle closing in
+
+  // identity: majority vote over the last ~12 frames, so a single bad frame
+  // cannot flip the name
+  const id = scanIdentify(lm);
+  SCAN.idHist.push(id.known ? id.name : '·');
+  if (SCAN.idHist.length > 12) SCAN.idHist.shift();
+  const counts = {};
+  SCAN.idHist.forEach(n => counts[n] = (counts[n] || 0) + 1);
+  const winner = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+  const settled = counts[winner] >= Math.min(8, SCAN.idHist.length) && winner !== '·';
+  SCAN.idStable = settled ? winner : null;
+
+  SCAN.reading = {
+    locked: SCAN.lock > 0.9,
+    identity: SCAN.idStable || (SCAN.lock > 0.9 ? 'UNKNOWN — not enrolled' : 'scanning…'),
+    match_similarity: id.similarity,
+    distance_m: dist ? +dist.toFixed(2) : null,
+    head: pose ? { yaw: Math.round(pose.yaw * 180 / Math.PI), pitch: Math.round(pose.pitch * 180 / Math.PI),
+                   roll: Math.round(pose.roll * 180 / Math.PI) } : null,
+    actions: shape ? actionUnits(shape) : null
+  };
+  return SCAN.reading;
+}
+
+/* ═══════════════════════════════════════════════════════ THE OVERLAY ════════
+   Drawn over the camera image: a locking reticle, the face mesh traced, a
+   sweeping scan line, and a readout panel. Everything is mirrored to match what
+   the user sees, because the camera feed is mirrored.
+
+   This is the deliberately cinematic part, and it is cheap: a few dozen strokes
+   a frame, nothing that touches the frame budget the particle field cares
+   about. */
+function drawFaceScan(ctx, w, h, lm, acc) {
+  if (!lm || lm.length < 468) return;
+  const px = (i) => (1 - lm[i].x) * w;            // mirrored
+  const py = (i) => lm[i].y * h;
+
+  // bounding box of the face, from the mesh extremes
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (let i = 0; i < lm.length; i += 4) {
+    const X = (1 - lm[i].x) * w, Y = lm[i].y * h;
+    if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y;
+  }
+  const bw = x1 - x0, bh = y1 - y0;
+  const pad = bw * 0.14;
+  x0 -= pad; x1 += pad; y0 -= pad * 1.3; y1 += pad;
+
+  const lock = SCAN.lock, sweep = SCAN.sweep;
+  const settled = !!SCAN.idStable;
+  const acc2 = acc || '#00e5ff';
+  const col = settled ? '#00ff9c' : SCAN.reading && SCAN.reading.locked ? '#ffb300' : acc2;
+
+  ctx.save();
+  ctx.lineWidth = 1.3;
+
+  // ── the mesh, faint ──────────────────────────────────────────────────────
+  ctx.globalAlpha = 0.14 + lock * 0.18;
+  ctx.fillStyle = col;
+  for (let i = 0; i < lm.length; i += 3) ctx.fillRect(px(i), py(i), 1, 1);
+  ctx.globalAlpha = 1;
+
+  // ── the locking reticle: four corner brackets closing inward ─────────────
+  const inset = (1 - lock) * bw * 0.5;
+  const k = Math.min(26, bw * 0.22);
+  ctx.strokeStyle = col;
+  ctx.shadowBlur = 8; ctx.shadowColor = col;
+  [[x0 + inset, y0 + inset, 1, 1], [x1 - inset, y0 + inset, -1, 1],
+   [x0 + inset, y1 - inset, 1, -1], [x1 - inset, y1 - inset, -1, -1]].forEach(([cx, cy, sx, sy]) => {
+    ctx.beginPath();
+    ctx.moveTo(cx + sx * k, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + sy * k);
+    ctx.stroke();
+  });
+  ctx.shadowBlur = 0;
+
+  // ── the sweeping scan line ───────────────────────────────────────────────
+  if (lock > 0.5) {
+    const sy = y0 + (y1 - y0) * sweep;
+    const grad = ctx.createLinearGradient(0, sy - 14, 0, sy + 14);
+    grad.addColorStop(0, 'rgba(0,229,255,0)');
+    grad.addColorStop(0.5, col);
+    grad.addColorStop(1, 'rgba(0,229,255,0)');
+    ctx.strokeStyle = grad; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x0, sy); ctx.lineTo(x1, sy); ctx.stroke();
+    ctx.lineWidth = 1.3;
+  }
+
+  // ── key landmarks, ringed ────────────────────────────────────────────────
+  ctx.strokeStyle = col; ctx.globalAlpha = 0.8;
+  for (const i of [33, 263, 1, 61, 291, 152]) {
+    if (!lm[i]) continue;
+    ctx.beginPath(); ctx.arc(px(i), py(i), 2.4, 0, 7); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // ── the readout panel ────────────────────────────────────────────────────
+  const r = SCAN.reading;
+  if (r && lock > 0.7) {
+    const lines = [];
+    lines.push(['ID', String(r.identity).toUpperCase(), settled ? '#00ff9c' : '#ffb300']);
+    if (r.distance_m != null) lines.push(['RANGE', r.distance_m + ' m', acc2]);
+    if (r.head) lines.push(['POSE', 'Y' + r.head.yaw + ' P' + r.head.pitch + ' R' + r.head.roll, acc2]);
+    if (r.actions) {
+      lines.push(['EYES', r.actions.eyes, acc2]);
+      lines.push(['MOUTH', r.actions.mouth, acc2]);
+      if (r.actions.smile === 'smiling') lines.push(['', 'smiling', acc2]);
+      if (r.actions.brows === 'raised') lines.push(['', 'brows raised', acc2]);
+    }
+    const panelX = Math.min(x1 + 10, w - 128);
+    let panelY = Math.max(12, y0);
+    ctx.font = '600 8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'left';
+    lines.forEach((L, i) => {
+      const yy = panelY + i * 12;
+      ctx.fillStyle = 'rgba(0,229,255,.5)';
+      ctx.fillText(L[0], panelX, yy);
+      ctx.fillStyle = L[2];
+      ctx.fillText(L[1], panelX + 34, yy);
+    });
+    // the lock/scan progress bar
+    ctx.fillStyle = 'rgba(0,229,255,.2)';
+    ctx.fillRect(panelX, panelY + lines.length * 12 + 3, 90, 2);
+    ctx.fillStyle = col;
+    ctx.fillRect(panelX, panelY + lines.length * 12 + 3, 90 * (settled ? 1 : lock), 2);
+  }
+
+  ctx.restore();
+}
+
+/** The tool: start the visible scan and hand back the settled reading. */
+async function scanFace(a) {
+  const start = () => {
+    scanStart();
+    return new Promise((resolve) => {
+      // let it run for up to two seconds to settle on an identity
+      const t0 = performance.now();
+      const poll = setInterval(() => {
+        const r = SCAN.reading;
+        const done = (r && (SCAN.idStable || (r.locked && performance.now() - t0 > 1400))) ||
+                     performance.now() - t0 > 2200;
+        if (!done) return;
+        clearInterval(poll);
+        if (!SCAN.lastFace) {
+          resolve({ error: 'no face is in frame to scan. Come into view of the camera and try again.' });
+          return;
+        }
+        const who = scanIdentify(SCAN.lastFace);
+        resolve({
+          scanned: true,
+          identity: who.known ? who.name : 'not recognised — this face is not one I have been introduced to',
+          recognised: who.known,
+          match: { similarity: who.similarity, margin: who.margin, closest: who.closest, caveat: who.caveat },
+          distance_m: r ? r.distance_m : null,
+          head_pose: r ? r.head : null,
+          observations: r ? r.actions : null,
+          refuses: 'I report what the face is doing, not what it means. I do not estimate age, gender, ethnicity, ' +
+                   'health or mood — those readings are unreliable and I will not present a guess about a person as fact.',
+          privacy: 'Computed on this machine. No image was sent anywhere.'
+        });
+      }, 120);
+    });
+  };
+  if (VIS.on && VIS.ready) return start();
+  const r = await camStart();
+  if (r && r.error) return r;
+  return new Promise(res => setTimeout(() => res(start()), 1400));
+}
+
 /* ═══════════════════════════════════════════════════════ ORBITAL MECHANICS ══
    A real SGP4 propagator, not a lookup table and not an API call.
 
@@ -11764,6 +12228,11 @@ app.agent = { runBatch, runOne, canParallel, remedyFor, callSig, reset: agentRes
   search: webSearch, read: readPage, strip: stripHTML, relevant: relevantMemory,
   forget: memoryForget, readOnly: READ_ONLY };
 
+app.scan = { descriptor: scanDescriptor, align: alignFace, cosine: descCosine,
+  enrol: scanEnrol, identify: scanIdentify, forget: scanForget, start: scanStart, stop: scanStop,
+  step: scanStep, face: scanFace, actions: actionUnits, draw: drawFaceScan,
+  people: () => PEOPLE2.known.map(p => ({ name: p.name, samples: p.n })), state: () => SCAN, pts: SCAN_PTS };
+
 app.percept = { profile: profileRoom, read: readText, enrol: enrolFace, identify: identifyFace,
   forget: forgetPerson, signature: faceSignature, sigDistance, track: trackObjects, tracked,
   iou, gaze: () => GAZE, dist: () => DIST, faceDistance, objectDistance, focalFromFov,
@@ -13375,6 +13844,14 @@ function camLoop(now) {
   const shapes = (fres && fres.faceBlendshapes && fres.faceBlendshapes[0] && fres.faceBlendshapes[0].categories) || [];
   const face = (fres && fres.faceLandmarks && fres.faceLandmarks[0]) || null;
   stepPercept(fres, face, now, v.videoWidth || 640, v.videoHeight || 480);
+  // the biometric scan advances every frame it is running; it reads the same
+  // landmarks, blendshapes and pose the tracker already produced
+  if (SCAN.on) {
+    const pose = (typeof GAZE === 'object' && GAZE.valid)
+      ? { yaw: GAZE.yaw, pitch: GAZE.pitch, roll: GAZE.roll } : null;
+    const shapeMap = new Map(shapes.map(sh => [sh.categoryName, sh.score]));
+    scanStep(face, shapeMap, pose, DIST.lastFace, now);
+  }
   VIS.faces = face ? 1 : 0;
   const shape = (n) => { const c = shapes.find(s => s.categoryName === n); return c ? c.score : 0; };
   VIS.body = (face || hands.length) ? 1 : 0;     // somebody is there — that is all
@@ -13526,7 +14003,13 @@ function camLoop(now) {
     : face ? 'GAZE' : (VIS.body ? 'LOCK' : 'NO SUBJECT'));
   if (E.camGesture && !/·\s(PERSONA|LISTENING|DISMISS|VOICE)$/.test(E.camGesture.textContent)) camSay(label);
 
-  if (!VIS.folded) drawCamOverlay(hands, face, VIS.dets);
+  if (!VIS.folded) {
+    drawCamOverlay(hands, face, VIS.dets);
+    if (SCAN.on && face && E.camOverlay) {
+      const cc = E.camOverlay.getContext('2d');
+      drawFaceScan(cc, E.camOverlay.clientWidth, E.camOverlay.clientHeight, face, accentNow());
+    }
+  }
 }
 
 function drawCamOverlay(hands, face, dets) {
