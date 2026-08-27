@@ -1644,10 +1644,10 @@ window.dispatchEvent(new Event('jarvis-engine-ready'));
    only ever touched by the edge function. Nothing secret ships in this file.
    ═══════════════════════════════════════════════════════════════════════════ */
 const PRESET = {
-  supabaseUrl:     'https://gzqovsffnziumfbmqdes.supabase.co',                 // ← https://xxxxxxxxxxxx.supabase.co
-  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6cW92c2ZmbnppdW1mYm1xZGVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNTgyMTksImV4cCI6MjA5NzgzNDIxOX0.26E4yXVMAjaq_mg4R0BGqRy2adYlG8mgRkbEn3SU36Y',                 // ← the anon/publishable key (public by design)
+  supabaseUrl:     '',                 // ← https://xxxxxxxxxxxx.supabase.co
+  supabaseAnonKey: '',                 // ← the anon/publishable key (public by design)
 
-  chatFunction:    'jarvis-ai',      // edge function holding ANTHROPIC_API_KEY
+  chatFunction:    'jarvis-chat',      // edge function holding ANTHROPIC_API_KEY
   verifyFunction:  '',                 // leave blank to verify against chatFunction instead
   model:           'claude-fable-5',
 
@@ -1676,11 +1676,11 @@ const PRESET = {
                                        // allow it in access-control-allow-headers, or
                                        // set this to '' to send no custom header.
 
-  elevenKey: 'sk_1a2db9b34828b2c6b96fe6e01719210a882bf174285039b0',                       // optional — leave blank to use browser speech
+  elevenKey: '',                       // optional — leave blank to use browser speech
   voices: {
-    jarvis: 'eOpDij4ZcACvhwwZD4k1',    // Daniel  · replace with your custom voice ID
-    friday: 'CdqnllU7Nz7d5Wu8h8ha',    // Charlotte
-    edith:  'FEECqq79nQmylfvNhWa3'     // Sarah
+    jarvis: 'onwK4e9ZLuTAKqWW03F9',    // Daniel  · replace with your custom voice ID
+    friday: 'XB0fDUnXU5powFXDhCwa',    // Charlotte
+    edith:  'EXAVITQu4vr4xnSDxMaL'     // Sarah
   }
 };
 /* ═════════════════════════════════════════════════════════════════════════ */
