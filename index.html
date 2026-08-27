@@ -839,7 +839,7 @@ const VERT = NOISE + `
 attribute vec3 aDir;
 attribute float aRad, aRand, aLayer, aSize, aSeed, aSeg, aBt;
 uniform float uTime, uW[5], uAudio, uFFT[32], uShockT, uShockAmp, uPixel, uBoot, uMoodAmt, uDark, uVH, uHuman, uScatter;
-uniform float uFocus, uAperture, uSpin, uGlow;
+uniform float uFocus, uAperture, uSpin, uGlow, uDof;
 uniform vec3 uBoneA[22];
 uniform vec3 uBoneB[22];
 // Both radii in one vec2. A float array still burns a whole vec4 slot per
@@ -977,7 +977,7 @@ void main(){
   // The body carries its own light. Without this floor the figure only glows at
   // its edges and the mass of it disappears into the background.
   float glow = human * 0.42;
-  float energy = clamp((abs(nsum)*0.62 + amp*wSpeak*1.3 + shock*0.85 + exp(-(aRad-0.30)*2.9)*1.30*(1.0-uHuman) + rim*0.58 + scanBand*0.70 + glow) * form, 0.0, 2.2);
+  float energy = clamp((abs(nsum)*0.62 + amp*wSpeak*1.3 + shock*0.85 + exp(-(aRad-0.30)*2.9)*1.30*(1.0-uHuman) + rim*0.58 + scanBand*0.70 + glow) * form, 0.0, 1.6);
 
   vec3 cyan  = vec3(0.00, 0.86, 1.00);
   vec3 blue  = vec3(0.04, 0.42, 1.00);
@@ -987,14 +987,18 @@ void main(){
   col = mix(col, vec3(0.55,0.24,1.0), wThink*0.85*(0.35+0.65*aRand));
   col = mix(col, vec3(1.0,0.20,0.07), wAlert*0.94);
   col = mix(col, vec3(1.0,0.66,0.20), wAlert*0.18*aRand);
-  // Colour intensity. The 0.36 floor was the real fault behind three rounds of
-  // "too bright": with additive blending the dense core stacks ~22 particles
-  // per centre pixel, and 22 x (0.36 x 0.52^2) sums to ~2.2 — clipped to white
-  // before a single post effect ran. Everything downstream was tuning the glow
-  // around a core that was already blown out. A 0.16 floor keeps the same idle
-  // sum near 0.3, so the core reads as bright cyan rather than a white hole,
-  // and energy still drives it up when he actually does something.
-  vCol = col * (0.16 + energy*0.62 + shock*0.42) * (1.0 - wThink*0.40 - wAlert*0.12) * uGlow;
+  /* ORIGINAL COLOUR RESPONSE — RESTORED, AND NOT TO BE RE-TUNED.
+     These five constants are the ones the orb shipped with on day one. They
+     were changed once, on a theory that the dense core was stacking to white
+     before any post effect ran. The arithmetic in that theory was right and
+     the conclusion was wrong: the blow-out came from the passes stacked on
+     top — a ten-frame afterimage feeding a low-threshold bloom feeding god
+     rays — not from the field itself. Dimming the particles to compensate
+     dimmed the one thing that was never at fault.
+
+     The post chain below is back to its original two passes. With nothing
+     multiplying it, this is what the orb is supposed to look like. Leave it. */
+  vCol = col * (0.36 + energy*0.78 + shock*0.45) * (1.0 - wThink*0.44 - wAlert*0.14) * uGlow;
   float lum = dot(vCol, vec3(0.299, 0.587, 0.114));
   vCol = mix(vCol, uMood * lum * 1.35, uMoodAmt);
   vCol *= (1.0 - uDark);
@@ -1006,10 +1010,12 @@ void main(){
   // out entirely: four small reductions multiply into one invisible body.
   float pack = 1.0 - uHuman * 0.30;
 
-  // Base alpha, roughly halved. The inner layer is the densest and so is thinned
-  // most: it is the one that stacks into a white core.
-  float a = aLayer < 0.5 ? 0.26 : (aLayer < 1.5 ? 0.30 : 0.24);
-  vA = a * uBoot * (0.62 + 0.38*breath) * pack;
+  // Original per-layer alpha. `pack` stays, because it is not a brightness
+  // tweak: it exists so that packing the same 132,000 points from a wide
+  // sphere into a narrow body does not multiply the light per pixel. It is
+  // zero-cost at rest (uHuman = 0) and only ever acts on the figure.
+  float a = aLayer < 0.5 ? 0.52 : (aLayer < 1.5 ? 0.44 : 0.28);
+  vA = a * uBoot * (0.6 + 0.4*breath) * pack;
 
   float size = aSize * (1.0 + energy*0.6 + shock*1.2) * uPixel * uVH * (1.0 - uHuman * 0.14);
 
@@ -1019,9 +1025,14 @@ void main(){
   // reads as bokeh, at the cost of two instructions. Doing it properly with a
   // separate blur pass would cost a full-screen pass and look no better on a
   // field made entirely of points.
+  // uDof is 0 by default, which collapses this whole block to coc = 0: blur
+  // becomes 1.0, the alpha divisor becomes 1.0, and vBlur = 0 makes the
+  // fragment shader's mix() terms resolve to the original round sprite. The
+  // code stays because the effect is real and one click away; it is simply
+  // not part of how the orb looks by default.
   float depth = -mv.z;
   float coc = abs(depth - uFocus) / max(0.6, uAperture);
-  coc = clamp(coc, 0.0, 1.0);
+  coc = clamp(coc, 0.0, 1.0) * uDof;
   float blur = 1.0 + coc * coc * 5.5;
   size *= blur;
   vA /= (1.0 + coc * coc * 3.2);
@@ -1118,8 +1129,10 @@ const POST = {
   uniforms: {
     tDiffuse: { value: null }, uTime: { value: 0 }, uAmount: { value: 1 },
     uRes: { value: new THREE.Vector2(1, 1) },
-    uStreak: { value: 0.22 }, uGrain: { value: 0.05 }, uVignette: { value: 0.72 },
-    uScan: { value: 0.045 }, uSat: { value: 1.06 }
+    // Original lens values: grain 0.045, vignette 0.55, scanline 0.03,
+    // saturation identity, no streak.
+    uStreak: { value: 0 }, uGrain: { value: 0.045 }, uVignette: { value: 0.55 },
+    uScan: { value: 0.03 }, uSat: { value: 1.0 }
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} `,
   fragmentShader: `
@@ -1132,16 +1145,10 @@ const POST = {
     vec2 c = uv - 0.5;
     float r2 = dot(c,c);
 
-    // ── barrel distortion ──────────────────────────────────────────────────
-    // A real lens bends the image outward at the edges. A fraction of a per
-    // cent is invisible as distortion and entirely visible as "this is being
-    // seen through glass rather than composited onto a rectangle".
-    uv = uv + c * r2 * 0.022 * uAmount;
-
     // ── chromatic dispersion ───────────────────────────────────────────────
-    // Wavelength-dependent, so it grows towards the edges the way real glass
-    // does rather than sitting as a constant offset over the whole frame.
-    vec2 off = c * (0.0014 + r2*0.011) * uAmount;
+    // The original had exactly this and nothing else. No barrel distortion:
+    // that was a later addition and it went with the rest of them.
+    vec2 off = c * (0.0016 + r2*0.010) * uAmount;
     vec3 col;
     col.r = texture2D(tDiffuse, uv + off).r;
     col.g = texture2D(tDiffuse, uv).g;
@@ -1166,17 +1173,17 @@ const POST = {
     }
 
     // ── grade ──────────────────────────────────────────────────────────────
+    // uSat is 1.0 by default, which makes this line an identity. The gamma
+    // push that used to sit underneath it is gone: the original applied no
+    // curve at all, and a curve is exactly the kind of change that is
+    // invisible in isolation and obvious in aggregate.
     float lum = dot(col, vec3(0.299, 0.587, 0.114));
-    col = mix(vec3(lum), col, uSat);                  // a little more colour
-    // Deepen the shadows rather than lift them. A lift raises the floor across
-    // the WHOLE frame, which is the least visible and most damaging way to make
-    // something too bright — nothing looks blown out, everything looks washed.
-    col = pow(max(col, 0.0), vec3(1.08));
+    col = mix(vec3(lum), col, uSat);
 
     // ── film ───────────────────────────────────────────────────────────────
     float g = hash(uv*uRes + fract(uTime)*137.0);
     col += (g - 0.5) * uGrain;
-    col *= 1.0 - smoothstep(0.26, 0.98, r2) * uVignette;
+    col *= 1.0 - smoothstep(0.28, 0.95, r2) * uVignette;
     col *= 1.0 - uScan + uScan*sin(uv.y*uRes.y*1.6);
 
     gl_FragColor = vec4(col, 1.0);
@@ -1306,7 +1313,9 @@ function init(canvas, opts = {}) {
     uBoneA: { value: Array.from({ length: 22 }, () => new THREE.Vector3()) },
     uBoneB: { value: Array.from({ length: 22 }, () => new THREE.Vector3()) },
     uBoneR: { value: Array.from({ length: 22 }, () => new THREE.Vector2(0.06, 0.06)) },
-    uFocus: { value: 5.2 }, uAperture: { value: 3.4 }, uSpin: { value: 0.10 }, uGlow: { value: 1.0 }
+    // uSpin 0 and uDof 0: no motion streak, no defocus. Both are opt-in.
+    uFocus: { value: 5.2 }, uAperture: { value: 3.4 }, uSpin: { value: 0 },
+    uGlow: { value: 1.0 }, uDof: { value: 0 }
   };
   const mat = new THREE.ShaderMaterial({
     uniforms, vertexShader: VERT, fragmentShader: FRAG,
@@ -1351,38 +1360,40 @@ function init(canvas, opts = {}) {
   }));
   scene.add(dust);
 
-  /* post */
+  /* ══════════════════════════════════════════ POST — THE ORIGINAL CHAIN ═══
+     Render → Bloom → Output → lens. Two effects, in that order, exactly as
+     the orb shipped.
+
+     The afterimage and god-ray passes are still constructed, because the
+     LOOK control can switch them on and the governor can switch them off,
+     but both start DISABLED and neither is in the picture at rest. That is
+     the whole of the revert: the passes that stacked multiplicatively on an
+     already-additive particle field are no longer in the path. */
   const composer = new EffectComposer(renderer);
-  // 1.75 on a retina display means rendering 3x the pixels of 1.0, and every
-  // full-screen pass pays for all of them. 1.25 is the point where the extra
-  // sharpness stops being worth what it costs.
-  composer.setPixelRatio(Math.min(devicePixelRatio, 1.25));
+  composer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
   composer.setSize(canvas.clientWidth, canvas.clientHeight);
   composer.addPass(new RenderPass(scene, camera));
 
-  /* Temporal accumulation. Each frame is blended over a decayed copy of the
-     last, so every particle drags a luminous tail behind it. This is the
-     single largest visual change in the whole pipeline and it costs one
-     full-screen blend: the field stops looking like a cloud of dots and starts
-     looking like something in motion. */
-  // Ten frames of persistence was the root of it. Four is still a clear streak
-  // and a quarter of the lit area.
   const trails = new AfterimagePass(0.70);
+  trails.enabled = false;
+  trails.uniforms.damp.value = 0;
   composer.addPass(trails);
 
-  // threshold raised from 0.32 to 0.62: only genuinely hot pixels bloom, rather
-  // than every mid-tone in the trail
-  const bloom = new UnrealBloomPass(new THREE.Vector2(canvas.clientWidth, canvas.clientHeight), 0.72, 0.58, 0.62);
+  // Original construction values. Strength is overwritten every frame from
+  // bloomBase anyway; radius 0.62 and threshold 0.32 are the ones that matter.
+  const bloom = new UnrealBloomPass(new THREE.Vector2(canvas.clientWidth, canvas.clientHeight), 1.25, 0.62, 0.32);
   composer.addPass(bloom);
 
   const rays = new ShaderPass(GODRAY);
+  rays.enabled = false;
+  rays.uniforms.uExposure.value = 0;
   composer.addPass(rays);
 
-  /* ACES rather than the default linear clip. Highlights roll off into colour
-     instead of clamping to flat white, which is most of the difference between
-     an image that looks rendered and one that looks photographed. */
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.92;      // below unity, on purpose
+  /* No tone mapping. ACES was added at the same time as the passes above and
+     for the same reason — to tame highlights that only existed because of
+     them. With those gone it is just a grade nobody asked for. */
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.toneMappingExposure = 1;
   composer.addPass(new OutputPass());
 
   const post = new ShaderPass(POST);
@@ -1409,11 +1420,11 @@ function init(canvas, opts = {}) {
      Default is deliberately below unity. A field of 132,000 additively
      blended points does not need help being bright. */
   const expo = { master: 0.72, user: 1 };
-  // Rays and streak are OFF by default. They are the two most expensive passes
-  // and the two brightest, and both complaints about this deck have been
-  // "too bright" and "too slow". The default should be the setting nobody has
-  // to complain about; the rest is one click away.
-  const fx = { trails: 1, rays: 0, streak: 0, dof: 1 };
+  // EVERY optional effect is off. expo.user = 1 means uGlow = 1, which makes
+  // the shader line above arithmetically identical to the original. This is
+  // the default state and it is the original state; the LOOK control can
+  // still take it somewhere else, but nothing does so on its own.
+  const fx = { trails: 0, rays: 0, streak: 0, dof: 0 };
   const weights = [1, 0, 0, 0, 0], target = [1, 0, 0, 0, 0];
   let stateName = 'idle';
   const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -1476,7 +1487,8 @@ function init(canvas, opts = {}) {
     post.uniforms.uTime.value = t;
     post.uniforms.uAmount.value = 1 + weights[2] * 2.2 + weights[4] * 3.4;
     post.uniforms.uStreak.value = fx.streak * (0.6 + audio.level * 1.4 + weights[3] * 0.8);
-    post.uniforms.uSat.value = 1.10 + weights[4] * 0.22 + audio.level * 0.10;
+    // 1.0 is identity — the original applied no saturation push at all.
+    post.uniforms.uSat.value = 1.0 + weights[4] * 0.22 * (fx.streak > 0 ? 1 : 0);
 
     /* ── the lens breathes ────────────────────────────────────────────────
        Focus pulls in as he speaks and pushes out when he is idle, so the
@@ -1583,20 +1595,21 @@ function init(canvas, opts = {}) {
       trails.enabled = fx.trails > 0;
       rays.enabled = fx.rays > 0;
       trails.uniforms.damp.value = fx.trails > 0 ? Math.min(0.82, 0.55 + fx.trails * 0.18) : 0;
+      uniforms.uDof.value = fx.dof > 0 ? 1 : 0;
+      if (!(fx.dof > 0)) uniforms.uSpin.value = 0;
     },
     /* One number for the whole additive chain. Everything that adds light is
        scaled by it, so brightness can be dialled without any of the effects
        drifting out of balance with each other again. */
     setExposure(v) {
       expo.user = Math.max(0.25, Math.min(2, v));
-      // The field's own brightness is the master. Sub-linear, so turning it up
-      // does not immediately re-blow the core: the whole point of the fix is
-      // that the light lives in the particles, so this is where the dial has to
-      // reach, not just the post passes on top of them.
-      uniforms.uGlow.value = 0.62 + expo.user * 0.55;
-      renderer.toneMappingExposure = 0.88 * expo.user;
-      api.bloomBase = (opts.bloom || 1.05) * (0.7 + expo.user * 0.4);
-      post.uniforms.uVignette.value = 0.72 / Math.max(0.6, expo.user);
+      // Calibrated so that expo.user === 1 reproduces the original numbers
+      // EXACTLY: uGlow 1.0, bloomBase 1.05, vignette 0.55. The dial still
+      // works in both directions, but its neutral position is the orb as it
+      // shipped rather than some tuned-down version of it.
+      uniforms.uGlow.value = expo.user;
+      api.bloomBase = (opts.bloom || 1.05) * expo.user;
+      post.uniforms.uVignette.value = 0.55 / Math.max(0.6, expo.user);
     },
     get exposure() { return expo.user; },
     get fx() { return Object.assign({}, fx); },
@@ -1640,9 +1653,10 @@ const PRESET = {
 
   requireAccessCode: true,             // gate the session behind the code
   units:           'imperial',         // 'imperial' = degrees F / mph, 'metric' = C / km/h
-  look:            'clean',            // 'clean' · 'balanced' · 'rich' · 'max'.
-                                       // CLEAN has no full-screen effects at all and is both
-                                       // the dimmest and the fastest. MAX is everything.
+  look:            'original',         // 'original' · 'balanced' · 'rich' · 'max'.
+                                       // ORIGINAL is the orb exactly as it first shipped: bloom
+                                       // and lens only, no trails, no god rays, no tone mapping.
+                                       // It is the default and it is the fastest. MAX is everything.
                                        // The LOOK chip in the header cycles it at any time
                                        // and remembers what you chose.
   quality:         'auto',             // 'auto' lets the deck measure your machine and pick.
@@ -2139,56 +2153,226 @@ function drawNeuralLegacy(dt) {
   });
 }
 
+/* ══════════════════════════════════ THE THREAT MATRIX, AS A TACTICAL PLOT ═══
+   The old version was a sweep with dots orbiting the centre. Two things were
+   wrong with it, and the second is the one that mattered.
+
+   First, tracks do not orbit. Everything on a real plot travels in a straight
+   line at a constant course and speed until it manoeuvres, and the whole skill
+   of reading one is watching those lines and working out where they will be.
+   Circular drift is the motion of a screensaver.
+
+   Second, and worse: a plot with no scale is not a plot. A dot two-thirds of
+   the way out means nothing unless the rings are labelled, the bearings are
+   marked, and there is a table underneath saying what the track is and whether
+   it is getting closer. That table is the instrument; the picture is the index
+   into it.
+
+   So each contact now carries a real position in kilometres, a course and a
+   speed, and the display computes bearing, range and CPA — closest point of
+   approach — from them. CPA is the number an operator actually watches: it is
+   how near this thing will get if nobody changes anything, and when it goes
+   the table says so.                                                         */
+
+const RANGE_KM = 160;             // full scale of the outermost ring
+const TIME_X = 120;               // time compression, stated on the display
+
+/** Give a contact real kinematics if it does not have them yet. Contacts can
+ *  be pushed in from the tool layer, so this has to be tolerant. */
+function trackInit(c) {
+  if (c.x != null) return c;
+  const a = c.a != null ? c.a : rnd(0, 6.28);
+  const r = (c.r != null ? c.r : rnd(0.22, 0.96)) * RANGE_KM;
+  c.x = Math.cos(a) * r;                 // km east
+  c.y = -Math.sin(a) * r;                // km north (screen y is down)
+  c.spd = c.hostile ? rnd(320, 620) : rnd(120, 480);       // knots
+  // roughly inbound, with spread — a plot of purely random courses has nothing
+  // to watch, and a plot of purely inbound courses is a shooting gallery
+  const toCentre = Math.atan2(-c.y, -c.x);
+  c.crs = toCentre + rnd(-1.1, 1.1);
+  return c;
+}
+
 function drawRadar(dt) {
   const f = fit(E.cRadar); if (!f) return;
   const { ctx, w, h } = f;
-  const cx = w / 2, cy = h / 2, R0 = Math.min(w, h) * 0.44;
+
+  const tableRows = 4;
+  const tableH = 9 + tableRows * 9;
+  const plotH = h - tableH;
+  const cx = w / 2, cy = plotH / 2, R0 = Math.min(w, plotH) * 0.43;
+  const kmToPx = R0 / RANGE_KM;
+
   sim.sweep += dt * 1.15;
-  ctx.strokeStyle = 'rgba(0,229,255,.16)'; ctx.lineWidth = 1;
-  for (let i = 1; i <= 4; i++) { ctx.beginPath(); ctx.arc(cx, cy, R0 * i / 4, 0, 7); ctx.stroke(); }
-  for (let i = 0; i < 12; i++) {
-    const a = i * Math.PI / 6;
-    ctx.strokeStyle = i % 3 === 0 ? 'rgba(0,229,255,.28)' : 'rgba(0,229,255,.10)';
-    ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * R0 * .12, cy + Math.sin(a) * R0 * .12);
-    ctx.lineTo(cx + Math.cos(a) * R0, cy + Math.sin(a) * R0); ctx.stroke();
+
+  // ── range rings, labelled ────────────────────────────────────────────────
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 4; i++) {
+    ctx.strokeStyle = i === 4 ? 'rgba(0,229,255,.26)' : 'rgba(0,229,255,.13)';
+    ctx.beginPath(); ctx.arc(cx, cy, R0 * i / 4, 0, 7); ctx.stroke();
+    ctx.font = '400 6px "JetBrains Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(150,215,235,.30)';
+    ctx.fillText(String(RANGE_KM * i / 4), cx + 2, cy - R0 * i / 4 - 1.5);
   }
+
+  // ── bearing graticule ────────────────────────────────────────────────────
+  // Every thirty degrees, labelled the way a bearing is spoken: three digits,
+  // clockwise from north.
+  for (let b = 0; b < 360; b += 30) {
+    const a = (b - 90) * Math.PI / 180;
+    const maj = b % 90 === 0;
+    ctx.strokeStyle = maj ? 'rgba(0,229,255,.24)' : 'rgba(0,229,255,.08)';
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * R0 * 0.12, cy + Math.sin(a) * R0 * 0.12);
+    ctx.lineTo(cx + Math.cos(a) * R0, cy + Math.sin(a) * R0);
+    ctx.stroke();
+    if (maj) {
+      ctx.font = '400 6px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(150,215,235,.38)';
+      ctx.fillText(pad(b, 3), cx + Math.cos(a) * (R0 + 6), cy + Math.sin(a) * (R0 + 6) + 2);
+    }
+  }
+
+  // ── the sweep ────────────────────────────────────────────────────────────
   const sa = sim.sweep % (Math.PI * 2);
   const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R0);
-  g.addColorStop(0, 'rgba(0,229,255,.30)'); g.addColorStop(1, 'rgba(0,229,255,0)');
+  g.addColorStop(0, 'rgba(0,229,255,.26)'); g.addColorStop(1, 'rgba(0,229,255,0)');
   ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(cx, cy);
   ctx.arc(cx, cy, R0, sa - 0.42, sa); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = 'rgba(0,229,255,.75)'; ctx.lineWidth = 1.2;
+  ctx.strokeStyle = 'rgba(0,229,255,.70)'; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(sa) * R0, cy + Math.sin(sa) * R0); ctx.stroke();
 
+  // own ship at the origin
+  ctx.strokeStyle = 'rgba(234,252,255,.55)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 4); ctx.lineTo(cx + 3, cy + 3); ctx.lineTo(cx - 3, cy + 3); ctx.closePath();
+  ctx.stroke();
+
   if (Math.random() < 0.012 && sim.contacts.length < 9) {
-    sim.contacts.push({ a: rnd(0, 6.28), r: rnd(0.22, 0.96), life: 0, cls: null, hostile: Math.random() < 0.22, id: (Math.random() * 9000 + 1000 | 0) });
+    sim.contacts.push({ a: rnd(0, 6.28), r: rnd(0.55, 0.98), life: 0, cls: null,
+      hostile: Math.random() < 0.22, id: (Math.random() * 9000 + 1000 | 0) });
   }
+
   let hostiles = 0;
+  const tracks = [];
+  // knots → km per displayed second, with the stated time compression applied
+  const kmPerSec = 1.852 / 3600 * TIME_X;
+
   for (let i = sim.contacts.length - 1; i >= 0; i--) {
-    const c = sim.contacts[i]; c.life += dt;
-    if (c.life > 11) { sim.contacts.splice(i, 1); continue; }
+    const c = trackInit(sim.contacts[i]);
+    c.life += dt;
+    if (c.life > 34) { sim.contacts.splice(i, 1); continue; }
     if (!c.cls && c.life > 1.6) c.cls = c.hostile ? 'HOSTILE' : pick(['CIVIL', 'FRIEND', 'UNKNOWN', 'DRONE']);
-    if (c.cls === 'HOSTILE') hostiles++;
-    c.a += dt * 0.04;
-    const x = cx + Math.cos(c.a) * R0 * c.r, y = cy + Math.sin(c.a) * R0 * c.r;
-    let da = (sa - c.a) % (Math.PI * 2); if (da < 0) da += Math.PI * 2;
-    const fade = Math.pow(Math.max(0, 1 - da / 1.25), 1.8) * Math.min(1, c.life / .35) * (1 - Math.max(0, (c.life - 9) / 2));
-    if (fade < 0.02) continue;
-    const col = c.hostile ? RD : c.cls ? CY : AM;
-    ctx.globalAlpha = fade; ctx.fillStyle = col; ctx.shadowBlur = 8; ctx.shadowColor = col;
-    ctx.beginPath(); ctx.arc(x, y, 2.6, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
-    ctx.strokeStyle = col; ctx.globalAlpha = fade * .5; ctx.lineWidth = 1;
-    ctx.strokeRect(x - 5.5, y - 5.5, 11, 11);
-    if (c.cls) {
-      ctx.globalAlpha = fade * .85; ctx.fillStyle = col; ctx.textAlign = 'left';
-      ctx.font = '400 7px "JetBrains Mono", monospace';
-      ctx.fillText(c.cls + '·' + c.id, x + 8, y + 3);
+    if (c.hostile) hostiles++;
+
+    // straight-line motion, in kilometres
+    const vx = Math.cos(c.crs) * c.spd * kmPerSec;
+    const vy = -Math.sin(c.crs) * c.spd * kmPerSec;
+    c.x += vx * dt; c.y += vy * dt;
+
+    const rng = Math.hypot(c.x, c.y);
+    if (rng > RANGE_KM * 1.15) { sim.contacts.splice(i, 1); continue; }
+
+    // bearing, clockwise from north
+    let brg = Math.atan2(c.x, c.y) * 180 / Math.PI;
+    if (brg < 0) brg += 360;
+
+    /* Closest point of approach. With constant velocity the range is minimised
+       at t = -(r·v)/|v|²; a negative t means the track is already opening and
+       the CPA is now. This is straightforward geometry and it is the single
+       most useful thing a tactical plot can tell you. */
+    const vv = vx * vx + vy * vy;
+    const tc = vv > 1e-9 ? -((c.x * vx + c.y * vy) / vv) : 0;
+    const tcpa = Math.max(0, tc);
+    const cpa = Math.hypot(c.x + vx * tcpa, c.y + vy * tcpa);
+    c.cpa = cpa; c.brg = brg; c.rng = rng; c.closing = tc > 0;
+
+    const px = cx + c.x * kmToPx, py = cy + c.y * kmToPx;
+
+    // paint intensity follows the sweep, as a real PPI does
+    const sang = Math.atan2(py - cy, px - cx);
+    let da = (sa - sang) % (Math.PI * 2); if (da < 0) da += Math.PI * 2;
+    const fade = Math.max(0.22, Math.pow(Math.max(0, 1 - da / 1.6), 1.5)) *
+                 Math.min(1, c.life / 0.35);
+
+    const col = c.hostile ? RD : c.cls === 'FRIEND' ? CY : c.cls ? '#7aa8ff' : AM;
+    ctx.globalAlpha = fade;
+
+    // NATO-style symbology: hostile is a diamond, friend a circle, the rest a
+    // square. Shape carries the classification so colour is not the only cue.
+    ctx.strokeStyle = col; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    if (c.hostile) {
+      ctx.moveTo(px, py - 4.4); ctx.lineTo(px + 4.4, py); ctx.lineTo(px, py + 4.4); ctx.lineTo(px - 4.4, py); ctx.closePath();
+    } else if (c.cls === 'FRIEND') {
+      ctx.arc(px, py, 4, 0, 7);
+    } else {
+      ctx.rect(px - 3.6, py - 3.6, 7.2, 7.2);
     }
+    ctx.stroke();
+    ctx.fillStyle = col; ctx.globalAlpha = fade * 0.5;
+    ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 7); ctx.fill();
+
+    // velocity leader — length proportional to speed, so a fast track visibly
+    // reaches further ahead than a slow one
+    ctx.globalAlpha = fade * 0.8;
+    ctx.strokeStyle = col; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px + vx * kmToPx * 2.4, py + vy * kmToPx * 2.4);
+    ctx.stroke();
+
     ctx.globalAlpha = 1;
+    tracks.push(c);
   }
+
+  ctx.globalAlpha = 1;
+  ctx.font = '400 6px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(150,215,235,.28)';
+  ctx.fillText('PPI · ' + RANGE_KM + 'km · TIME ×' + TIME_X, 3, plotH - 3);
+
+  // ── the track table ──────────────────────────────────────────────────────
+  // Sorted by CPA, because the nearest approach is what you triage on — not
+  // the current range, which is what a track that is already opening still has.
+  const ty = plotH;
+  ctx.strokeStyle = 'rgba(0,229,255,.12)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, ty); ctx.lineTo(w, ty); ctx.stroke();
+
+  const cols = [0.03, 0.26, 0.44, 0.62, 0.80];
+  const head = ['TRACK', 'BRG', 'RNG', 'CPA', 'CLS'];
+  ctx.font = '400 6px "JetBrains Mono", monospace';
+  ctx.fillStyle = 'rgba(150,215,235,.34)';
+  head.forEach((t, k) => { ctx.textAlign = 'left'; ctx.fillText(t, w * cols[k], ty + 7); });
+
+  tracks.sort((a, b) => a.cpa - b.cpa);
+  for (let k = 0; k < Math.min(tableRows, tracks.length); k++) {
+    const c = tracks[k];
+    const y = ty + 16 + k * 9;
+    const col = c.hostile ? RD : c.cls === 'FRIEND' ? 'rgba(0,229,255,.8)' : 'rgba(150,215,235,.75)';
+    ctx.font = '400 6.5px "JetBrains Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = col;
+    ctx.fillText('TK' + c.id, w * cols[0], y);
+    ctx.fillStyle = 'rgba(150,215,235,.72)';
+    ctx.fillText(pad(Math.round(c.brg), 3) + '°', w * cols[1], y);
+    ctx.fillText(c.rng.toFixed(0) + 'km', w * cols[2], y);
+    // a closing track's CPA is in the future and worth flagging; an opening
+    // one is only going to get further away
+    ctx.fillStyle = !c.closing ? 'rgba(150,215,235,.40)'
+      : c.cpa < 25 ? RD : c.cpa < 60 ? AM : 'rgba(150,215,235,.72)';
+    ctx.fillText((c.closing ? '' : '↗') + c.cpa.toFixed(0) + 'km', w * cols[3], y);
+    ctx.fillStyle = col;
+    ctx.fillText((c.cls || '····').slice(0, 5), w * cols[4], y);
+  }
+
   if (E.threatStat) {
-    E.threatStat.textContent = hostiles ? hostiles + ' HOSTILE' : sim.contacts.length + ' CONTACTS';
-    E.threatStat.style.color = hostiles ? 'rgba(255,59,48,.85)' : 'rgba(0,229,255,.42)';
+    const near = tracks.filter(c => c.closing && c.cpa < 25).length;
+    const s = near ? near + ' CPA<25' : hostiles ? hostiles + ' HOSTILE' : sim.contacts.length + ' TRACKS';
+    if (E.threatStat.textContent !== s) E.threatStat.textContent = s;
+    E.threatStat.style.color = near || hostiles ? 'rgba(255,59,48,.85)' : 'rgba(0,229,255,.42)';
   }
 }
 
@@ -2214,29 +2398,151 @@ function drawWave() {
   ctx.stroke(); ctx.shadowBlur = 0;
 }
 
-/* =============================================================== DATASTREAM === */
+/* ═══════════════════════════════════ THE DATA STREAM, AS AN ACTUAL LOG ══════
+   What was here before was six generators of plausible nonsense: random
+   megabytes allocated to a random pool, random packets to random addresses,
+   a random inference time. It scrolled convincingly and it said nothing. If
+   you had covered the rest of the deck and watched only this panel, you could
+   not have told whether the machine was idle or on fire.
+
+   A log is a diagnostic instrument. Its whole value is that the line you read
+   corresponds to something that happened. So every emitter below reads live
+   deck state — the real frame time, the real particle count, the real thermal
+   channel, the real reactor output, the real track count, the real heap where
+   the browser exposes one — and the SEVERITY is computed from the value
+   rather than assigned at random. A WARN line means a threshold was crossed.
+
+   The format is the one every structured logger converges on, because it is
+   the one that scans: fixed-width time, fixed-width subsystem, then the
+   message. Fixed width is what lets your eye run down a column instead of
+   reading every line.                                                        */
+
+const LOG_LEVEL = {
+  DBG:  'rgba(150,215,235,.38)',
+  INFO: 'rgba(0,229,255,.72)',
+  OK:   '#00e5ff',
+  WARN: '#ffb300',
+  ERR:  '#ff3b30'
+};
+
+/** Each returns [level, subsystem, message] from real state, or null if it has
+ *  nothing to report this time round. */
+const STREAM_SOURCES = [
+  function render() {
+    const e = app.engine; if (!e) return null;
+    const ms = typeof PERF === 'object' && PERF.frameMs ? PERF.frameMs : 1000 / (e.fps || 60);
+    const pts = Math.round((e.count || 0) * (e.quality != null ? e.quality : 1));
+    const lvl = ms > 33 ? 'WARN' : ms > 22 ? 'INFO' : 'DBG';
+    return [lvl, 'RENDER', ms.toFixed(1) + 'ms · ' + (pts / 1000).toFixed(0) + 'k pts · ' +
+      (typeof PERF === 'object' ? PERF.tierName : '')];
+  },
+  function thermal() {
+    if (typeof VITALS !== 'object') return null;
+    const t = VITALS.chans[2], a = (VITALS.alarms.therm || {}).level || 0;
+    const r = t.rate || 0;
+    return [a === 2 ? 'ERR' : a === 1 ? 'WARN' : 'DBG', 'THERM',
+      t.v.toFixed(1) + '°C ' + (r >= 0 ? '+' : '') + r.toFixed(2) + '/s · lim ' + t.crit + '°'];
+  },
+  function reactor() {
+    if (typeof CORE2 !== 'object') return null;
+    const C = CORE2;
+    const lvl = C.quench > 0.05 ? 'ERR' : C.instability > 0.55 ? 'WARN' : C.q >= 1 ? 'OK' : 'DBG';
+    return [lvl, 'FUSION', 'Q ' + C.q.toFixed(2) + ' · ' + (C.P_fus || 0).toFixed(0) +
+      'MW · τE ' + (C.tau_E || 0).toFixed(2) + 's'];
+  },
+  function load() {
+    if (typeof VITALS !== 'object') return null;
+    const c = VITALS.chans[0], a = (VITALS.alarms.core || {}).level || 0;
+    const panes = typeof paneCount === 'function' ? paneCount() : 0;
+    return [a ? 'WARN' : 'DBG', 'SCHED',
+      'load ' + c.v.toFixed(0) + '% · ' + panes + ' pane' + (panes === 1 ? '' : 's') +
+      (app.busy ? ' · tool running' : '')];
+  },
+  function heap() {
+    // performance.memory is Chromium-only. Where it is missing this source
+    // simply has nothing to say, rather than inventing a number.
+    const m = performance && performance.memory;
+    if (!m || !m.usedJSHeapSize) return null;
+    const used = m.usedJSHeapSize / 1048576, cap = m.jsHeapSizeLimit / 1048576;
+    return [used / cap > 0.85 ? 'WARN' : 'DBG', 'HEAP',
+      used.toFixed(0) + 'MB / ' + cap.toFixed(0) + 'MB · ' + (used / cap * 100).toFixed(0) + '%'];
+  },
+  function neural() {
+    if (typeof SNN !== 'object' || !SNN.v) return null;
+    return ['DBG', 'CORTEX', SNN.fired + '/' + SNN.n + ' spiking · ' +
+      SNN.rate.toFixed(1) + 'Hz · ' + (SNN.totalSpikes / 1000).toFixed(1) + 'k total'];
+  },
+  function tracks() {
+    const n = sim.contacts.length;
+    if (!n) return null;
+    const close = sim.contacts.filter(c => c.closing && c.cpa < 25);
+    return [close.length ? 'WARN' : 'DBG', 'TRACK',
+      n + ' held · ' + sim.contacts.filter(c => c.hostile).length + ' hostile' +
+      (close.length ? ' · ' + close.length + ' CPA<25km' : '')];
+  },
+  function topology() {
+    if (typeof NET3 !== 'object' || !NET3.nodes || !NET3.nodes.length) return null;
+    const down = NET3.nodes.filter(n => !n.up).length;
+    const st = NET3.stats || {};
+    return [down ? 'WARN' : 'DBG', 'MESH',
+      NET3.nodes.length + ' nodes · ' + (down ? down + ' down' : 'all up') +
+      ' · ' + (st.dropped || 0) + ' dropped'];
+  },
+  function vision() {
+    if (typeof VIS !== 'object' || !VIS || !VIS.on) return null;
+    const n = VIS.handCount || 0;
+    return ['INFO', 'VISION', 'camera live · ' + n + ' hand' + (n === 1 ? '' : 's') +
+      (VIS.faces ? ' · ' + VIS.faces + ' face' + (VIS.faces === 1 ? '' : 's') : '') +
+      (VIS.objN ? ' · ' + VIS.objN + ' obj' : '')];
+  },
+  function index() {
+    if (typeof MIND !== 'object' || !MIND.docs) return null;
+    if (!MIND.docs.length) return null;
+    return ['DBG', 'INDEX', MIND.docs.length + ' chunks · ' + EMB_DIM + 'd · ' +
+      (MIND.dirty ? 'unsaved' : 'persisted')];
+  }
+];
+
+let streamCursor = 0;
 function pushStream() {
-  const box = E.stream; if (!box) return;
-  const kinds = [
-    () => ['SYS', 'mem.alloc ' + (Math.random() * 512 + 64 | 0) + 'MB → pool/' + pick(['alpha', 'beta', 'delta']), CY],
-    () => ['NET', 'pkt ' + (Math.random() * 9e6 | 0) + ' → ' + (Math.random() * 255 | 0) + '.' + (Math.random() * 255 | 0) + '.' + (Math.random() * 255 | 0) + '.' + (Math.random() * 255 | 0) + ':' + (Math.random() * 9000 + 1000 | 0), '#7aa8ff'],
-    () => ['SNS', 'thermal Δ' + (Math.random() * 4 - 2).toFixed(3) + '°C · loop ' + (Math.random() * 4 + 1 | 0), 'rgba(150,215,235,.8)'],
-    () => ['AI ', 'inference ' + (Math.random() * 40 + 4).toFixed(2) + 'ms · conf ' + (Math.random() * 0.2 + 0.79).toFixed(3), VI],
-    () => ['SEC', 'token rotate · sig ' + Math.random().toString(16).slice(2, 10), AM],
-    () => ['NAV', 'vec ' + (Math.random() * 360).toFixed(1) + '° / ' + (Math.random() * 200).toFixed(1) + 'kn', CY]
-  ];
-  const parts = pick(kinds)();
-  streamRow(parts[0], parts[1], parts[2]);
+  if (!E.stream) return;
+  // Round-robin rather than random, so every subsystem reports at a predictable
+  // cadence and a source that goes quiet is noticeable.
+  for (let tries = 0; tries < STREAM_SOURCES.length; tries++) {
+    const src = STREAM_SOURCES[streamCursor % STREAM_SOURCES.length];
+    streamCursor++;
+    let out = null;
+    try { out = src(); } catch (e) { out = ['ERR', 'STREAM', src.name + ' failed: ' + (e && e.message || e)]; }
+    if (out) { streamRow(out[1], out[2], LOG_LEVEL[out[0]] || LOG_LEVEL.INFO, out[0]); return; }
+  }
 }
-function streamRow(tag, msg, col) {
+
+function streamRow(tag, msg, col, level) {
   const box = E.stream; if (!box) return;
+  const d = new Date();
+  const stamp = pad(d.getMinutes(), 2) + ':' + pad(d.getSeconds(), 2) + '.' +
+                Math.floor(d.getMilliseconds() / 100);
+
   const row = document.createElement('div');
-  row.style.cssText = 'display:flex; gap:8px; white-space:nowrap; overflow:hidden; opacity:0; transition:opacity .5s cubic-bezier(.16,1,.3,1);';
+  // A grid, not a flex row. Fixed columns are the entire reason a log is
+  // scannable — ragged columns turn it back into prose.
+  row.style.cssText = 'display:grid; grid-template-columns:52px 52px 1fr; gap:6px; ' +
+    'white-space:nowrap; overflow:hidden; opacity:0; transition:opacity .45s cubic-bezier(.16,1,.3,1);';
+
   const t = document.createElement('span');
-  t.textContent = tag; t.style.cssText = 'color:' + col + '; opacity:.85; flex:none;';
+  t.textContent = stamp;
+  t.style.cssText = 'color:rgba(150,215,235,.32);';
+
+  const g = document.createElement('span');
+  g.textContent = String(tag).slice(0, 6);
+  g.style.cssText = 'color:' + col + '; opacity:.92; overflow:hidden;';
+
   const m = document.createElement('span');
-  m.textContent = msg; m.style.cssText = 'color:rgba(150,215,235,.72); overflow:hidden; text-overflow:ellipsis;';
-  row.append(t, m); box.appendChild(row);
+  m.textContent = msg;
+  m.style.cssText = 'color:' + (level === 'WARN' || level === 'ERR' ? col : 'rgba(150,215,235,.70)') +
+    '; overflow:hidden; text-overflow:ellipsis;';
+
+  row.append(t, g, m); box.appendChild(row);
   requestAnimationFrame(() => { row.style.opacity = '1'; });
   while (box.children.length > 40) box.removeChild(box.firstChild);
 }
@@ -4001,7 +4307,7 @@ const PERF = {
   shifts: 0,
   locked: null,             // a tier the user pinned by hand
   reasons: [],
-  look: 0,                  // CLEAN — three 'too bright' reports; the calm default is earned
+  look: 0,                  // ORIGINAL. Not a tuned default — the untouched one.
   // measured cost of each optional subsystem, exponentially smoothed
   cost: {}
 };
@@ -4036,7 +4342,7 @@ const TIERS = [
   { name: 'HIGH',    particles: 0.92, bloom: 1.00, dust: true,  instrHz: 34,
     handHz: 40, faceHz: 26, objectHz: 6,  globeSeg: 64, terrainSeg: 160, net3d: true,
     fx: { trails: 1, rays: 1, streak: 1, dof: 1 } },
-  { name: 'ULTRA',   particles: 1.00, bloom: 1.06, dust: true,  instrHz: 48,
+  { name: 'ULTRA',   particles: 1.00, bloom: 1.00, dust: true,  instrHz: 48,
     handHz: 60, faceHz: 30, objectHz: 8,  globeSeg: 96, terrainSeg: 256, net3d: true,
     fx: { trails: 1, rays: 1.25, streak: 1.3, dof: 1 } }
 ];
@@ -4137,7 +4443,7 @@ function applyTier(why) {
   if (eng && eng.setFX && PERF.tier <= 1) {
     try { eng.setFX({ trails: 0, rays: 0, streak: 0 }); } catch (e) { }
   } else if (eng && eng.setFX) {
-    try { eng.setFX((LOOKS[PERF.look] || LOOKS[1]).fx); } catch (e) { }
+    try { eng.setFX((LOOKS[PERF.look] || LOOKS[0]).fx); } catch (e) { }
   }
   if (typeof VIS === 'object' && VIS) {
     VIS.handEvery   = 1000 / T.handHz;
@@ -4259,13 +4565,19 @@ function paintPerfChip() {
 
    Each is a complete description: exposure AND the passes that cost frames,
    moved together, because those are the same axis. The bright effects are the
-   expensive ones. */
+   expensive ones.
+
+   ORIGINAL is index 0 and it is the default. Its numbers are not a preset in
+   the usual sense — expo 1.00 and every pass off is arithmetically the orb as
+   it first shipped, before any of the three rounds of brightness tuning. The
+   other three are additions layered on top, and none of them is reachable
+   without a deliberate click. */
 const LOOKS = [
-  { name: 'CLEAN',    expo: 0.50, fx: { trails: 0,    rays: 0, streak: 0,   dof: 0 },
-    note: 'the field alone, dim and calm — no effects, dimmest and fastest' },
-  { name: 'BALANCED', expo: 0.70, fx: { trails: 0.6,  rays: 0, streak: 0,   dof: 1 },
+  { name: 'ORIGINAL', expo: 1.00, fx: { trails: 0,    rays: 0, streak: 0,   dof: 0 },
+    note: 'the orb exactly as it shipped — bloom and lens only' },
+  { name: 'BALANCED', expo: 0.85, fx: { trails: 0.6,  rays: 0, streak: 0,   dof: 1 },
     note: 'gentle trails and depth of field; no bright passes' },
-  { name: 'RICH',     expo: 0.88, fx: { trails: 0.85, rays: 0.8, streak: 0.6, dof: 1 },
+  { name: 'RICH',     expo: 0.95, fx: { trails: 0.85, rays: 0.8, streak: 0.6, dof: 1 },
     note: 'adds god rays and a lens flare — two more passes' },
   { name: 'MAX',      expo: 1.10, fx: { trails: 1,    rays: 1.1, streak: 1,   dof: 1 },
     note: 'everything on — brightest, and it will cost frames' }
@@ -4279,7 +4591,7 @@ function applyLook(i, announce) {
     if (eng.setExposure) { try { eng.setExposure(L.expo); } catch (e) { } }
     if (eng.setFX) { try { eng.setFX(L.fx); } catch (e) { } }
   }
-  try { localStorage.setItem('jarvis.look', String(PERF.look)); } catch (e) { }
+  try { localStorage.setItem('jarvis.look2', String(PERF.look)); } catch (e) { }
   paintLookChip();
   if (announce && typeof toast === 'function') toast('LOOK', L.name + ' · ' + L.note, CY);
   return L;
@@ -4290,7 +4602,7 @@ function lookCycle() { return applyLook((PERF.look + 1) % LOOKS.length, true); }
 function paintLookChip() {
   const chip = typeof $ === 'function' && $('lookChip');
   if (!chip) return;
-  const L = LOOKS[PERF.look] || LOOKS[1];
+  const L = LOOKS[PERF.look] || LOOKS[0];
   chip.textContent = L.name;
   chip.style.color = PERF.look >= 2 ? '#00e5ff' : 'rgba(150,215,235,.7)';
   chip.style.cursor = 'pointer';
@@ -4344,7 +4656,7 @@ function perfInit() {
   const chip = typeof $ === 'function' && $('perfTier');
   if (chip) chip.onclick = perfCycle;
   try {
-    const saved = parseInt(localStorage.getItem('jarvis.look'), 10);
+    const saved = parseInt(localStorage.getItem('jarvis.look2'), 10);
     if (saved >= 0 && saved < LOOKS.length) PERF.look = saved;
   } catch (e) { }
   if (PRESET.look) {
@@ -7264,6 +7576,33 @@ function coreStep(dt, demand) {
     f.a += dt * (0.4 + C.instability) * (i % 2 ? 1 : -1);
     if (f.life > 1) C.filaments.splice(i, 1);
   }
+
+  /* ── ENGINEERING UNITS ────────────────────────────────────────────────────
+     The state variables above are normalised, because that is what keeps a
+     set of coupled ODEs numerically well behaved. But an instrument that
+     reads "T 0.62" is not an instrument, it is a debug print. These are the
+     same quantities carried into the units a control room labels them with,
+     derived once here so that the renderer never does physics.
+
+     The scale factors are chosen against a compact D-T tokamak: 15 keV at
+     T = 1 is a real operating temperature, 10^20 m^-3 is a real density, and
+     18 m^3 is a real plasma volume. Nothing below is a new model — it is the
+     model above, in units. */
+  const VOL = 18;                                  // m³ of plasma
+  C.T_keV  = C.temp * 15;
+  C.n20    = C.density;                            // ×10²⁰ particles per m³
+  C.P_fus  = fusion * 180;                         // MW of fusion power
+  C.P_in   = C.inject * 0.9 * 42;                  // MW of injected heating
+  C.P_loss = (radiate + conduct) * 96;             // MW out through radiation and conduction
+  // stored thermal energy: (3/2)·n·k·T over the volume, in MJ
+  C.W_th   = 0.024 * C.n20 * C.T_keV * VOL;
+  // energy confinement time — stored energy divided by the rate it leaves
+  C.tau_E  = C.P_loss > 0.05 ? C.W_th / C.P_loss : 0;
+  // the Lawson triple product, in units of 10²⁰ keV·s·m⁻³. Ignition for D-T
+  // is around 30 in these units; that is the line the bar is drawn against.
+  C.triple = C.n20 * C.T_keV * C.tau_E;
+  C.ignFrac = C.triple / 30;
+
   return C;
 }
 
@@ -7470,258 +7809,567 @@ function drawNet3D(dt) {
   }
 }
 
+/* ══════════════════════════════════ VITALS, AS AN ACTUAL TELEMETRY STRIP ═══
+   Four round dials in a small panel is a watch face, not an instrument. A dial
+   is the right shape when one value matters and you need to read it from
+   across a room; it is the wrong shape when you have four related values and
+   what you actually want to know is which one is climbing.
+
+   Every real monitoring console — flight, plant, server — uses the same layout
+   for this, and it uses it for a reason: one row per channel, name on the left,
+   number on the right, a bar showing where the value sits between zero and its
+   limits, and history behind it. Four rows of that are comparable at a glance.
+   Four dials are four separate readings you have to do one at a time.
+
+   Everything drawn here comes from `vitalsStep`: the value, the rate of change
+   it is annotated with, the limits the ticks sit at, and the alarm state with
+   its hysteresis already applied.                                            */
 function drawVitals2() {
   const f = fit(E.cVitals); if (!f) return;
   const { ctx, w, h } = f;
-  const cw = w / 2, ch = h / 2;
+
+  const pad = 6;
+  const rowH = (h - pad * 2) / VITALS.chans.length;
+  const labelW = 62;              // room for the longest label at 7.5px
+  const valW = 46;
+  const barX = pad + labelW;
+  const barW = w - barX - valW - pad;
 
   VITALS.chans.forEach((v, i) => {
-    const cx = cw * (i % 2) + cw / 2, cy = ch * ((i / 2) | 0) + ch / 2 - 8;
-    const rad = Math.min(cw, ch) * 0.29;
-    const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
+    const top = pad + rowH * i;
     const alarm = (VITALS.alarms[v.key] || {}).level || 0;
     const col = alarm === 2 ? RD : alarm === 1 ? AM : CY;
+    const midY = top + rowH * 0.44;
 
-    // history, drawn as a filled sparkline behind the dial
-    const hist = vitalsHistory(v, 90);
-    ctx.beginPath();
-    hist.forEach((val, k) => {
-      const x = cx - rad * 1.15 + (k / (hist.length - 1)) * rad * 2.3;
-      const y = cy + rad * 1.02 - (val / 100) * rad * 0.5;
-      k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    });
-    ctx.strokeStyle = 'rgba(0,229,255,.28)'; ctx.lineWidth = 0.9; ctx.stroke();
-
-    // warning and critical bands on the scale itself
-    const band = (from, to, c) => {
-      ctx.strokeStyle = c; ctx.lineWidth = 2;
+    // ── history, as a filled area behind the row ───────────────────────────
+    // Real dashboards put the sparkline behind the number rather than beside
+    // it: it costs no width and it answers "how did we get here" without
+    // being read deliberately.
+    const hist = vitalsHistory(v, 120);
+    if (hist.length > 1) {
       ctx.beginPath();
-      ctx.arc(cx, cy, rad + 6, a0 + (a1 - a0) * (from / 100), a0 + (a1 - a0) * (to / 100));
-      ctx.stroke();
-    };
-    band(v.warn, v.crit, 'rgba(255,179,0,.30)');
-    band(v.crit, 100, 'rgba(255,59,48,.35)');
-
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(0,229,255,.14)';
-    ctx.beginPath(); ctx.arc(cx, cy, rad, a0, a1); ctx.stroke();
-    for (let t = 0; t <= 20; t++) {
-      const a = a0 + (a1 - a0) * (t / 20), maj = t % 5 === 0;
-      ctx.strokeStyle = maj ? 'rgba(0,229,255,.45)' : 'rgba(0,229,255,.18)';
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(a) * (rad + 2), cy + Math.sin(a) * (rad + 2));
-      ctx.lineTo(cx + Math.cos(a) * (rad + (maj ? 7 : 4)), cy + Math.sin(a) * (rad + (maj ? 7 : 4)));
-      ctx.stroke();
+      ctx.moveTo(barX, top + rowH - 4);
+      for (let k = 0; k < hist.length; k++) {
+        const x = barX + (k / (hist.length - 1)) * barW;
+        const y = top + rowH - 4 - (hist[k] / 100) * (rowH - 10);
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(barX + barW, top + rowH - 4);
+      ctx.closePath();
+      ctx.fillStyle = alarm ? 'rgba(255,179,0,.07)' : 'rgba(0,229,255,.055)';
+      ctx.fill();
     }
+
+    // ── the bar track, with the limits marked ON it ────────────────────────
+    // A threshold you have to remember is a threshold nobody uses. Putting the
+    // warn and critical marks on the scale means the question "is this bad"
+    // is answered by position rather than by arithmetic.
+    const trackY = midY - 3;
+    ctx.fillStyle = 'rgba(0,229,255,.09)';
+    ctx.fillRect(barX, trackY, barW, 6);
+
+    ctx.fillStyle = 'rgba(255,179,0,.16)';
+    ctx.fillRect(barX + barW * v.warn / 100, trackY, barW * (v.crit - v.warn) / 100, 6);
+    ctx.fillStyle = 'rgba(255,59,48,.18)';
+    ctx.fillRect(barX + barW * v.crit / 100, trackY, barW * (100 - v.crit) / 100, 6);
 
     const p = Math.max(0, Math.min(1, v.v / 100));
-    ctx.lineWidth = 3.0; ctx.strokeStyle = col;
-    ctx.shadowBlur = alarm ? 14 : 9; ctx.shadowColor = col;
-    ctx.beginPath(); ctx.arc(cx, cy, rad, a0, a0 + (a1 - a0) * p); ctx.stroke();
+    ctx.fillStyle = col;
+    ctx.shadowBlur = alarm ? 8 : 0; ctx.shadowColor = col;
+    ctx.fillRect(barX, trackY, Math.max(1, barW * p), 6);
     ctx.shadowBlur = 0;
 
-    const na = a0 + (a1 - a0) * p;
-    ctx.strokeStyle = '#eafcff'; ctx.lineWidth = 1.3;
+    // limit ticks, drawn over the fill so they stay visible when it passes them
+    ctx.strokeStyle = 'rgba(255,179,0,.65)'; ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(na) * rad * 0.28, cy + Math.sin(na) * rad * 0.28);
-    ctx.lineTo(cx + Math.cos(na) * rad * 0.90, cy + Math.sin(na) * rad * 0.90);
-    ctx.stroke();
-    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx, cy, 2, 0, 7); ctx.fill();
+    ctx.moveTo(barX + barW * v.warn / 100, trackY - 2);
+    ctx.lineTo(barX + barW * v.warn / 100, trackY + 8); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,59,48,.7)';
+    ctx.beginPath();
+    ctx.moveTo(barX + barW * v.crit / 100, trackY - 2);
+    ctx.lineTo(barX + barW * v.crit / 100, trackY + 8); ctx.stroke();
 
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#dff6ff'; ctx.font = '600 14px "JetBrains Mono", monospace';
-    ctx.fillText(v.v.toFixed(0) + (v.unit === '%' ? '' : '°'), cx, cy + rad * 0.66);
+    // ── label and value ────────────────────────────────────────────────────
+    ctx.textAlign = 'left';
+    ctx.font = '400 7.5px "JetBrains Mono", monospace';
+    ctx.fillStyle = alarm ? col : 'rgba(0,229,255,.62)';
+    ctx.fillText(v.label, pad, midY + 3);
 
-    // trend arrow — a rate, not a guess
+    ctx.textAlign = 'right';
+    ctx.font = '600 12px "JetBrains Mono", monospace';
+    ctx.fillStyle = alarm ? col : '#dff6ff';
+    ctx.fillText(v.v.toFixed(v.unit === '%' ? 0 : 1), w - pad - 10, midY + 4);
+    ctx.font = '400 7px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(150,215,235,.45)';
+    ctx.fillText(v.unit === '%' ? '%' : '°C', w - pad, midY + 4);
+
+    // ── rate of change ─────────────────────────────────────────────────────
+    // Units per second, measured. The arrow is the sign of a number, not a mood.
     const r = v.rate || 0;
-    if (Math.abs(r) > 0.6) {
-      ctx.fillStyle = r > 0 ? 'rgba(255,179,0,.85)' : 'rgba(0,229,255,.7)';
-      ctx.font = '600 9px "JetBrains Mono", monospace';
-      ctx.fillText(r > 0 ? '▲' : '▼', cx + rad * 0.72, cy + rad * 0.66);
+    if (Math.abs(r) > 0.4) {
+      ctx.textAlign = 'left';
+      ctx.font = '400 6.5px "JetBrains Mono", monospace';
+      ctx.fillStyle = r > 0 ? 'rgba(255,179,0,.75)' : 'rgba(0,229,255,.55)';
+      ctx.fillText((r > 0 ? '▲' : '▼') + Math.abs(r).toFixed(1) + '/s', barX + 1, top + 7);
     }
 
-    ctx.fillStyle = alarm ? col : 'rgba(0,229,255,.55)';
-    ctx.font = '400 7.5px "JetBrains Mono", monospace';
-    const rowBottom = ch * (((i / 2) | 0) + 1);
-    ctx.fillText(v.label, cx, Math.min(cy + rad + 14, rowBottom - 3));
+    // alarm word, so the colour is never the only carrier of the state
+    if (alarm) {
+      ctx.textAlign = 'right';
+      ctx.font = '600 6.5px "JetBrains Mono", monospace';
+      ctx.fillStyle = col;
+      ctx.fillText(alarm === 2 ? 'CRIT' : 'WARN', barX + barW, top + 7);
+    }
   });
+}
+
+/* ══════════════════════════════ THE REACTOR, AS A REACTOR CONTROL DISPLAY ═══
+   The physics under this panel was already real. The picture on top of it was
+   not: three concentric rings, some sparks, and a glow. That is a logo. It
+   tells you nothing about the machine, and it looks the same whether the
+   plasma is igniting or about to dump into the wall.
+
+   Every magnetic confinement control room in the world displays the same
+   thing, and it is not a ring. It is the POLOIDAL CROSS-SECTION: a slice
+   through the torus, showing the vacuum vessel, the field coils, and the
+   nested flux surfaces the plasma is sitting on. It is drawn that way because
+   it is the view in which the things that matter are visible — whether the
+   plasma is centred, how elongated it is, where it touches, and how much room
+   is left between it and the wall.
+
+   The shape is the standard Miller parameterisation, which is what tokamak
+   equilibrium codes actually use:
+
+       R(θ) = R₀ + a·cos(θ + δ·sin θ)
+       Z(θ) =        κ·a·sin(θ)
+
+   with a the minor radius, κ the elongation and δ the triangularity. Here a
+   grows with plasma density and κ droops as containment margin is lost, so
+   the shape you are looking at is a readout, not an illustration.        */
+
+/** One flux surface of the Miller shape, in canvas coordinates. */
+function millerPath(ctx, cx, cy, a, kappa, delta, wobble, t) {
+  ctx.beginPath();
+  for (let i = 0; i <= 48; i++) {
+    const th = (i / 48) * Math.PI * 2;
+    // an m=3 ripple, so a plasma losing control visibly corrugates
+    const rip = 1 + wobble * Math.sin(3 * th + t * 7);
+    const R = Math.cos(th + delta * Math.sin(th)) * a * rip;
+    const Z = Math.sin(th) * a * kappa * rip;
+    i ? ctx.lineTo(cx + R, cy - Z) : ctx.moveTo(cx + R, cy - Z);
+  }
+  ctx.closePath();
 }
 
 function drawCore2(dt) {
   const f = fit(E.cCore); if (!f) return;
   const { ctx, w, h } = f;
   const C = CORE2;
-  const cx = w / 2, cy = h / 2, R0 = Math.min(w, h) * 0.40;
 
-  // containment rings, rippling with instability
-  for (let ring = 0; ring < 3; ring++) {
-    const segs = 30 - ring * 6;
-    const rot = C.t * (ring % 2 ? -0.30 : 0.44);
-    for (let i = 0; i < segs; i++) {
-      const a0 = rot + (i / segs) * Math.PI * 2;
-      const a1 = a0 + (Math.PI * 2 / segs) * 0.62;
-      const wobble = C.ripple * Math.sin(a0 * 5 + C.t * 9) * R0 * 0.06;
-      const r = R0 * (1 - ring * 0.18) + wobble;
-      const on = (i / segs) < C.field;
-      ctx.strokeStyle = on
-        ? (ring === 0 ? (C.instability > 0.5 ? '#ffb300' : CY) : 'rgba(10,132,255,.72)')
-        : 'rgba(0,229,255,.09)';
-      ctx.lineWidth = ring === 0 ? 3.6 : 2.4;
-      if (on && ring === 0) { ctx.shadowBlur = 10 + C.instability * 14; ctx.shadowColor = ctx.strokeStyle; }
-      ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, r), a0, a1); ctx.stroke();
-      ctx.shadowBlur = 0;
-    }
-  }
+  const stripH = 20;                       // trend + interlocks along the bottom
+  const bodyH = h - stripH;
+  const colW = Math.min(112, w * 0.42);    // readout column on the right
+  const px = (w - colW) / 2;               // centre of the cross-section
+  const py = bodyH / 2 + 2;
+  const unit = Math.min((w - colW) * 0.40, bodyH * 0.40);
 
-  // field filaments, born and dying with the instability
-  C.filaments.forEach(fl => {
-    const life = Math.sin(Math.PI * Math.min(1, fl.life));
-    const r0 = R0 * 0.16, r1 = r0 + R0 * 0.55 * fl.span * (0.4 + 0.6 * life);
-    ctx.strokeStyle = 'rgba(0,229,255,' + (0.10 + 0.35 * life).toFixed(3) + ')';
-    ctx.lineWidth = fl.w;
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(fl.a) * r0, cy + Math.sin(fl.a) * r0);
-    const mid = fl.a + 0.4 * C.instability;
-    ctx.quadraticCurveTo(cx + Math.cos(mid) * (r0 + r1) / 2, cy + Math.sin(mid) * (r0 + r1) / 2,
-                         cx + Math.cos(fl.a) * r1, cy + Math.sin(fl.a) * r1);
-    ctx.stroke();
+  // ── vacuum vessel ────────────────────────────────────────────────────────
+  // Fixed geometry. It is the one thing on this panel that does not move, and
+  // that is exactly what makes the plasma's excursions inside it readable.
+  ctx.strokeStyle = 'rgba(150,215,235,.30)'; ctx.lineWidth = 1.4;
+  millerPath(ctx, px, py, unit, 1.62, 0.30, 0, 0);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(150,215,235,.13)'; ctx.lineWidth = 1;
+  millerPath(ctx, px, py, unit * 0.90, 1.60, 0.30, 0, 0);
+  ctx.stroke();
+
+  // central solenoid — the inboard side of a tokamak, drawn where it belongs
+  ctx.fillStyle = 'rgba(150,215,235,.10)';
+  ctx.fillRect(px - unit * 1.42, py - unit * 1.5, unit * 0.16, unit * 3);
+  ctx.strokeStyle = 'rgba(150,215,235,.22)'; ctx.lineWidth = 0.8;
+  ctx.strokeRect(px - unit * 1.42, py - unit * 1.5, unit * 0.16, unit * 3);
+
+  // ── poloidal field coils ─────────────────────────────────────────────────
+  // Six of them, and they brighten with the current the field is drawing.
+  // A coil set at full current with a plasma that is still drifting is a very
+  // specific and very readable failure.
+  const coilI = C.field;
+  const coils = [[-1.18, 1.10], [0, 1.42], [1.18, 1.10],
+                 [-1.18, -1.10], [0, -1.42], [1.18, -1.10]];
+  coils.forEach(([kx, ky]) => {
+    const x = px + kx * unit, y = py - ky * unit;
+    ctx.fillStyle = 'rgba(10,132,255,' + (0.10 + coilI * 0.45).toFixed(3) + ')';
+    ctx.fillRect(x - 4, y - 3, 8, 6);
+    ctx.strokeStyle = 'rgba(0,229,255,' + (0.20 + coilI * 0.40).toFixed(3) + ')';
+    ctx.lineWidth = 0.9;
+    ctx.strokeRect(x - 4, y - 3, 8, 6);
   });
 
-  // the plasma itself: brightness from temperature, size from density
-  const pr = R0 * (0.20 + C.density * 0.20);
-  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(2, pr));
-  const hot = Math.min(1, C.temp / 1.1);
-  g.addColorStop(0, 'rgba(255,255,255,' + (0.55 + hot * 0.45).toFixed(3) + ')');
-  g.addColorStop(0.35, 'rgba(' + (120 + hot * 135 | 0) + ',' + (229 - hot * 40 | 0) + ',255,.55)');
-  g.addColorStop(1, 'rgba(0,229,255,0)');
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, pr), 0, 7); ctx.fill();
+  // ── nested flux surfaces ─────────────────────────────────────────────────
+  // Six surfaces from the magnetic axis outward, coloured by the temperature
+  // at that radius. A real profile is peaked — hot in the core, cold at the
+  // edge — so this is a parabola to the 1.6, which is the usual fit.
+  const aPl = unit * 0.74 * (0.55 + Math.min(1, C.density / 1.4) * 0.55);
+  const kap = 1.58 - (1 - C.margin) * 0.30;      // droops as margin is lost
+  const del = 0.30 + C.instability * 0.14;
+  const hot = Math.min(1, C.temp / 1.4);
+
+  for (let s = 6; s >= 1; s--) {
+    const rho = s / 6;
+    const Tr = hot * Math.pow(1 - rho * rho * 0.92, 1.6);   // profile
+    const r = Math.round(60 + Tr * 195);
+    const g = Math.round(150 + Tr * 105);
+    const alpha = 0.10 + Tr * 0.30;
+    millerPath(ctx, px, py, aPl * rho, kap, del, C.ripple * 0.10, C.t);
+    ctx.fillStyle = 'rgba(' + r + ',' + g + ',255,' + alpha.toFixed(3) + ')';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,229,255,' + (0.06 + Tr * 0.22).toFixed(3) + ')';
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+  }
+
+  // last closed flux surface, drawn hard so the plasma boundary is unambiguous
+  millerPath(ctx, px, py, aPl, kap, del, C.ripple * 0.10, C.t);
+  ctx.strokeStyle = C.instability > 0.5 ? AM : 'rgba(0,229,255,.75)';
+  ctx.lineWidth = 1.5;
+  ctx.shadowBlur = 6 + C.instability * 12; ctx.shadowColor = ctx.strokeStyle;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // magnetic axis, shifted outward by pressure — the Shafranov shift, which is
+  // real and is the first thing that moves when the plasma gets hot
+  const shift = aPl * 0.10 * Math.min(1, C.density * C.temp * 0.6);
+  ctx.fillStyle = 'rgba(234,252,255,.85)';
+  ctx.beginPath(); ctx.arc(px + shift, py, 1.4, 0, 7); ctx.fill();
+
+  // divertor strike points at the bottom, where a real diverted plasma sheds
+  ctx.strokeStyle = 'rgba(255,179,0,' + (0.20 + C.output * 0.45).toFixed(3) + ')';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(px - unit * 0.55, py + unit * 1.42);
+  ctx.lineTo(px - unit * 0.22, py + unit * 1.42);
+  ctx.moveTo(px + unit * 0.22, py + unit * 1.42);
+  ctx.lineTo(px + unit * 0.55, py + unit * 1.42);
+  ctx.stroke();
 
   if (C.quench > 0.02) {
     ctx.strokeStyle = 'rgba(255,59,48,' + C.quench.toFixed(2) + ')';
-    ctx.lineWidth = 2 + C.quench * 4;
-    ctx.beginPath(); ctx.arc(cx, cy, R0 * (1.05 - C.quench * 0.5), 0, 7); ctx.stroke();
+    ctx.lineWidth = 1 + C.quench * 3;
+    millerPath(ctx, px, py, unit * (0.95 + C.quench * 0.1), 1.62, 0.30, C.quench * 0.14, C.t);
+    ctx.stroke();
   }
 
-  // output trace along the bottom
-  ctx.strokeStyle = 'rgba(0,229,255,.35)'; ctx.lineWidth = 1;
+  // ── the readout column ───────────────────────────────────────────────────
+  // Six numbers, each with its unit. These are the six a fusion operator
+  // actually watches, and they are all derived in coreStep from the same
+  // state that drew the picture on the left.
+  const rx = w - colW + 4;
+  let ry = 11;
+  const row = (label, val, unit2, col) => {
+    ctx.textAlign = 'left';
+    ctx.font = '400 6.5px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(150,215,235,.42)';
+    ctx.fillText(label, rx, ry);
+    ctx.textAlign = 'right';
+    ctx.font = '600 9px "JetBrains Mono", monospace';
+    ctx.fillStyle = col || '#dff6ff';
+    ctx.fillText(val, w - 16, ry);
+    ctx.textAlign = 'left';
+    ctx.font = '400 6px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(150,215,235,.35)';
+    ctx.fillText(unit2, w - 14, ry);
+    ry += 13;
+  };
+
+  row('Tᵢ',   C.T_keV.toFixed(1),  'keV');
+  row('nₑ',   C.n20.toFixed(2),    '·10²⁰');
+  row('Pfus', C.P_fus.toFixed(0),  'MW', C.P_fus > 40 ? CY : '#dff6ff');
+  row('Q',    C.q.toFixed(2),      '',   C.q >= 1 ? CY : C.q > 0.5 ? AM : '#dff6ff');
+  row('τE',   C.tau_E.toFixed(2),  's');
+  row('Wth',  C.W_th.toFixed(1),   'MJ');
+
+  // ── Lawson bar ───────────────────────────────────────────────────────────
+  // The triple product against the ignition threshold. This is the single
+  // number that says whether a machine is a power source or a heater, and it
+  // is the one thing the old panel had no way to express at all.
+  const lb = ry + 1;
+  ctx.font = '400 6px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(150,215,235,.42)';
+  ctx.fillText('nTτ / IGNITION', rx, lb);
+  const bw2 = colW - 12, bx2 = rx, by2 = lb + 3;
+  ctx.fillStyle = 'rgba(0,229,255,.10)';
+  ctx.fillRect(bx2, by2, bw2, 4);
+  const ig = Math.max(0, Math.min(1.25, C.ignFrac || 0));
+  ctx.fillStyle = ig >= 1 ? CY : ig > 0.5 ? AM : 'rgba(10,132,255,.75)';
+  ctx.fillRect(bx2, by2, Math.min(bw2, bw2 * ig / 1.25), 4);
+  // the threshold itself, at 1.0 on a scale that runs to 1.25
+  ctx.strokeStyle = 'rgba(234,252,255,.6)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(bx2 + bw2 / 1.25, by2 - 2); ctx.lineTo(bx2 + bw2 / 1.25, by2 + 6);
+  ctx.stroke();
+
+  // ── bottom strip: fusion power trend and interlocks ──────────────────────
+  const sy = h - stripH;
+  ctx.strokeStyle = 'rgba(0,229,255,.10)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(w, sy); ctx.stroke();
+
+  const trendW = w * 0.60;
   ctx.beginPath();
   for (let i = 0; i < 160; i++) {
     const v = C.hist[(C.head + 1 + i) % 160];
-    const x = (i / 159) * w, y = h - 4 - v * 16;
+    const x = 3 + (i / 159) * (trendW - 6);
+    const y = h - 4 - v * (stripH - 8);
     i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
   }
+  ctx.strokeStyle = 'rgba(0,229,255,.55)'; ctx.lineWidth = 1;
   ctx.stroke();
-
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#03060a'; ctx.font = '700 12px "JetBrains Mono", monospace';
-  ctx.fillText((C.output * 100).toFixed(1), cx, cy + 4);
+  ctx.font = '400 6px "JetBrains Mono", monospace';
   ctx.textAlign = 'left';
-  ctx.font = '400 7px "JetBrains Mono", monospace';
-  ctx.fillStyle = 'rgba(0,229,255,.55)';
-  ctx.fillText('Q ' + C.q.toFixed(2), 4, 10);
-  ctx.fillText('n ' + C.density.toFixed(2) + '  T ' + C.temp.toFixed(2), 4, 19);
-  ctx.textAlign = 'right';
-  ctx.fillStyle = C.margin < 0.3 ? RD : C.margin < 0.6 ? AM : 'rgba(0,229,255,.55)';
-  ctx.fillText('MARGIN ' + (C.margin * 100).toFixed(0) + '%', w - 4, 10);
+  ctx.fillStyle = 'rgba(150,215,235,.35)';
+  ctx.fillText('Pfus 60s', 3, sy + 7);
+
+  // Interlocks. Named, and each one tied to a real condition in the model, so
+  // a tripped interlock can be traced to the thing that tripped it.
+  const locks = [
+    ['CONF', C.margin > 0.25],
+    ['MHD',  C.instability < 0.55],
+    ['DIV',  C.temp < 2.6],
+    ['CS',   C.quench < 0.05]
+  ];
+  ctx.textAlign = 'center';
+  locks.forEach(([name, okState], i) => {
+    const x = trendW + 6 + i * ((w - trendW - 10) / locks.length) + ((w - trendW - 10) / locks.length) / 2;
+    ctx.fillStyle = okState ? 'rgba(0,229,255,.13)' : 'rgba(255,59,48,.28)';
+    ctx.fillRect(x - 11, sy + 5, 22, 10);
+    ctx.strokeStyle = okState ? 'rgba(0,229,255,.35)' : RD;
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(x - 11, sy + 5, 22, 10);
+    ctx.font = '600 6px "JetBrains Mono", monospace';
+    ctx.fillStyle = okState ? 'rgba(150,215,235,.65)' : '#ffd9d6';
+    ctx.fillText(name, x, sy + 12);
+  });
 
   if (E.coreStat) {
-    const s = C.quench > 0.05 ? 'QUENCH' : C.instability > 0.55 ? 'UNSTABLE'
-      : C.q > 1.2 ? 'IGNITED' : C.output < 0.3 ? 'SUBCRITICAL' : 'NOMINAL';
-    E.coreStat.textContent = s;
+    const s = C.quench > 0.05 ? 'QUENCH' : C.instability > 0.55 ? 'MHD UNSTABLE'
+      : C.q >= 1 ? 'Q≥1 BURNING' : C.output < 0.3 ? 'SUBCRITICAL' : 'H-MODE';
+    if (E.coreStat.textContent !== s) E.coreStat.textContent = s;
     E.coreStat.style.color = /QUENCH|UNSTABLE/.test(s) ? 'rgba(255,59,48,.85)'
-      : s === 'IGNITED' ? 'rgba(0,229,255,.85)' : 'rgba(255,179,0,.65)';
+      : s === 'Q≥1 BURNING' ? 'rgba(0,229,255,.85)' : 'rgba(255,179,0,.65)';
   }
 }
 
-/* ─────────────────────────────────────────── the raster, drawn the cheap way ──
-   The first version of this redrew every spike of the last four seconds, every
-   frame: about 3,700 fillRect calls each preceded by building a colour string
-   with toFixed(3) on it. That is a quarter of a million CSS colour parses a
-   second, on the main thread, competing with the particle field for exactly the
-   milliseconds the particle field needed. The frame rate collapsed, the
-   governor did as it was told and shed quality, and the deck ended up looking
-   worse than before any of this was added.
+/* ══════════════════════════════════ THE NEURAL PANEL, AS A REAL RECORDING ═══
+   WHAT WAS WRONG WITH IT
 
-   A raster is a scrolling image. Draw only the newest column into an offscreen
-   buffer — about ten dots — and blit the buffer. Two fillStyle assignments per
-   frame instead of three thousand seven hundred. */
-const RAST = { cv: null, ctx: null, w: 260, h: 160, head: 0,
-               exc: 'rgba(0,229,255,.92)', inh: 'rgba(255,120,90,.92)' };
+   The old panel was a raster of all eighty neurons packed into about a hundred
+   pixels of height. At any firing rate worth looking at, eighty rows of dots
+   in a hundred pixels is a solid block. It was not showing too little — it was
+   showing everything at once, which is the same as showing nothing. Density is
+   not information.
 
-function rasterColumn(fired) {
-  if (!RAST.cv) {
-    RAST.cv = document.createElement('canvas');
-    RAST.cv.width = RAST.w; RAST.cv.height = RAST.h;
-    RAST.ctx = RAST.cv.getContext('2d');
+   WHAT A REAL RIG SHOWS
+
+   An electrophysiology recording does not display every cell. It displays a
+   handful of CHANNELS as continuous voltage traces, stacked in lanes with air
+   between them, and it puts the population statistics underneath as a separate
+   plot. You read the traces for shape and the histogram for rate. That is the
+   convention because it is legible, and it is legible because each lane has
+   room to be a line rather than a smear.
+
+   So: six channels, spike waveforms drawn as waveforms, a peri-stimulus time
+   histogram below, a calibration bar, and a real time axis. Everything on it
+   is measured from the network in `snnStep` — the traces are its membrane
+   potentials and the histogram is its spike count. Nothing is decorative. */
+
+const TRACE = {
+  n: 6,
+  // Six cells picked once at build time and never changed, because a channel
+  // that silently becomes a different neuron is a channel you cannot read.
+  // Four excitatory, two inhibitory — labelled, so the two red lanes are
+  // explained rather than mysterious.
+  ch: null,
+  W: 200,              // samples held per channel ≈ 6s at the instrument rate
+  head: 0,
+  v: null,             // membrane potential at sample time
+  sp: null,            // 1 if that cell fired during the sample interval
+  psth: new Float32Array(200),
+  // spikes per second per cell, for the axis label
+  peak: 1
+};
+
+function traceInit() {
+  if (TRACE.ch) return;
+  if (!SNN.v) snnBuild();
+  const exc = [], inh = [];
+  for (let i = 0; i < SNN.n; i++) (SNN.inhib[i] ? inh : exc).push(i);
+  // spread across the population rather than taking the first six, so the
+  // channels are not all neighbours in the connectivity matrix
+  const pickN = (arr, k) => {
+    const out = [];
+    for (let j = 0; j < k && arr.length; j++) out.push(arr[Math.floor(j * arr.length / k)]);
+    return out;
+  };
+  TRACE.ch = pickN(exc, 4).concat(pickN(inh, 2));
+  TRACE.v = new Float32Array(TRACE.n * TRACE.W);
+  TRACE.sp = new Uint8Array(TRACE.n * TRACE.W);
+}
+
+/** One sample of every channel, plus the population count. */
+function traceSample(fired) {
+  traceInit();
+  const h = TRACE.head;
+  const firedSet = TRACE.tmp || (TRACE.tmp = new Set());
+  firedSet.clear();
+  for (let i = 0; i < fired.length; i++) firedSet.add(fired[i]);
+  for (let c = 0; c < TRACE.n; c++) {
+    const id = TRACE.ch[c];
+    TRACE.v[c * TRACE.W + h] = SNN.v[id];
+    TRACE.sp[c * TRACE.W + h] = firedSet.has(id) ? 1 : 0;
   }
-  const g = RAST.ctx, x = RAST.head;
-  g.clearRect(x, 0, 2, RAST.h);
-  if (fired && fired.length) {
-    // two passes, so fillStyle is assigned exactly twice however many spiked
-    g.fillStyle = RAST.exc;
-    for (let i = 0; i < fired.length; i++) {
-      if (!SNN.inhib[fired[i]]) g.fillRect(x, (fired[i] / SNN.n) * RAST.h, 1.6, 1.8);
-    }
-    g.fillStyle = RAST.inh;
-    for (let i = 0; i < fired.length; i++) {
-      if (SNN.inhib[fired[i]]) g.fillRect(x, (fired[i] / SNN.n) * RAST.h, 1.6, 1.8);
-    }
-  }
-  RAST.head = (RAST.head + 1) % RAST.w;
+  TRACE.psth[h] = fired.length;
+  TRACE.head = (TRACE.head + 1) % TRACE.W;
 }
 
 function drawNeural2(dt) {
   const f = fit(E.cNeural); if (!f) return;
   const { ctx, w, h } = f;
+  traceInit();
 
   const lvl = app.engine && app.engine.audio ? app.engine.audio.level : 0;
   // Map the deck's states onto the responsive part of the population's curve.
-  // Below about 0.6 the network is genuinely silent, which is correct but makes
-  // for a blank panel at idle — so idle sits just into the firing range and
-  // thinking pushes it well up it.
   const drive = 0.62 + (app.busy ? 0.26 : 0) + lvl * 0.35 +
                 (typeof VITALS === 'object' ? VITALS.chans[0].v / 500 : 0);
   const fired = snnStep(Math.min(0.05, dt), drive);
-  rasterColumn(fired);
+  traceSample(fired);
 
-  const rasterH = h * 0.62;
+  const L = 26;                    // left gutter for channel labels
+  const plotW = w - L - 4;
+  const psthH = Math.max(22, h * 0.26);
+  const traceTop = 13;
+  const traceH = h - psthH - traceTop - 11;
+  const lane = traceH / TRACE.n;
 
-  // one blit, in two pieces, so the newest column lands at the right edge
-  if (RAST.cv) {
-    const hd = RAST.head, rest = RAST.w - hd;
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(RAST.cv, hd, 0, rest, RAST.h, 0, 0, w * rest / RAST.w, rasterH);
-    if (hd > 0) ctx.drawImage(RAST.cv, 0, 0, hd, RAST.h, w * rest / RAST.w, 0, w * hd / RAST.w, rasterH);
+  // ── lane guides ──────────────────────────────────────────────────────────
+  // A faint baseline per channel. Without it a quiet channel is invisible and
+  // you cannot tell "silent" from "not being recorded".
+  ctx.lineWidth = 1;
+  for (let c = 0; c < TRACE.n; c++) {
+    const mid = traceTop + lane * (c + 0.5);
+    ctx.strokeStyle = 'rgba(0,229,255,.055)';
+    ctx.beginPath(); ctx.moveTo(L, mid); ctx.lineTo(w - 4, mid); ctx.stroke();
   }
 
-  ctx.strokeStyle = 'rgba(0,229,255,.10)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, rasterH + 1); ctx.lineTo(w, rasterH + 1); ctx.stroke();
+  // ── the traces ───────────────────────────────────────────────────────────
+  // Sub-threshold potential is drawn to scale; a spike is drawn as a spike —
+  // fast rise, sharp peak, brief undershoot — because that is the shape the
+  // eye recognises and because a 1ms event genuinely cannot be reconstructed
+  // from a 30Hz sample. Drawing the event where it happened is honest; drawing
+  // a sampled sawtooth and calling it a waveform would not be.
+  const hd = TRACE.head;
+  for (let c = 0; c < TRACE.n; c++) {
+    const inhib = SNN.inhib[TRACE.ch[c]];
+    const mid = traceTop + lane * (c + 0.5);
+    const amp = lane * 0.30;                    // sub-threshold swing
+    const base = c * TRACE.W;
 
-  // ── population rate underneath ───────────────────────────────────────────
-  const rateH = h - rasterH - 10;
-  let peak = 1;
-  for (let i = 0; i < 160; i++) peak = Math.max(peak, SNN.rateHist[i]);
+    ctx.beginPath();
+    for (let i = 0; i < TRACE.W; i++) {
+      const k = (hd + i) % TRACE.W;
+      const x = L + (i / (TRACE.W - 1)) * plotW;
+      const y = mid - Math.min(1, TRACE.v[base + k] / 0.95) * amp;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.strokeStyle = inhib ? 'rgba(255,120,90,.50)' : 'rgba(0,229,255,.50)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+
+    // spikes, one path per channel
+    ctx.beginPath();
+    for (let i = 0; i < TRACE.W; i++) {
+      const k = (hd + i) % TRACE.W;
+      if (!TRACE.sp[base + k]) continue;
+      const x = L + (i / (TRACE.W - 1)) * plotW;
+      ctx.moveTo(x - 1.1, mid + lane * 0.06);
+      ctx.lineTo(x, mid - lane * 0.42);         // depolarisation
+      ctx.lineTo(x + 1.1, mid + lane * 0.20);   // after-hyperpolarisation
+      ctx.lineTo(x + 2.4, mid);
+    }
+    ctx.strokeStyle = inhib ? 'rgba(255,140,110,.95)' : '#7df0ff';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+
+    ctx.font = '400 6.5px "JetBrains Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = inhib ? 'rgba(255,120,90,.60)' : 'rgba(0,229,255,.45)';
+    ctx.fillText((inhib ? 'i' : 'e') + (c + 1), 3, mid + 2.5);
+  }
+
+  // ── calibration bar ──────────────────────────────────────────────────────
+  // A trace without a scale is a squiggle. This is the standard ephys corner
+  // mark: vertical is amplitude, horizontal is time.
+  const calX = w - 34, calY = traceTop + traceH - 3;
+  ctx.strokeStyle = 'rgba(150,215,235,.35)'; ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let i = 0; i < 160; i++) {
-    const v = SNN.rateHist[(SNN.head + 1 + i) % 160];
-    const x = (i / 159) * w;
-    const y = h - 8 - (v / peak) * rateH;
-    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-  }
-  ctx.strokeStyle = app.busy ? VI : '#63f0ff';
-  ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.moveTo(calX, calY - lane * 0.42); ctx.lineTo(calX, calY);
+  ctx.lineTo(calX + 22, calY);
+  ctx.stroke();
+  ctx.font = '400 6px "JetBrains Mono", monospace';
+  ctx.fillStyle = 'rgba(150,215,235,.42)';
+  ctx.textAlign = 'left';
+  ctx.fillText('1mV', calX + 2, calY - lane * 0.42 + 6);
+  ctx.fillText('500ms', calX + 1, calY + 7);
 
+  // ── PSTH ─────────────────────────────────────────────────────────────────
+  const py = h - psthH - 2;
+  ctx.strokeStyle = 'rgba(0,229,255,.12)';
+  ctx.beginPath(); ctx.moveTo(L, py); ctx.lineTo(w - 4, py); ctx.stroke();
+
+  let peak = 1;
+  for (let i = 0; i < TRACE.W; i++) peak = Math.max(peak, TRACE.psth[i]);
+  TRACE.peak += (peak - TRACE.peak) * 0.06;     // smoothed autoscale
+  const scale = Math.max(2, TRACE.peak);
+
+  const bw = plotW / TRACE.W;
+  ctx.fillStyle = app.busy ? 'rgba(160,107,255,.55)' : 'rgba(0,229,255,.42)';
+  for (let i = 0; i < TRACE.W; i++) {
+    const v = TRACE.psth[(hd + i) % TRACE.W];
+    if (v <= 0) continue;
+    const bh = Math.min(psthH - 4, (v / scale) * (psthH - 6));
+    ctx.fillRect(L + i * bw, h - 8 - bh, Math.max(0.8, bw - 0.35), bh);
+  }
+  ctx.strokeStyle = 'rgba(0,229,255,.18)';
+  ctx.beginPath(); ctx.moveTo(L, h - 8); ctx.lineTo(w - 4, h - 8); ctx.stroke();
+
+  ctx.font = '400 6px "JetBrains Mono", monospace';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(150,215,235,.40)';
+  ctx.fillText(Math.round(scale), L - 3, py + 7);
+  ctx.fillText('0', L - 3, h - 6);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(150,215,235,.30)';
+  ctx.fillText('−6s', L + 1, h - 1);
+  ctx.textAlign = 'right';
+  ctx.fillText('now', w - 4, h - 1);
+
+  // ── header ───────────────────────────────────────────────────────────────
   ctx.font = '400 7px "JetBrains Mono", monospace';
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(0,229,255,.5)';
-  ctx.fillText(SNN.n + ' LIF · ' + Math.round(SNN.rate) + ' Hz', 3, 9);
+  ctx.fillText('6/' + SNN.n + ' CH', 3, 8);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(150,215,235,.45)';
+  ctx.fillText(SNN.rate.toFixed(1) + ' Hz/cell', w / 2, 8);
   ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(150,215,235,.42)';
-  ctx.fillText(SNN.fired + ' SPIKING', w - 3, 9);
-  ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(255,120,90,.5)';
-  ctx.fillText('INHIB', 3, h - 2);
+  ctx.fillStyle = SNN.fired > SNN.n * 0.35 ? AM : 'rgba(150,215,235,.42)';
+  ctx.fillText(SNN.fired + ' active', w - 4, 8);
+
+  if (E.neuralStat) {
+    const r = SNN.rate;
+    const s = r < 0.5 ? 'QUIESCENT' : r > 14 ? 'BURSTING' : r > 6 ? 'ENGAGED' : 'TONIC';
+    if (E.neuralStat.textContent !== s + ' · 6 CH') E.neuralStat.textContent = s + ' · 6 CH';
+    E.neuralStat.style.color = r > 14 ? 'rgba(255,179,0,.75)' : 'rgba(0,229,255,.42)';
+  }
 }
 
 /* ─────────────────────────────────────────────── steering the topology ─────
@@ -12201,11 +12849,19 @@ app.setAudio = (level, fftAt) => {
 };
 
 app.instr = {
-  net: NET3, netHand, bindNetDrag, netBuild, drawNeural: () => drawNeural2(1/60),
-  raster: () => RAST, netLayout, netRoute, netPath, netAdj, netTraffic, netProject,
+  net: NET3, netHand, bindNetDrag, netBuild,
+  // All four renderers, so a test can measure what a panel actually costs to
+  // draw rather than inferring it from the source. Only the neural one used to
+  // be reachable, which is why the other three went un-measured for so long.
+  drawNeural: () => drawNeural2(1 / 60),
+  drawVitals: () => drawVitals2(),
+  drawCore: () => drawCore2(1 / 60),
+  drawRadar: (dt) => drawRadar(dt == null ? 1 / 60 : dt),
+  trace: () => TRACE, netLayout, netRoute, netPath, netAdj, netTraffic, netProject,
   vitals: VITALS, vitalsStep, vitalsHistory,
   core: CORE2, coreStep,
-  snn: SNN, snnBuild, snnStep
+  snn: SNN, snnBuild, snnStep,
+  stream: { sources: STREAM_SOURCES, push: pushStream, row: streamRow }
 };
 
 app.hands = { OneEuro, Schmitt, LowPass, read: readHandStable, pointer: stepPointer,
